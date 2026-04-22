@@ -38,6 +38,7 @@ let cyGraph = null;
 let cyModule = null;
 let cycleNodeIds = new Set();
 let mermaidText = "";
+let currentRepoId = null;
 
 // ── DOM refs ──
 const form       = document.getElementById("analyze-form");
@@ -73,6 +74,7 @@ form.addEventListener("submit", async (e) => {
         if (!res.ok || !data.success) throw new Error(data.detail || data.error || "Analysis failed");
 
         currentData = data;
+        currentRepoId = data.repo_id;
         renderResults(data);
     } catch (err) {
         showError(err.message);
@@ -282,16 +284,19 @@ function highlightCycleNodes() {
 // ══════════════════════════════════════════
 
 function initDependencyGraph(data) {
-    const graphData = data.graph || {};
-    const nodes = graphData.nodes || [];
-    const edges = graphData.edges || [];
+    const nodes = data.graph?.nodes || [];
+    const edges = data.graph?.edges || [];
+
+    if (nodes.length === 0) {
+        document.getElementById("cy-graph").innerHTML = '<div class="no-graph-msg">No local dependencies detected.</div>';
+        return;
+    }
+
+    const elements = [];
 
     // Update stats badges
     document.getElementById("graph-node-count").textContent = `${nodes.length} nodes`;
     document.getElementById("graph-edge-count").textContent = `${edges.length} edges`;
-
-    // Build Cytoscape elements
-    const elements = [];
 
     nodes.forEach(n => {
         const meta = ROLE_META[n.role] || ROLE_META.unknown;
@@ -607,14 +612,19 @@ document.getElementById("sidebar-close").addEventListener("click", hideSidebar);
 // ══════════════════════════════════════════
 
 function initModuleGraph(data) {
-    const modData = data.module_graph || {};
-    const modules = modData.modules || [];
-    const connections = modData.connections || [];
+    const json = data.module_graph?.graph_json || { nodes: [], edges: [] };
+    const nodes = json.nodes || [];
+    const edges = json.edges || [];
+
+    if (nodes.length === 0) {
+        document.getElementById("cy-module").innerHTML = '<div class="no-graph-msg">No modules detected.</div>';
+        return;
+    }
 
     const elements = [];
 
-    modules.forEach(mod => {
-        const maxFiles = Math.max(...modules.map(m => m.file_count), 1);
+    nodes.forEach(mod => {
+        const maxFiles = Math.max(...nodes.map(m => m.file_count), 1);
         const size = 50 + (mod.file_count / maxFiles) * 60;
         elements.push({
             data: {
@@ -785,7 +795,7 @@ function hexToRgba(hex, alpha) {
 }
 
 function fileIcon(language) {
-    const icons = {
+   const icons = {
         "Python": "🐍", "JavaScript": "📜", "JavaScript (React)": "⚛️",
         "TypeScript": "🔷", "TypeScript (React)": "⚛️", "HTML": "🌐",
         "CSS": "🎨", "SCSS": "🎨", "JSON": "📋", "YAML": "📋",
@@ -796,3 +806,102 @@ function fileIcon(language) {
     };
     return icons[language] || "📄";
 }
+
+// ══════════════════════════════════════════
+// RAG CHAT LOGIC
+// ══════════════════════════════════════════
+
+const chatForm = document.getElementById("chat-input-form");
+const chatInput = document.getElementById("chat-input-box");
+const chatMessages = document.getElementById("chat-messages");
+const chatSendBtn = document.getElementById("chat-send-btn");
+const chatSourcesPanel = document.getElementById("chat-sources-panel");
+const chatSourcesList = document.getElementById("chat-sources-list");
+
+function appendChatMessage(role, content) {
+    const el = document.createElement("div");
+    el.className = `chat-message ${role}`;
+    
+    // Simple markdown parsing for code backticks
+    const htmlContent = escapeHtml(content)
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\\n/g, '<br>');
+
+    el.innerHTML = `
+        <div class="msg-avatar">${role === 'assistant' ? 'AI' : 'U'}</div>
+        <div class="msg-bubble">${htmlContent}</div>
+    `;
+    
+    chatMessages.appendChild(el);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function updateSources(sources) {
+    chatSourcesList.innerHTML = "";
+    if (!sources || sources.length === 0) {
+        chatSourcesList.innerHTML = '<div class="no-sources">No sources retrieved.</div>';
+        return;
+    }
+    
+    sources.forEach(src => {
+        const item = document.createElement("div");
+        item.className = "source-item";
+        item.innerHTML = `
+            <div class="source-path">${escapeHtml(src.file_path)}</div>
+            <div class="source-score-badge">Score: ${src.score ? src.score.toFixed(3) : 'N/A'}</div>
+        `;
+        chatSourcesList.appendChild(item);
+    });
+}
+
+chatForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const query = chatInput.value.trim();
+    if (!query || !currentRepoId) return;
+
+    // UI state
+    appendChatMessage('user', query);
+    chatInput.value = "";
+    chatSendBtn.disabled = true;
+    chatInput.disabled = true;
+
+    // Loading indicator
+    const loadingId = "msg-" + Date.now();
+    const loadingEl = document.createElement("div");
+    loadingEl.className = "chat-message assistant";
+    loadingEl.id = loadingId;
+    loadingEl.innerHTML = `
+        <div class="msg-avatar">AI</div>
+        <div class="msg-bubble" style="opacity: 0.7;">Searching codebase... <span class="spinner"></span></div>
+    `;
+    chatMessages.appendChild(loadingEl);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    try {
+        const response = await fetch(`${API_BASE}/chat/${currentRepoId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: query })
+        });
+
+        const data = await response.json();
+        
+        // Remove loading
+        document.getElementById(loadingId)?.remove();
+
+        if (response.ok && data.success) {
+            appendChatMessage('assistant', data.answer);
+            updateSources(data.sources);
+        } else {
+            appendChatMessage('assistant', `⚠️ Error: ${data.detail || data.error || 'Failed to get answer'}`);
+        }
+        
+    } catch (err) {
+        document.getElementById(loadingId)?.remove();
+        appendChatMessage('assistant', `⚠️ Connection error: ${err.message}`);
+    } finally {
+        chatSendBtn.disabled = false;
+        chatInput.disabled = false;
+        chatInput.focus();
+    }
+});

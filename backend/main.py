@@ -31,6 +31,7 @@ from codekavi.graph import (
     detect_cycles,
 )
 from codekavi.llm import get_provider, Explainer
+from codekavi.indexer import index_repository
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -71,6 +72,11 @@ class ExplainFileRequest(BaseModel):
     """ Request body for /api/explain/file/{repo_id} endpoint. Contains the file path and optional model. """
     file_path: str
     model: str | None = "llama-3.3-70b-versatile"  # Default model for file explanations
+
+class ChatRequest(BaseModel):
+    """ Request body for /api/chat/{repo_id} endpoint. """
+    query: str
+    model: str | None = "llama-3.3-70b-versatile"
 
 
 def _find_clone_path_by_repo_id(repo_id: str) -> str | None:
@@ -177,6 +183,13 @@ async def analyze(body: AnalyzeRequest):
         mermaid_file = ""
         module_graph = {"error": f"Module graph failed: {e}"}
         cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+
+    # Index repository for RAG
+    if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
+        try:
+            index_repository(clone_info["repo_id"], file_profiles, clone_info["clone_path"])
+        except Exception as e:
+            logging.error(f"Vector indexing failed: {e}")
 
     # Store session and results for later retrieval
     repo_id = clone_info["repo_id"]
@@ -410,6 +423,73 @@ async def explain_single_file(repo_id: str, body: ExplainFileRequest):
         "duration_ms": file_result.duration_ms,
         "error": file_result.error,
     }
+
+
+# ─────────────────────────────────────────────
+# RAG Chat Endpoint
+# ─────────────────────────────────────────────
+
+@app.post("/api/chat/{repo_id}")
+async def chat_repo(repo_id: str, body: ChatRequest):
+    """
+    RAG endpoint that searches the Zilliz vector store for relevant code context
+    and answers the user's question using the LLM.
+    """
+    try:
+        from codekavi.vectorstore import zilliz_client
+        from codekavi.llm.providers import Message
+
+        # 1. Retrieve Context from Zilliz
+        results = zilliz_client.search(body.query, repo_id, limit=5)
+        if not results:
+            return {"success": False, "error": "No relevant code context found. Ensure the repository was fully indexed."}
+            
+        context_blocks = []
+        for i, res in enumerate(results):
+            context_blocks.append(
+                f"--- Context {i+1} ---\n"
+                f"File: {res['file_path']}\n"
+                f"Role: {res['role']}\n"
+                f"Code Snippet:\n{res['text']}\n"
+            )
+        
+        combined_context = "\n".join(context_blocks)
+        
+        # 2. Build the Prompt
+        system_prompt = (
+            "You are an expert, conversational developer acting as an AI host discussing a codebase. "
+            "You are provided with several context snippets retrieved from the repository's source code. "
+            "Answer the user's question using ONLY the provided context.\\n\\n"
+            "Your answers should be highly engaging, clear, and direct. If you reference specific logic, "
+            "always cite the relevant file path enclosed in backticks (e.g. `src/auth.js`).\\n\\n"
+            f"--- RETRIEVED CONTEXT ---\\n{combined_context}\\n--------------------------"
+        )
+        
+        # 3. Call LLM (using default Explainer logic)
+        explainer = _get_explainer(model=body.model)
+        
+        messages = [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=body.query)
+        ]
+        
+        # Directly use the provider under the explainer
+        response = explainer.provider.complete(
+            messages=messages,
+            temperature=0.4,
+            max_tokens=2048
+        )
+        
+        return {
+            "success": True,
+            "repo_id": repo_id,
+            "answer": response.content,
+            "sources": [{"file_path": r["file_path"], "score": r["score"]} for r in results]
+        }
+        
+    except Exception as e:
+        logger.error(f"Chat RAG error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/health")
