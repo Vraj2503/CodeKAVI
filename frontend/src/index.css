@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/* ══════════════════════════════════════════
+   DESIGN TOKENS
+   ══════════════════════════════════════════ */
+@theme {
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #111118;
+  --color-bg-card: #16161e;
+  --color-bg-elevated: #1c1c26;
+  --color-bg-hover: #22222e;
+
+  --color-border: #2a2a3a;
+  --color-border-hover: #3a3a4e;
+
+  --color-text-primary: #e8e8ed;
+  --color-text-secondary: #9898a8;
+  --color-text-muted: #5a5a6e;
+
+  --color-accent: #7c5cfc;
+  --color-accent-hover: #6a48e8;
+  --color-accent-glow: rgba(124, 92, 252, 0.15);
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
+  --color-info: #60a5fa;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+/* ══════════════════════════════════════════
+   BASE STYLES
+   ══════════════════════════════════════════ */
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg-primary text-text-primary font-sans antialiased;
+  overflow: hidden;
+}
+
+/* ══════════════════════════════════════════
+   SCROLLBAR
+   ══════════════════════════════════════════ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover);
+}
+
+/* ══════════════════════════════════════════
+   GLASS EFFECT
+   ══════════════════════════════════════════ */
+.glass {
+  background: rgba(22, 22, 30, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--color-border);
+}
+
+/* ══════════════════════════════════════════
+   GLOW PULSE
+   ══════════════════════════════════════════ */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--color-accent-glow); }
+  50% { box-shadow: 0 0 20px var(--color-accent-glow), 0 0 40px rgba(124, 92, 252, 0.08); }
+}
+
+.glow-pulse {
+  animation: glow-pulse 3s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════
+   TYPING DOTS
+   ══════════════════════════════════════════ */
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
+.typing-dot:nth-child(1) { animation: typing-dot 1.4s ease-in-out infinite; }
+.typing-dot:nth-child(2) { animation: typing-dot 1.4s ease-in-out 0.2s infinite; }
+.typing-dot:nth-child(3) { animation: typing-dot 1.4s ease-in-out 0.4s infinite; }
