@@ -1,9 +1,11 @@
 import os
-from dotenv import load_dotenv
+import time
+import logging
+from typing import List, Dict, Any
 
+from dotenv import load_dotenv
 load_dotenv()
-import uuid
-from typing import List, Dict, Any, Optional
+
 from pymilvus import (
     connections,
     utility,
@@ -12,57 +14,64 @@ from pymilvus import (
     DataType,
     Collection,
 )
-from dotenv import load_dotenv
-load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 # Constants for schema
 DIMENSION = 3072  # gemini-embedding-001 is 3072-dimensional
 COLLECTION_NAME = "codekavi_chunks"
+
+# Retry settings for transient errors
+MAX_RETRIES = 3
+INITIAL_BACKOFF_S = 2
+
 
 class ZillizClient:
     def __init__(self):
         self.uri = os.getenv("ZILLIZ_URI")
         self.token = os.getenv("ZILLIZ_API_KEY")
         self.collection = None
-        
+
     def connect(self) -> bool:
         """Establishes connection to Zilliz Cloud."""
         if not self.uri or not self.token:
             return False
-            
+
         try:
             connections.connect(
                 alias="default",
                 uri=self.uri,
-                token=self.token
+                token=self.token,
             )
             return True
         except Exception as e:
-            print(f"Error connecting to Zilliz: {e}")
+            logger.error(f"Error connecting to Zilliz: {e}")
             return False
 
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
         if not self.connect():
-            raise ValueError("Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY.")
+            raise ValueError(
+                "Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY."
+            )
 
         if utility.has_collection(COLLECTION_NAME):
-            # If the collection exists but its dimension might be old (768), 
-            # we should drop it and recreate it (only safe if we are fine with clearing all repos).
-            # We'll rely on the existing collection if it works, or we can explicitly check schema here.
-            # But normally we just return it:
             self.collection = Collection(COLLECTION_NAME)
-            
-            # Temporary fix: ensure it matches new dimensions.
-            # Since indexer.py drops repo_id anyway, dropping the whole collection is safe in development
-            # to prevent dimension mismatch errors.
+
+            # Safety check: if the existing collection has wrong dimensions,
+            # drop and recreate it (safe in dev — indexer clears per-repo anyway).
             try:
-                if self.collection.schema.fields[-1].params.get("dim") != DIMENSION:
+                existing_dim = self.collection.schema.fields[-1].params.get("dim")
+                if existing_dim != DIMENSION:
+                    logger.warning(
+                        f"Dimension mismatch ({existing_dim} vs {DIMENSION}). "
+                        "Dropping and recreating collection."
+                    )
                     utility.drop_collection(COLLECTION_NAME)
                     return self.setup_collection()
-            except:
+            except Exception:
                 pass
-                
+
             return self.collection
 
         # Define schema
@@ -72,80 +81,109 @@ class ZillizClient:
             FieldSchema(name="file_path", dtype=DataType.VARCHAR, max_length=512),
             FieldSchema(name="role", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
-            FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION)
+            FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
         ]
         schema = CollectionSchema(fields=fields, description="Code chunks for RAG")
-        
+
         self.collection = Collection(name=COLLECTION_NAME, schema=schema)
-        
+
         # Create an index on the vector field for fast similarity search
         index_params = {
             "metric_type": "COSINE",
             "index_type": "AUTOINDEX",
-            "params": {}
+            "params": {},
         }
         self.collection.create_index(field_name="vector", index_params=index_params)
         self.collection.load()
         return self.collection
 
+    def collection_exists(self) -> bool:
+        """Quick health-check: can we reach Zilliz and does the collection exist?"""
+        try:
+            if not self.connect():
+                return False
+            return utility.has_collection(COLLECTION_NAME)
+        except Exception:
+            return False
+
     def clear_repo(self, repo_id: str):
         """Removes all chunks associated with a specific repo_id."""
         if not self.collection:
             self.setup_collection()
-            
+
         try:
             self.collection.delete(f"repo_id == '{repo_id}'")
         except Exception as e:
-            print(f"Error clearing repo {repo_id}: {e}")
+            logger.error(f"Error clearing repo {repo_id}: {e}")
 
     def search(self, query: str, repo_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Embeds the query using Gemini and searches Zilliz.
         Returns the top 'limit' matching code chunks.
+        Retries on transient errors with exponential backoff.
         """
         if not self.collection:
             self.setup_collection()
-            
-        try:
-            from google import genai
-            api_key = os.environ.get("GEMINI_API_KEY")
-            client = genai.Client(api_key=api_key)
-            response = client.models.embed_content(
-                model="gemini-embedding-001", 
-                contents=[query]
-            )
-            query_vector = response.embeddings[0].values
-            
-            search_params = {
-                "metric_type": "COSINE", 
-                "params": {}
-            }
-            expr = f"repo_id == '{repo_id}'"
-            
-            self.collection.load()
-            results = self.collection.search(
-                data=[query_vector], 
-                anns_field="vector", 
-                param=search_params,
-                limit=limit,
-                expr=expr,
-                output_fields=["file_path", "role", "text"]
-            )
-            
-            formatted_results = []
-            for hits in results:
-                for hit in hits:
-                    formatted_results.append({
-                        "file_path": hit.entity.get("file_path"),
-                        "role": hit.entity.get("role"),
-                        "text": hit.entity.get("text"),
-                        "score": hit.distance
-                    })
-            return formatted_results
-            
-        except Exception as e:
-            print(f"Error searching Zilliz: {e}")
-            return []
+
+        backoff = INITIAL_BACKOFF_S
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                from google import genai
+
+                api_key = os.environ.get("GEMINI_API_KEY")
+                client = genai.Client(api_key=api_key)
+                response = client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=[query],
+                )
+                query_vector = response.embeddings[0].values
+
+                search_params = {"metric_type": "COSINE", "params": {}}
+                expr = f"repo_id == '{repo_id}'"
+
+                self.collection.load()
+                results = self.collection.search(
+                    data=[query_vector],
+                    anns_field="vector",
+                    param=search_params,
+                    limit=limit,
+                    expr=expr,
+                    output_fields=["file_path", "role", "text"],
+                )
+
+                formatted_results = []
+                for hits in results:
+                    for hit in hits:
+                        formatted_results.append(
+                            {
+                                "file_path": hit.entity.get("file_path"),
+                                "role": hit.entity.get("role"),
+                                "text": hit.entity.get("text"),
+                                "score": hit.distance,
+                            }
+                        )
+                return formatted_results
+
+            except Exception as e:
+                err_str = str(e)
+                is_transient = any(
+                    keyword in err_str
+                    for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
+                )
+
+                if is_transient and attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. "
+                        f"Retrying in {backoff}s…"
+                    )
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                else:
+                    logger.error(f"Search failed: {e}")
+                    return []
+
 
 # Global instance for app to use
 zilliz_client = ZillizClient()
