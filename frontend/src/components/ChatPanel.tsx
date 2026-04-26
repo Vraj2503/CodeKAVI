@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SendHorizontal, Sparkles, FileCode2, Bot, User } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { cn } from "../lib/utils";
+import { ScrollArea } from "./ui/ScrollArea";
+import { AnimatedInput } from "./ui/AnimatedInput";
 import {
   chatWithRepo,
   type AnalyzeResponse,
@@ -55,7 +58,10 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
-        setLatestSources(res.sources || []);
+        const uniqueSources = Array.from(
+          new Map((res.sources || []).map((s: ChatSource) => [s.file_path, s])).values()
+        );
+        setLatestSources(uniqueSources);
       } else {
         setMessages((prev) => [
           ...prev,
@@ -101,8 +107,9 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          <AnimatePresence initial={false}>
+        <ScrollArea className="flex-1 px-6 py-4">
+          <div className="space-y-4">
+            <AnimatePresence initial={false}>
             {messages.map((msg, i) => (
               <motion.div
                 key={i}
@@ -135,11 +142,15 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
                   className={cn(
                     "rounded-xl px-4 py-3 text-[13.5px] leading-relaxed",
                     msg.role === "assistant"
-                      ? "bg-bg-card border border-border text-text-primary"
+                      ? "bg-bg-card border border-border text-text-primary prose prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-bg-hover prose-pre:border prose-pre:border-border"
                       : "bg-accent/10 border border-accent/20 text-text-primary"
                   )}
                 >
-                  <FormattedMessage content={msg.content} />
+                  {msg.role === "assistant" ? (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
               </motion.div>
             ))}
@@ -163,27 +174,21 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
             </motion.div>
           )}
 
-          <div ref={messagesEndRef} />
-        </div>
+            <div ref={messagesEndRef} />
+          </div>
+        </ScrollArea>
 
         {/* Input */}
         <div className="px-6 py-4 border-t border-border bg-bg-secondary/50">
           <form onSubmit={handleSubmit} className="relative">
-            <input
+            <AnimatedInput
               ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about this codebase…"
               disabled={isLoading}
-              className={cn(
-                "w-full pl-4 pr-12 py-3 rounded-xl text-[13.5px]",
-                "bg-bg-primary border border-border",
-                "text-text-primary placeholder:text-text-muted",
-                "focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/10",
-                "disabled:opacity-50",
-                "transition-all duration-200"
-              )}
+              className="w-full pl-4 pr-12 py-3"
             />
             <button
               type="submit"
@@ -204,8 +209,8 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
       </div>
 
       {/* Sources Panel */}
-      <div className="w-72 border-l border-border bg-bg-secondary/60 overflow-y-auto flex-shrink-0 hidden lg:block">
-        <div className="px-4 py-3 border-b border-border">
+      <div className="w-72 border-l border-border bg-bg-secondary/60 flex flex-col flex-shrink-0 hidden lg:flex">
+        <div className="px-4 py-3 border-b border-border flex-shrink-0">
           <h3 className="text-[12px] font-semibold text-text-primary flex items-center gap-1.5">
             <FileCode2 className="w-3.5 h-3.5 text-accent" />
             Retrieved Sources
@@ -214,7 +219,8 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
             Citations for the latest answer
           </p>
         </div>
-        <div className="px-4 py-3 space-y-2">
+        <ScrollArea className="flex-1">
+          <div className="px-4 py-3 space-y-2">
           {latestSources.length > 0 ? (
             latestSources.map((src, i) => (
               <motion.div
@@ -227,52 +233,17 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
                 <p className="text-[12px] font-mono text-accent break-all leading-relaxed">
                   {src.file_path}
                 </p>
-                <span className="inline-block mt-1.5 text-[10px] text-text-muted bg-bg-hover px-1.5 py-0.5 rounded font-mono">
-                  score: {src.score?.toFixed(3) ?? "—"}
-                </span>
               </motion.div>
             ))
           ) : (
-            <p className="text-[11px] text-text-muted italic">
-              No sources retrieved yet. Ask a question to see citations.
-            </p>
-          )}
-        </div>
+              <p className="text-[11px] text-text-muted italic">
+                No sources retrieved yet. Ask a question to see citations.
+              </p>
+            )}
+          </div>
+        </ScrollArea>
       </div>
     </div>
   );
 }
 
-// ── Simple markdown-ish formatter ──
-function FormattedMessage({ content }: { content: string }) {
-  // Handle bold, inline code, and newlines
-  const parts = content.split(/(\*\*[^*]+\*\*|`[^`]+`|\n)/g);
-
-  return (
-    <span>
-      {parts.map((part, i) => {
-        if (part.startsWith("**") && part.endsWith("**")) {
-          return (
-            <strong key={i} className="font-semibold">
-              {part.slice(2, -2)}
-            </strong>
-          );
-        }
-        if (part.startsWith("`") && part.endsWith("`")) {
-          return (
-            <code
-              key={i}
-              className="px-1.5 py-0.5 rounded bg-bg-hover text-warning font-mono text-[12px]"
-            >
-              {part.slice(1, -1)}
-            </code>
-          );
-        }
-        if (part === "\n") {
-          return <br key={i} />;
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </span>
-  );
-}

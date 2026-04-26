@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { WelcomeScreen } from "./components/WelcomeScreen";
+import { Toaster, toast } from "sonner";
 import { analyzeRepo, type AnalyzeResponse } from "./lib/api";
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
       setRepoData(data);
     } catch (err: any) {
       setError(err.message || "Analysis failed");
+      toast.error(err.message || "Analysis failed");
     } finally {
       setIsAnalyzing(false);
     }
@@ -24,6 +26,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg-primary">
+      <Toaster theme="dark" position="top-right" />
       {/* Sidebar */}
       <Sidebar
         repoData={repoData}

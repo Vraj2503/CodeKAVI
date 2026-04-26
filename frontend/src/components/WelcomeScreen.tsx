@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import { BookOpen, GitBranch, Loader2, Search, Sparkles, MessageSquare, Code2 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { AnimatedInput } from "./ui/AnimatedInput";
 
 interface WelcomeScreenProps {
   onAnalyze: (url: string) => void;
@@ -52,18 +53,12 @@ export function WelcomeScreen({ onAnalyze, isAnalyzing, error }: WelcomeScreenPr
         <form onSubmit={handleSubmit} className="space-y-3">
           <div className="relative">
             <GitBranch className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <AnimatedInput
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://github.com/user/repo"
-              className={cn(
-                "w-full pl-11 pr-4 py-3.5 rounded-xl text-[14px]",
-                "bg-bg-card border border-border",
-                "text-text-primary placeholder:text-text-muted",
-                "focus:outline-none focus:border-accent/50 focus:ring-2 focus:ring-accent/15",
-                "transition-all duration-200"
-              )}
+              className="w-full pl-11 pr-4 py-3.5"
             />
           </div>
           <button

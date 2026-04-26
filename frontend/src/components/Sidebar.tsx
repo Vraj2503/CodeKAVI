@@ -14,25 +14,9 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { AnalyzeResponse, FileNode } from "../lib/api";
-
-// ── Role color mapping ──
-const ROLE_COLORS: Record<string, string> = {
-  entry_point: "#34d399",
-  orchestrator: "#fbbf24",
-  core_module: "#a78bfa",
-  shared_utility: "#06b6d4",
-  internal_helper: "#8b95a5",
-  router: "#f472b6",
-  config: "#fb923c",
-  test: "#94a3b8",
-  type_definition: "#818cf8",
-  leaf: "#64748b",
-  barrel: "#7dd3fc",
-  documentation: "#a1a1aa",
-  build: "#78716c",
-  data: "#d4d4d8",
-  unknown: "#475569",
-};
+import { ScrollArea } from "./ui/ScrollArea";
+import { Skeleton } from "./ui/Skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/Tooltip";
 
 interface SidebarProps {
   repoData: AnalyzeResponse | null;
@@ -124,14 +108,41 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
       </div>
 
       {/* Repo Metadata */}
-      <AnimatePresence>
-        {repoData && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="flex-1 overflow-y-auto"
-          >
+      <TooltipProvider>
+        <AnimatePresence mode="wait">
+          {isAnalyzing ? (
+            <motion.div
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex-1 px-4 py-5 space-y-6"
+            >
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-24" />
+                <div className="grid grid-cols-2 gap-2">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                </div>
+              </div>
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-4/5" />
+                <Skeleton className="h-3 w-5/6" />
+              </div>
+            </motion.div>
+          ) : repoData ? (
+            <motion.div
+              key="content"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3 }}
+              className="flex-1 min-h-0"
+            >
+              <ScrollArea className="h-full">
             {/* Stats */}
             <div className="px-4 py-3 border-b border-border">
               <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5">
@@ -186,38 +197,6 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
               </div>
             </div>
 
-            {/* Role Chips */}
-            <div className="px-4 py-3 border-b border-border">
-              <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5">
-                File Roles
-              </h2>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(repoData.role_summary.role_counts)
-                  .sort(([, a], [, b]) => b - a)
-                  .map(([role, count]) => {
-                    const color = ROLE_COLORS[role] || ROLE_COLORS.unknown;
-                    return (
-                      <span
-                        key={role}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border"
-                        style={{
-                          backgroundColor: `${color}15`,
-                          borderColor: `${color}30`,
-                          color,
-                        }}
-                      >
-                        <span
-                          className="w-1.5 h-1.5 rounded-full"
-                          style={{ backgroundColor: color }}
-                        />
-                        {role.replace(/_/g, " ")}
-                        <span className="opacity-60 ml-0.5">{count}</span>
-                      </span>
-                    );
-                  })}
-              </div>
-            </div>
-
             {/* Source Files */}
             <div className="px-4 py-3">
               <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
@@ -228,9 +207,11 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
                 <FileTree nodes={repoData.tree} />
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              </ScrollArea>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </TooltipProvider>
     </aside>
   );
 }
@@ -292,14 +273,21 @@ function DirNode({ node }: { node: FileNode }) {
 
 function FileNodeItem({ node }: { node: FileNode }) {
   return (
-    <div className="flex items-center gap-1.5 py-0.5 px-1 pl-6 rounded hover:bg-bg-hover transition-colors text-[12px] text-text-secondary cursor-default">
-      <FileText className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-      <span className="truncate flex-1">{node.name}</span>
-      {node.size_formatted && (
-        <span className="text-[10px] text-text-muted font-mono flex-shrink-0">
-          {node.size_formatted}
-        </span>
-      )}
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-1.5 py-0.5 px-1 pl-6 rounded hover:bg-bg-hover transition-colors text-[12px] text-text-secondary cursor-default">
+          <FileText className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
+          <span className="truncate flex-1 text-left">{node.name}</span>
+          {node.size_formatted && (
+            <span className="text-[10px] text-text-muted font-mono flex-shrink-0">
+              {node.size_formatted}
+            </span>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="font-mono text-[10px]">
+        {node.path}
+      </TooltipContent>
+    </Tooltip>
   );
 }
