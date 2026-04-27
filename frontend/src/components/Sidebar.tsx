@@ -2,21 +2,15 @@ import { useState, useRef, type FormEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Folder,
-  FolderOpen,
   GitBranch,
   Loader2,
   Search,
-  Layers,
 } from "lucide-react";
 import { cn } from "../lib/utils";
-import type { AnalyzeResponse, FileNode } from "../lib/api";
+import type { AnalyzeResponse } from "../lib/api";
 import { ScrollArea } from "./ui/ScrollArea";
 import { Skeleton } from "./ui/Skeleton";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/Tooltip";
+import { FileTree } from "./ui/FileTree";
 
 interface SidebarProps {
   repoData: AnalyzeResponse | null;
@@ -37,18 +31,18 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
   };
 
   return (
-    <aside className="w-80 flex-shrink-0 border-r border-border bg-bg-secondary flex flex-col h-full">
+    <aside className="w-80 flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden">
       {/* Logo */}
-      <div className="px-5 py-4 border-b border-border">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center">
-            <BookOpen className="w-4.5 h-4.5 text-accent" />
+      <div className="px-5 py-5 border-b border-border/30">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center glow-pulse">
+            <BookOpen className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-[15px] font-semibold tracking-tight text-text-primary">
+            <h1 className="text-base font-bold tracking-tight text-foreground">
               CodeKavi
             </h1>
-            <p className="text-[11px] text-text-muted leading-none">
+            <p className="text-xs text-muted-foreground leading-none mt-1">
               NotebookLM for GitHub
             </p>
           </div>
@@ -56,13 +50,13 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
       </div>
 
       {/* Repo Input */}
-      <div className="px-4 py-3 border-b border-border">
-        <form onSubmit={handleSubmit} className="flex flex-col gap-2">
-          <label className="text-[11px] font-medium text-text-muted uppercase tracking-wider">
+      <div className="px-4 py-4 border-b border-border/30">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-2.5">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Source Repository
           </label>
           <div className="relative">
-            <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
+            <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               ref={inputRef}
               type="text"
@@ -70,10 +64,10 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
               onChange={(e) => setUrl(e.target.value)}
               placeholder="github.com/user/repo"
               className={cn(
-                "w-full pl-8 pr-3 py-2 text-[13px] rounded-lg",
-                "bg-bg-primary border border-border",
-                "text-text-primary placeholder:text-text-muted",
-                "focus:outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20",
+                "w-full pl-9 pr-3 py-2.5 text-sm rounded-xl",
+                "bg-background/50 border border-border/50",
+                "text-foreground placeholder:text-muted-foreground",
+                "focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20",
                 "transition-all duration-200"
               )}
             />
@@ -82,9 +76,9 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
             type="submit"
             disabled={!url.trim() || isAnalyzing}
             className={cn(
-              "flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium",
-              "bg-accent text-white",
-              "hover:bg-accent-hover active:scale-[0.98]",
+              "flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold",
+              "bg-primary text-primary-foreground shadow-md shadow-primary/20",
+              "hover:bg-primary/90 active:scale-[0.98]",
               "disabled:opacity-40 disabled:cursor-not-allowed",
               "transition-all duration-200"
             )}
@@ -108,8 +102,7 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
       </div>
 
       {/* Repo Metadata */}
-      <TooltipProvider>
-        <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait">
           {isAnalyzing ? (
             <motion.div
               key="loading"
@@ -144,12 +137,12 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
             >
               <ScrollArea className="h-full">
             {/* Stats */}
-            <div className="px-4 py-3 border-b border-border">
-              <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5">
+            <div className="px-4 py-4 border-b border-border/30">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
                 Repository
               </h2>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[13px] font-semibold text-text-primary">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm font-bold text-foreground">
                   {repoData.owner}/{repoData.repo_name}
                 </span>
               </div>
@@ -165,8 +158,8 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
             </div>
 
             {/* Language Breakdown */}
-            <div className="px-4 py-3 border-b border-border">
-              <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5">
+            <div className="px-4 py-4 border-b border-border/30">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
                 Languages
               </h2>
               <div className="space-y-1.5">
@@ -177,18 +170,18 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
                     const pct = (count / max) * 100;
                     return (
                       <div key={lang} className="flex items-center gap-2">
-                        <span className="text-[12px] text-text-secondary w-20 truncate text-right">
+                        <span className="text-[12px] text-foreground/80 w-20 truncate text-right">
                           {lang}
                         </span>
-                        <div className="flex-1 h-1.5 bg-bg-hover rounded-full overflow-hidden">
+                        <div className="flex-1 h-1.5 bg-accent rounded-full overflow-hidden">
                           <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: `${pct}%` }}
                             transition={{ duration: 0.8, ease: "easeOut" }}
-                            className="h-full rounded-full bg-gradient-to-r from-accent to-info"
+                            className="h-full rounded-full bg-gradient-to-r from-primary to-ring"
                           />
                         </div>
-                        <span className="text-[11px] text-text-muted font-mono w-5 text-right">
+                        <span className="text-[11px] text-muted-foreground font-mono w-5 text-right">
                           {count}
                         </span>
                       </div>
@@ -197,21 +190,13 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
               </div>
             </div>
 
-            {/* Source Files */}
-            <div className="px-4 py-3">
-              <h2 className="text-[11px] font-medium text-text-muted uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                <Layers className="w-3 h-3" />
-                Sources ({repoData.total_files})
-              </h2>
-              <div className="space-y-0.5">
-                <FileTree nodes={repoData.tree} />
+              <div className="px-4 py-3 h-full pb-20">
+                <FileTree data={repoData.tree} />
               </div>
-            </div>
               </ScrollArea>
             </motion.div>
           ) : null}
         </AnimatePresence>
-      </TooltipProvider>
     </aside>
   );
 }
@@ -219,75 +204,9 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
 // ── Stat pill ──
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-bg-primary rounded-md px-2.5 py-1.5 border border-border">
-      <p className="text-[10px] text-text-muted">{label}</p>
-      <p className="text-[13px] font-semibold text-text-primary">{value}</p>
+    <div className="bg-background rounded-md px-2.5 py-1.5 border border-border/50">
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p className="text-[13px] font-semibold text-foreground">{value}</p>
     </div>
-  );
-}
-
-// ── File Tree ──
-function FileTree({ nodes }: { nodes: FileNode[] }) {
-  return (
-    <>
-      {nodes.map((node) =>
-        node.type === "dir" ? (
-          <DirNode key={node.path} node={node} />
-        ) : (
-          <FileNodeItem key={node.path} node={node} />
-        )
-      )}
-    </>
-  );
-}
-
-function DirNode({ node }: { node: FileNode }) {
-  const [open, setOpen] = useState(true);
-
-  return (
-    <div>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 w-full text-left py-0.5 px-1 rounded hover:bg-bg-hover transition-colors text-[12px] text-text-secondary"
-      >
-        {open ? (
-          <ChevronDown className="w-3 h-3 text-text-muted" />
-        ) : (
-          <ChevronRight className="w-3 h-3 text-text-muted" />
-        )}
-        {open ? (
-          <FolderOpen className="w-3.5 h-3.5 text-warning" />
-        ) : (
-          <Folder className="w-3.5 h-3.5 text-warning" />
-        )}
-        <span className="truncate">{node.name}</span>
-      </button>
-      {open && node.children && (
-        <div className="ml-3 pl-2 border-l border-border/50">
-          <FileTree nodes={node.children} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function FileNodeItem({ node }: { node: FileNode }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="flex items-center gap-1.5 py-0.5 px-1 pl-6 rounded hover:bg-bg-hover transition-colors text-[12px] text-text-secondary cursor-default">
-          <FileText className="w-3.5 h-3.5 text-text-muted flex-shrink-0" />
-          <span className="truncate flex-1 text-left">{node.name}</span>
-          {node.size_formatted && (
-            <span className="text-[10px] text-text-muted font-mono flex-shrink-0">
-              {node.size_formatted}
-            </span>
-          )}
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="right" className="font-mono text-[10px]">
-        {node.path}
-      </TooltipContent>
-    </Tooltip>
   );
 }

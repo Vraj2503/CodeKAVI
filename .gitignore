@@ -22,3 +22,4 @@ Thumbs.db
 test/
 **/__pycache__/
 .env
+/Components

@@ -25,28 +25,28 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-bg-primary">
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
       <Toaster theme="dark" position="top-right" />
-      {/* Sidebar */}
-      <Sidebar
-        repoData={repoData}
-        isAnalyzing={isAnalyzing}
-        onAnalyze={handleAnalyze}
-        error={error}
-      />
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {repoData ? (
-          <ChatPanel repoData={repoData} />
-        ) : (
-          <WelcomeScreen
-            onAnalyze={handleAnalyze}
+      {/* Conditionally Render Layout */}
+      {!repoData && !isAnalyzing ? (
+        <WelcomeScreen
+          onAnalyze={handleAnalyze}
+          isAnalyzing={isAnalyzing}
+          error={error}
+        />
+      ) : (
+        <div className="flex w-full h-full p-4 gap-4 bg-background relative z-10">
+          <Sidebar
+            repoData={repoData}
             isAnalyzing={isAnalyzing}
+            onAnalyze={handleAnalyze}
             error={error}
           />
-        )}
-      </main>
+          <main className="flex-1 flex flex-col overflow-hidden bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl">
+            {repoData ? <ChatPanel repoData={repoData} /> : null}
+          </main>
+        </div>
+      )}
     </div>
   );
 }

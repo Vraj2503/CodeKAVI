@@ -92,15 +92,15 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
       {/* Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="px-6 py-3 border-b border-border flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-accent/15 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-accent" />
+        <div className="px-6 py-4 border-b border-border/30 flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-primary/15 flex items-center justify-center glow-pulse">
+            <Sparkles className="w-4 h-4 text-primary" />
           </div>
           <div>
-            <h2 className="text-[14px] font-semibold text-text-primary">
+            <h2 className="text-base font-bold text-foreground">
               Ask about {repoData.repo_name}
             </h2>
-            <p className="text-[11px] text-text-muted">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Powered by RAG — answers grounded in source code
             </p>
           </div>
@@ -124,26 +124,26 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
                 {/* Avatar */}
                 <div
                   className={cn(
-                    "w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5",
+                    "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5",
                     msg.role === "assistant"
-                      ? "bg-accent/20"
-                      : "bg-bg-elevated border border-border"
+                      ? "bg-primary/20 border border-primary/30 shadow-lg shadow-primary/10"
+                      : "bg-card border border-border/50"
                   )}
                 >
                   {msg.role === "assistant" ? (
-                    <Bot className="w-4 h-4 text-accent" />
+                    <Bot className="w-4 h-4 text-primary" />
                   ) : (
-                    <User className="w-3.5 h-3.5 text-text-secondary" />
+                    <User className="w-4 h-4 text-muted-foreground" />
                   )}
                 </div>
 
                 {/* Bubble */}
                 <div
                   className={cn(
-                    "rounded-xl px-4 py-3 text-[13.5px] leading-relaxed",
+                    "rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed shadow-md",
                     msg.role === "assistant"
-                      ? "bg-bg-card border border-border text-text-primary prose prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-bg-hover prose-pre:border prose-pre:border-border"
-                      : "bg-accent/10 border border-accent/20 text-text-primary"
+                      ? "bg-card/60 backdrop-blur-md border border-border/50 text-foreground prose prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30"
+                      : "bg-primary/10 border border-primary/20 text-foreground"
                   )}
                 >
                   {msg.role === "assistant" ? (
@@ -163,13 +163,13 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
               animate={{ opacity: 1, y: 0 }}
               className="flex gap-3"
             >
-              <div className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center flex-shrink-0">
-                <Bot className="w-4 h-4 text-accent" />
+              <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 shadow-lg flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-primary" />
               </div>
-              <div className="bg-bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-1.5">
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-text-muted" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-text-muted" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-text-muted" />
+              <div className="bg-card/60 backdrop-blur-md border border-border/50 rounded-2xl px-5 py-4 flex items-center gap-1.5 shadow-md">
+                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
               </div>
             </motion.div>
           )}
@@ -179,7 +179,7 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
         </ScrollArea>
 
         {/* Input */}
-        <div className="px-6 py-4 border-t border-border bg-bg-secondary/50">
+        <div className="px-6 py-4 border-t border-border bg-background/50">
           <form onSubmit={handleSubmit} className="relative">
             <AnimatedInput
               ref={inputRef}
@@ -188,7 +188,7 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask about this codebase…"
               disabled={isLoading}
-              className="w-full pl-4 pr-12 py-3"
+              className="w-full pl-4 pr-12 py-3 bg-card border border-border"
             />
             <button
               type="submit"
@@ -196,8 +196,8 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
               className={cn(
                 "absolute right-2 top-1/2 -translate-y-1/2",
                 "w-8 h-8 rounded-lg flex items-center justify-center",
-                "bg-accent text-white",
-                "hover:bg-accent-hover",
+                "bg-primary text-primary-foreground",
+                "hover:bg-primary/90",
                 "disabled:opacity-30 disabled:cursor-not-allowed",
                 "transition-all duration-200"
               )}
@@ -209,13 +209,13 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
       </div>
 
       {/* Sources Panel */}
-      <div className="w-72 border-l border-border bg-bg-secondary/60 flex flex-col flex-shrink-0 hidden lg:flex">
-        <div className="px-4 py-3 border-b border-border flex-shrink-0">
-          <h3 className="text-[12px] font-semibold text-text-primary flex items-center gap-1.5">
-            <FileCode2 className="w-3.5 h-3.5 text-accent" />
+      <div className="w-72 border-l border-border/30 bg-card/30 flex flex-col flex-shrink-0 hidden lg:flex">
+        <div className="px-4 py-4 border-b border-border/30 flex-shrink-0">
+          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+            <FileCode2 className="w-4 h-4 text-primary" />
             Retrieved Sources
           </h3>
-          <p className="text-[10px] text-text-muted mt-0.5">
+          <p className="text-xs text-muted-foreground mt-1">
             Citations for the latest answer
           </p>
         </div>
@@ -228,15 +228,15 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: i * 0.05 }}
-                className="bg-bg-card border border-border rounded-lg p-3"
+                className="bg-card/50 backdrop-blur-md border border-border/40 hover:border-border/80 transition-colors rounded-xl p-3 shadow-sm"
               >
-                <p className="text-[12px] font-mono text-accent break-all leading-relaxed">
+                <p className="text-xs font-mono text-primary break-all leading-relaxed">
                   {src.file_path}
                 </p>
               </motion.div>
             ))
           ) : (
-              <p className="text-[11px] text-text-muted italic">
+              <p className="text-[11px] text-muted-foreground italic">
                 No sources retrieved yet. Ask a question to see citations.
               </p>
             )}

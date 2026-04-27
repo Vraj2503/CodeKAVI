@@ -1,8 +1,10 @@
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
-import { BookOpen, GitBranch, Loader2, Search, Sparkles, MessageSquare, Code2 } from "lucide-react";
-import { cn } from "../lib/utils";
+import { GitBranch, Loader2, Search, Sparkles, MessageSquare, Code2 } from "lucide-react";
 import { AnimatedInput } from "./ui/AnimatedInput";
+import SpotlightBackground from "./ui/SpotlightBackground";
+import { HeroShutterText } from "./ui/HeroShutterText";
+import { Button } from "./ui/NeonButton";
 
 interface WelcomeScreenProps {
   onAnalyze: (url: string) => void;
@@ -21,74 +23,62 @@ export function WelcomeScreen({ onAnalyze, isAnalyzing, error }: WelcomeScreenPr
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center bg-bg-primary relative overflow-hidden">
-      {/* Subtle background glow */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full bg-accent/[0.03] blur-[120px]" />
-      </div>
-
+    <SpotlightBackground>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-lg px-6"
+        transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
+        className="relative z-10 w-full max-w-2xl px-6 flex flex-col items-center"
       >
-        {/* Icon */}
-        <div className="flex justify-center mb-6">
-          <div className="w-16 h-16 rounded-2xl bg-accent/10 border border-accent/20 flex items-center justify-center glow-pulse">
-            <BookOpen className="w-8 h-8 text-accent" />
-          </div>
-        </div>
-
         {/* Title */}
-        <h1 className="text-center text-2xl font-bold tracking-tight text-text-primary mb-2">
-          Understand Any Repository
-        </h1>
-        <p className="text-center text-[14px] text-text-secondary mb-8 max-w-sm mx-auto leading-relaxed">
+        <HeroShutterText 
+          text="CodeKavi" 
+          className="text-4xl md:text-5xl lg:text-6xl text-foreground mb-6 tracking-tight text-center"
+        />
+        
+        <p className="text-center text-base md:text-lg text-muted-foreground mb-10 max-w-lg leading-relaxed font-light">
           Paste a GitHub URL and start asking questions about the codebase. 
           Answers are grounded in actual source code.
         </p>
 
-        {/* Input */}
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="relative">
-            <GitBranch className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+        {/* Input Form */}
+        <form onSubmit={handleSubmit} className="w-full max-w-lg space-y-4">
+          <div className="relative group">
+            <GitBranch className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors z-10" />
             <AnimatedInput
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://github.com/user/repo"
-              className="w-full pl-11 pr-4 py-3.5"
+              className="w-full pl-12 pr-4 py-4 text-base bg-card/40 backdrop-blur-md border-border/50 text-foreground rounded-2xl"
             />
           </div>
-          <button
+          
+          <Button
             type="submit"
             disabled={!url.trim() || isAnalyzing}
-            className={cn(
-              "w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-[14px] font-semibold",
-              "bg-accent text-white",
-              "hover:bg-accent-hover active:scale-[0.98]",
-              "disabled:opacity-40 disabled:cursor-not-allowed",
-              "transition-all duration-200"
-            )}
+            className="w-full mt-4 h-14 rounded-2xl text-base font-semibold"
+            variant="solid"
+            neon={true}
           >
             {isAnalyzing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="flex items-center gap-2">
+                <Loader2 className="w-5 h-5 animate-spin" />
                 Cloning & Analyzing…
-              </>
+              </span>
             ) : (
-              <>
-                <Search className="w-4 h-4" />
+              <span className="flex items-center gap-2">
+                <Search className="w-5 h-5" />
                 Analyze Repository
-              </>
+              </span>
             )}
-          </button>
+          </Button>
+          
           {error && (
             <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-[12px] text-error text-center"
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-sm text-destructive text-center bg-destructive/10 py-2 rounded-lg border border-destructive/20"
             >
               {error}
             </motion.p>
@@ -96,7 +86,7 @@ export function WelcomeScreen({ onAnalyze, isAnalyzing, error }: WelcomeScreenPr
         </form>
 
         {/* Feature cards */}
-        <div className="mt-10 grid grid-cols-3 gap-3">
+        <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
           {[
             {
               icon: MessageSquare,
@@ -113,20 +103,25 @@ export function WelcomeScreen({ onAnalyze, isAnalyzing, error }: WelcomeScreenPr
               title: "Source Citations",
               desc: "Every answer links to real files",
             },
-          ].map((feature) => (
-            <div
+          ].map((feature, i) => (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.6 + i * 0.1, duration: 0.5 }}
               key={feature.title}
-              className="bg-bg-card/60 border border-border rounded-xl p-3 text-center"
+              className="bg-card/30 backdrop-blur-xl border border-border/40 hover:border-border hover:bg-card/50 transition-all duration-300 rounded-2xl p-5 text-center group"
             >
-              <feature.icon className="w-5 h-5 text-accent mx-auto mb-2" />
-              <p className="text-[12px] font-medium text-text-primary mb-0.5">
+              <div className="w-10 h-10 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
+                <feature.icon className="w-5 h-5 text-primary" />
+              </div>
+              <p className="text-sm font-semibold text-foreground mb-1">
                 {feature.title}
               </p>
-              <p className="text-[10px] text-text-muted leading-snug">{feature.desc}</p>
-            </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">{feature.desc}</p>
+            </motion.div>
           ))}
         </div>
       </motion.div>
-    </div>
+    </SpotlightBackground>
   );
 }
