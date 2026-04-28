@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import { GitBranch, Loader2, Search, Sparkles, MessageSquare, Code2 } from "lucide-react";
 import { AnimatedInput } from "./ui/AnimatedInput";
-import SpotlightBackground from "./ui/SpotlightBackground";
+import SpotlightBackground from "./ui/spotlight-background";
 import { HeroShutterText } from "./ui/HeroShutterText";
 import { Button } from "./ui/NeonButton";
 
@@ -25,10 +25,10 @@ export function WelcomeScreen({ onAnalyze, isAnalyzing, error }: WelcomeScreenPr
   return (
     <SpotlightBackground>
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 40 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
-        className="relative z-10 w-full max-w-2xl px-6 flex flex-col items-center"
+        transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
+        className="spotlight-inner"
       >
         {/* Title */}
         <HeroShutterText 
