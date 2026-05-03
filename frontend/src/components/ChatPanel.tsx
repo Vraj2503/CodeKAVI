@@ -1,34 +1,54 @@
-import { useState, useRef, useEffect, type FormEvent } from "react";
+import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SendHorizontal, Sparkles, FileCode2, Bot, User } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "../lib/utils";
 import { ScrollArea } from "./ui/ScrollArea";
-import { AnimatedInput } from "./ui/AnimatedInput";
+import ThemeSwitch from "./ui/theme-switch";
 import {
   chatWithRepo,
   type AnalyzeResponse,
   type ChatMessage,
   type ChatSource,
 } from "../lib/api";
+import { getMessages, saveMessage } from "../lib/sessions";
 
 interface ChatPanelProps {
   repoData: AnalyzeResponse;
+  sessionId: string | null;
 }
 
-export function ChatPanel({ repoData }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content: `Hey! I've analyzed **${repoData.owner}/${repoData.repo_name}** and indexed ${repoData.total_files} source files. Ask me anything about how this codebase works — I'll answer with references to the actual source code.`,
-      timestamp: Date.now(),
-    },
-  ]);
+export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
+  const welcomeMsg: ChatMessage = {
+    role: "assistant",
+    content: `Hey! I've analyzed **${repoData.owner}/${repoData.repo_name}** and indexed ${repoData.total_files} source files. Ask me anything about how this codebase works — I'll answer with references to the actual source code.`,
+    timestamp: Date.now(),
+  };
+
+  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [latestSources, setLatestSources] = useState<ChatSource[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load persisted messages from Supabase on mount
+  useEffect(() => {
+    if (!sessionId || sessionId === "dev-session") return;
+
+    setIsLoadingHistory(true);
+    getMessages(sessionId).then((persisted) => {
+      if (persisted.length > 0) {
+        setMessages(persisted);
+      } else {
+        // No history — show welcome message and save it
+        setMessages([welcomeMsg]);
+        saveMessage(sessionId, welcomeMsg);
+      }
+      setIsLoadingHistory(false);
+    });
+  }, [sessionId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -48,6 +68,11 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
     setInput("");
     setIsLoading(true);
 
+    // Persist user message
+    if (sessionId && sessionId !== "dev-session") {
+      saveMessage(sessionId, userMsg);
+    }
+
     try {
       const res = await chatWithRepo(repoData.repo_id, query);
       if (res.success) {
@@ -58,29 +83,37 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
+
+        // Persist assistant message
+        if (sessionId && sessionId !== "dev-session") {
+          saveMessage(sessionId, assistantMsg);
+        }
+
         const uniqueSources = Array.from(
           new Map((res.sources || []).map((s: ChatSource) => [s.file_path, s])).values()
         );
         setLatestSources(uniqueSources);
       } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: res.error || "No relevant context found. Try rephrasing your question.",
-            timestamp: Date.now(),
-          },
-        ]);
+        const errorMsg: ChatMessage = {
+          role: "assistant",
+          content: res.error || "No relevant context found. Try rephrasing your question.",
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, errorMsg]);
+        if (sessionId && sessionId !== "dev-session") {
+          saveMessage(sessionId, errorMsg);
+        }
       }
     } catch (err: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `⚠️ ${err.message || "Something went wrong"}`,
-          timestamp: Date.now(),
-        },
-      ]);
+      const errorMsg: ChatMessage = {
+        role: "assistant",
+        content: `⚠️ ${err.message || "Something went wrong"}`,
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      if (sessionId && sessionId !== "dev-session") {
+        saveMessage(sessionId, errorMsg);
+      }
     } finally {
       setIsLoading(false);
       inputRef.current?.focus();
@@ -92,87 +125,99 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
       {/* Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-border/30 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-primary/15 flex items-center justify-center glow-pulse">
-            <Sparkles className="w-4 h-4 text-primary" />
+        <div className="px-6 py-4 border-b border-border/30 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-primary/15 flex items-center justify-center glow-pulse">
+              <Sparkles className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-foreground">
+                Ask about {repoData.repo_name}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Powered by RAG — answers grounded in source code
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-base font-bold text-foreground">
-              Ask about {repoData.repo_name}
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Powered by RAG — answers grounded in source code
-            </p>
-          </div>
+          <ThemeSwitch />
         </div>
 
         {/* Messages */}
         <ScrollArea className="flex-1 px-6 py-4">
           <div className="space-y-4">
-            <AnimatePresence initial={false}>
-            {messages.map((msg, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.25 }}
-                className={cn(
-                  "flex gap-3 max-w-[85%]",
-                  msg.role === "user" && "ml-auto flex-row-reverse"
-                )}
-              >
-                {/* Avatar */}
-                <div
-                  className={cn(
-                    "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5",
-                    msg.role === "assistant"
-                      ? "bg-primary/20 border border-primary/30 shadow-lg shadow-primary/10"
-                      : "bg-card border border-border/50"
-                  )}
-                >
-                  {msg.role === "assistant" ? (
-                    <Bot className="w-4 h-4 text-primary" />
-                  ) : (
-                    <User className="w-4 h-4 text-muted-foreground" />
-                  )}
+            {isLoadingHistory ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                  <div className="w-4 h-4 border-2 border-muted-foreground/30 border-t-muted-foreground rounded-full animate-spin" />
+                  Loading chat history…
                 </div>
+              </div>
+            ) : (
+              <AnimatePresence initial={false}>
+                {messages.map((msg, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25 }}
+                    className={cn(
+                      "flex gap-3 max-w-[85%]",
+                      msg.role === "user" && "ml-auto flex-row-reverse"
+                    )}
+                  >
+                    {/* Avatar */}
+                    <div
+                      className={cn(
+                        "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5",
+                        msg.role === "assistant"
+                          ? "bg-primary/20 border border-primary/30 shadow-lg shadow-primary/10"
+                          : "bg-card border border-border/50"
+                      )}
+                    >
+                      {msg.role === "assistant" ? (
+                        <Bot className="w-4 h-4 text-primary" />
+                      ) : (
+                        <User className="w-4 h-4 text-muted-foreground" />
+                      )}
+                    </div>
 
-                {/* Bubble */}
-                <div
-                  className={cn(
-                    "rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed shadow-md",
-                    msg.role === "assistant"
-                      ? "bg-card/60 backdrop-blur-md border border-border/50 text-foreground prose prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30"
-                      : "bg-primary/10 border border-primary/20 text-foreground"
-                  )}
-                >
-                  {msg.role === "assistant" ? (
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  ) : (
-                    msg.content
-                  )}
+                    {/* Bubble */}
+                    <div
+                      className={cn(
+                        "rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed shadow-md",
+                        msg.role === "assistant"
+                          ? "bg-card/60 backdrop-blur-md border border-border/50 text-foreground prose dark:prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30"
+                          : "bg-primary/10 border border-primary/20 text-foreground"
+                      )}
+                    >
+                      {msg.role === "assistant" ? (
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      ) : (
+                        msg.content
+                      )}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            )}
+
+            {/* Typing indicator */}
+            {isLoading && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex gap-3"
+              >
+                <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 shadow-lg flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-4 h-4 text-primary" />
+                </div>
+                <div className="bg-card/60 backdrop-blur-md border border-border/50 rounded-2xl px-5 py-4 flex items-center gap-1.5 shadow-md">
+                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+                  <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
                 </div>
               </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {/* Typing indicator */}
-          {isLoading && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex gap-3"
-            >
-              <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 shadow-lg flex items-center justify-center flex-shrink-0">
-                <Bot className="w-4 h-4 text-primary" />
-              </div>
-              <div className="bg-card/60 backdrop-blur-md border border-border/50 rounded-2xl px-5 py-4 flex items-center gap-1.5 shadow-md">
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-                <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
-              </div>
-            </motion.div>
-          )}
+            )}
 
             <div ref={messagesEndRef} />
           </div>
@@ -181,20 +226,41 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
         {/* Input */}
         <div className="px-6 py-4 border-t border-border bg-background/50">
           <form onSubmit={handleSubmit} className="relative">
-            <AnimatedInput
+            <textarea
               ref={inputRef}
-              type="text"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Auto-resize: reset then grow to content
+                e.target.style.height = "auto";
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+              }}
+              onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e as unknown as FormEvent);
+                  // Reset height after send
+                  if (inputRef.current) {
+                    inputRef.current.style.height = "auto";
+                  }
+                }
+              }}
               placeholder="Ask about this codebase…"
               disabled={isLoading}
-              className="w-full pl-4 pr-12 py-3 bg-card border border-border"
+              rows={1}
+              className={cn(
+                "w-full pl-4 pr-12 py-3 bg-card border border-border rounded-xl",
+                "text-sm text-foreground placeholder:text-muted-foreground",
+                "focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20",
+                "resize-none overflow-hidden",
+                "transition-colors duration-200"
+              )}
             />
             <button
               type="submit"
               disabled={!input.trim() || isLoading}
               className={cn(
-                "absolute right-2 top-1/2 -translate-y-1/2",
+                "absolute right-2 bottom-3",
                 "w-8 h-8 rounded-lg flex items-center justify-center",
                 "bg-primary text-primary-foreground",
                 "hover:bg-primary/90",
@@ -246,4 +312,3 @@ export function ChatPanel({ repoData }: ChatPanelProps) {
     </div>
   );
 }
-

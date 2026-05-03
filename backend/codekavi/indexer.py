@@ -42,7 +42,7 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = client.models.embed_content(
-                model="gemini-embedding-001",
+                model="gemini-embedding-2",
                 contents=texts,
             )
             return [emb.values for emb in response.embeddings]
