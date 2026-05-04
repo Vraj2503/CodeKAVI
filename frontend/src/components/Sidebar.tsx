@@ -5,6 +5,7 @@ import {
   GitBranch,
   Loader2,
   Search,
+  ArrowLeft,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { AnalyzeResponse } from "../lib/api";
@@ -17,9 +18,10 @@ interface SidebarProps {
   isAnalyzing: boolean;
   onAnalyze: (url: string) => void;
   error: string | null;
+  onBack?: () => void;
 }
 
-export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProps) {
+export function Sidebar({ repoData, isAnalyzing, onAnalyze, error, onBack }: SidebarProps) {
   const [url, setUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -35,6 +37,15 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
       {/* Logo */}
       <div className="px-5 py-5 border-b border-border/30">
         <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+              title="Back to dashboard"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
           <div className="w-10 h-10 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center glow-pulse">
             <BookOpen className="w-5 h-5 text-primary" />
           </div>
@@ -42,9 +53,6 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error }: SidebarProp
             <h1 className="text-base font-bold tracking-tight text-foreground">
               CodeKavi
             </h1>
-            <p className="text-xs text-muted-foreground leading-none mt-1">
-              NotebookLM for GitHub
-            </p>
           </div>
         </div>
       </div>

@@ -148,9 +148,6 @@
 /* ══════════════════════════════════════════
    BASE STYLES
    ══════════════════════════════════════════ */
-html {
-  color-scheme: dark;
-}
 
 body {
   @apply bg-background text-foreground font-sans antialiased;
@@ -225,8 +222,9 @@ body {
 .spotlight-container {
   position: relative;
   width: 100%;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   background-color: var(--background);
 }
 
@@ -245,7 +243,16 @@ body {
   width: min(90vh, 700px);
   height: min(90vh, 700px);
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: radial-gradient(
+    circle,
+    rgba(0, 0, 0, 0.04) 0%,
+    transparent 70%
+  );
+}
+
+.dark .spotlight {
+  border-color: rgba(255, 255, 255, 0.06);
   background: radial-gradient(
     circle,
     rgba(255, 255, 255, 0.025) 0%,
@@ -281,12 +288,14 @@ body {
 .spotlight-content {
   position: relative;
   z-index: 10;
-  height: 100%;
+  min-height: 100vh;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  padding-top: 8vh;
+  padding-bottom: 4rem;
 }
 
 /* Demo page styles (from 21st.dev) */
