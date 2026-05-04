@@ -14,11 +14,10 @@ Handles:
 from __future__ import annotations
 
 import os
-import time
 import logging
 from dataclasses import dataclass, field
 
-from codekavi.llm.providers import LLMProvider, Message
+from codekavi.llm.providers import GeminiProvider, Message
 from codekavi.llm.prompts import (
     build_file_explanation_prompt,
     build_architecture_prompt,
@@ -68,7 +67,7 @@ class Explainer:
     Main explanation engine.
 
     Usage:
-        provider = get_provider("groq", api_key="...")
+        provider = get_provider()
         explainer = Explainer(provider)
 
         # Explain a single file
@@ -83,7 +82,7 @@ class Explainer:
 
     def __init__(
         self,
-        provider: LLMProvider,
+        provider: GeminiProvider,
         model: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 4096,
@@ -261,10 +260,6 @@ class Explainer:
             result = self.explain_file(profile, repo_root, repo_name)
             results.append(result)
 
-            # Rate limiting delay between requests (skip after last)
-            if i < len(candidates) - 1 and self.rate_limit_delay > 0:
-                time.sleep(self.rate_limit_delay)
-
         return results
 
     # ─────────────────────────────────────────
@@ -396,9 +391,7 @@ class Explainer:
                 logger.error(f"Error summarizing module {mod_name}: {e}")
                 summaries[mod_name] = f"*Error generating summary: {e}*"
 
-            # Rate limiting
-            if self.rate_limit_delay > 0:
-                time.sleep(self.rate_limit_delay)
+
 
         return summaries
 

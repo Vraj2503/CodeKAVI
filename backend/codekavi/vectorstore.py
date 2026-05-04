@@ -48,6 +48,9 @@ class ZillizClient:
             logger.error(f"Error connecting to Zilliz: {e}")
             return False
 
+    # Fields that MUST exist in the schema (added for metadata filtering)
+    _REQUIRED_FIELDS = {"id", "repo_id", "file_path", "role", "language", "layer", "text", "vector"}
+
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
         if not self.connect():
@@ -72,14 +75,31 @@ class ZillizClient:
             except Exception:
                 pass
 
+            # Safety check: if the existing collection is missing new metadata
+            # fields (language, layer), drop and recreate so indexer can store them.
+            try:
+                existing_field_names = {f.name for f in self.collection.schema.fields}
+                if not self._REQUIRED_FIELDS.issubset(existing_field_names):
+                    missing = self._REQUIRED_FIELDS - existing_field_names
+                    logger.warning(
+                        f"Collection missing fields {missing}. "
+                        "Dropping and recreating collection."
+                    )
+                    utility.drop_collection(COLLECTION_NAME)
+                    return self.setup_collection()
+            except Exception:
+                pass
+
             return self.collection
 
-        # Define schema
+        # Define schema — includes language and layer for metadata filtering
         fields = [
             FieldSchema(name="id", dtype=DataType.VARCHAR, max_length=64, is_primary=True),
             FieldSchema(name="repo_id", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="file_path", dtype=DataType.VARCHAR, max_length=512),
             FieldSchema(name="role", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="language", dtype=DataType.VARCHAR, max_length=64),
+            FieldSchema(name="layer", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
         ]
@@ -116,11 +136,23 @@ class ZillizClient:
         except Exception as e:
             logger.error(f"Error clearing repo {repo_id}: {e}")
 
-    def search(self, query: str, repo_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query: str,
+        repo_id: str,
+        limit: int = 5,
+        layer_filter: str | None = None,
+    ) -> List[Dict[str, Any]]:
         """
         Embeds the query using Gemini and searches Zilliz.
         Returns the top 'limit' matching code chunks.
         Retries on transient errors with exponential backoff.
+
+        Args:
+            query: The user's question.
+            repo_id: Repository identifier.
+            limit: Maximum results to return.
+            layer_filter: If "exclude_frontend", excludes frontend and test chunks.
         """
         if not self.collection:
             self.setup_collection()
@@ -140,7 +172,11 @@ class ZillizClient:
                 query_vector = response.embeddings[0].values
 
                 search_params = {"metric_type": "COSINE", "params": {}}
+
+                # Build filter expression
                 expr = f"repo_id == '{repo_id}'"
+                if layer_filter == "exclude_frontend":
+                    expr += ' and layer not in ["frontend", "test"]'
 
                 self.collection.load()
                 results = self.collection.search(
@@ -149,7 +185,7 @@ class ZillizClient:
                     param=search_params,
                     limit=limit,
                     expr=expr,
-                    output_fields=["file_path", "role", "text"],
+                    output_fields=["file_path", "role", "language", "layer", "text"],
                 )
 
                 formatted_results = []
@@ -159,6 +195,8 @@ class ZillizClient:
                             {
                                 "file_path": hit.entity.get("file_path"),
                                 "role": hit.entity.get("role"),
+                                "language": hit.entity.get("language", ""),
+                                "layer": hit.entity.get("layer", ""),
                                 "text": hit.entity.get("text"),
                                 "score": hit.distance,
                             }

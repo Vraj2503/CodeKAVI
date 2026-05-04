@@ -3,22 +3,34 @@ providers.py — LLM provider abstraction layer.
 
 Provides a unified interface over different LLM providers.
 Currently supports:
-  - Groq (primary) — ultra-fast inference, OpenAI-compatible API
+  - Groq (default for generation) — via OpenAI-compatible SDK
+  - Gemini — Google's Gemini 2.0 Flash model (used for embeddings)
 
-Designed for easy extension to OpenAI, Anthropic, Gemini, etc.
+Groq uses the OpenAI SDK pointed at Groq's endpoint.
+Gemini uses the google-genai SDK with the same import pattern as indexer.py.
 """
 
 from __future__ import annotations
 
 import os
+import time
+import asyncio
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Generator
+from typing import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
+
 import dotenv
 
 dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
+
+# Thread pool for wrapping sync SDK calls in async handlers
+_executor = ThreadPoolExecutor(max_workers=6)
+
+# Retry config for 429 rate-limit errors
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [5, 15, 30]  # seconds between retries
 
 
 # ─────────────────────────────────────────────
@@ -44,117 +56,40 @@ class Message:
 
 
 # ─────────────────────────────────────────────
-# Base provider interface
+# Groq provider (DEFAULT for generation)
 # ─────────────────────────────────────────────
 
-class LLMProvider(ABC):
+from openai import OpenAI
+
+
+class GroqProvider:
     """
-    Abstract base class for LLM providers.
+    Groq LLM provider — uses Groq's OpenAI-compatible API.
 
-    Subclasses must implement:
-      - complete()   — standard request/response
-      - stream()     — streaming token-by-token (optional)
-      - available_models() — list of supported models
-    """
-
-    name: str = "base"
-
-    @abstractmethod
-    def complete(
-        self,
-        messages: list[Message],
-        model: str | None = None,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-        json_mode: bool = False,
-    ) -> LLMResponse:
-        """Send a completion request and return the full response."""
-        ...
-
-    def stream(
-        self,
-        messages: list[Message],
-        model: str | None = None,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-    ) -> Generator[str, None, None]:
-        """Stream tokens one at a time. Default falls back to complete()."""
-        response = self.complete(messages, model, temperature, max_tokens)
-        yield response.content
-
-    @abstractmethod
-    def available_models(self) -> list[str]:
-        """Return list of models this provider supports."""
-        ...
-
-    def _messages_to_dicts(self, messages: list[Message]) -> list[dict]:
-        """Convert Message objects to API-ready dicts."""
-        return [{"role": m.role, "content": m.content} for m in messages]
-
-
-# ─────────────────────────────────────────────
-# Groq provider
-# ─────────────────────────────────────────────
-
-# Models available on Groq (as of April 2026)
-GROQ_MODELS = {
-    "llama-3.3-70b-versatile": {
-        "context_window": 32768,
-        "description": "Llama 3.3 70B — high quality, versatile",
-        "tier": "primary",
-    },
-    "llama-3.1-8b-instant": {
-        "context_window": 8192,
-        "description": "Llama 3.1 8B — fast, cost-effective",
-        "tier": "fast",
-    },
-    "llama4-scout-17b-16e-instruct": {
-        "context_window": 8192,
-        "description": "Llama 4 Scout 17B — newer architecture",
-        "tier": "primary",
-    },
-    "mixtral-8x7b-32768": {
-        "context_window": 32768,
-        "description": "Mixtral 8x7B — good balance of speed + quality",
-        "tier": "primary",
-    },
-}
-
-# Default model to use
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
-
-
-class GroqProvider(LLMProvider):
-    """
-    Groq LLM provider — ultra-fast inference via GroqCloud.
-
-    Uses the official `groq` Python SDK.
-    API key is read from GROQ_API_KEY env var or passed directly.
+    API key is read from GROQ_API_KEY env var.
+    Uses the openai SDK pointed at https://api.groq.com/openai/v1.
     """
 
     name = "groq"
 
-    def __init__(self, api_key: str | None = None, default_model: str | None = None):
-        self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
-        self.default_model = default_model or GROQ_DEFAULT_MODEL
+    def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
+        self.model_name = model_name
+        api_key = os.environ.get("GROQ_API_KEY", "")
 
-        if not self.api_key:
+        if not api_key:
             raise ValueError(
-                "Groq API key not found. Set the GROQ_API_KEY environment variable "
-                "or pass api_key directly."
+                "GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable."
             )
 
-        # Lazy import to avoid forcing groq as a hard dependency
-        try:
-            from groq import Groq
-        except ImportError:
-            raise ImportError(
-                "The 'groq' package is required for GroqProvider. "
-                "Install it with: pip install groq"
-            )
+        self._client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=api_key,
+        )
+        logger.info(f"GroqProvider initialized with model={self.model_name}")
 
-        self._client = Groq(api_key=self.api_key)
-        logger.info(f"GroqProvider initialized with model={self.default_model}")
+    # ─────────────────────────────────────────
+    # Sync interface (backward-compatible with Explainer)
+    # ─────────────────────────────────────────
 
     def complete(
         self,
@@ -164,105 +99,377 @@ class GroqProvider(LLMProvider):
         max_tokens: int = 4096,
         json_mode: bool = False,
     ) -> LLMResponse:
-        """Send a chat completion request to Groq."""
-        model = model or self.default_model
-        msg_dicts = self._messages_to_dicts(messages)
+        """
+        SYNCHRONOUS method matching the original GroqProvider.complete() interface.
+
+        Converts Message list to OpenAI chat format, calls Groq via OpenAI SDK.
+        Retries up to 3 times on 429 rate-limit errors with exponential backoff.
+        """
+        model_name = model or self.model_name
+
+        # Convert Message objects to OpenAI chat format
+        openai_messages = [{"role": m.role, "content": m.content} for m in messages]
 
         kwargs = {
-            "messages": msg_dicts,
-            "model": model,
+            "model": model_name,
+            "messages": openai_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
-        try:
-            response = self._client.chat.completions.create(**kwargs)
-        except Exception as e:
-            logger.error(f"Groq API error: {e}")
-            raise
+        # Retry loop for 429 errors
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = self._client.chat.completions.create(**kwargs)
+                break
+            except Exception as e:
+                if "429" in str(e) and attempt < _MAX_RETRIES:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.error(f"Groq API error: {e}")
+                raise
 
+        # Extract response
         choice = response.choices[0]
+        content = choice.message.content or ""
+
+        # Extract usage
         usage = {}
         if response.usage:
             usage = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
+                "prompt_tokens": response.usage.prompt_tokens or 0,
+                "completion_tokens": response.usage.completion_tokens or 0,
+                "total_tokens": response.usage.total_tokens or 0,
             }
 
+        finish_reason = choice.finish_reason or ""
+
         return LLMResponse(
-            content=choice.message.content or "",
-            model=model,
+            content=content,
+            model=model_name,
             provider=self.name,
             usage=usage,
-            finish_reason=choice.finish_reason or "",
+            finish_reason=finish_reason,
         )
 
-    def stream(
+    # ─────────────────────────────────────────
+    # Async interface (for orchestrator)
+    # ─────────────────────────────────────────
+
+    async def generate(
         self,
-        messages: list[Message],
-        model: str | None = None,
+        system_prompt: str,
+        user_prompt: str,
         temperature: float = 0.3,
         max_tokens: int = 4096,
-    ) -> Generator[str, None, None]:
-        """Stream tokens from Groq."""
-        model = model or self.default_model
-        msg_dicts = self._messages_to_dicts(messages)
+        json_mode: bool = False,
+    ) -> str:
+        """
+        ASYNC method for the orchestrator. Non-blocking.
 
-        try:
-            stream = self._client.chat.completions.create(
-                messages=msg_dicts,
-                model=model,
+        Wraps the sync OpenAI/Groq call in run_in_executor.
+        Retries up to 3 times on 429 rate-limit errors with exponential backoff.
+        """
+        loop = asyncio.get_event_loop()
+
+        def _sync_call():
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_prompt})
+
+            kwargs = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            # Retry loop for 429 errors
+            for attempt in range(_MAX_RETRIES + 1):
+                try:
+                    response = self._client.chat.completions.create(**kwargs)
+                    return response.choices[0].message.content or ""
+                except Exception as e:
+                    if "429" in str(e) and attempt < _MAX_RETRIES:
+                        delay = _RETRY_DELAYS[attempt]
+                        logger.warning(
+                            f"Groq 429 rate limit hit in generate() "
+                            f"(attempt {attempt + 1}/{_MAX_RETRIES}). "
+                            f"Retrying in {delay}s..."
+                        )
+                        time.sleep(delay)
+                        continue
+                    logger.error(f"Groq API error in generate(): {e}")
+                    raise
+
+        return await loop.run_in_executor(_executor, _sync_call)
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """
+        ASYNC streaming for chat streaming.
+
+        Uses stream=True on the OpenAI/Groq call, yields text chunks.
+        """
+        loop = asyncio.get_event_loop()
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
+        # Run the initial stream creation in executor (blocking call)
+        def _create_stream():
+            return self._client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stream=True,
             )
 
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta and delta.content:
-                    yield delta.content
+        stream = await loop.run_in_executor(_executor, _create_stream)
 
-        except Exception as e:
-            logger.error(f"Groq streaming error: {e}")
-            raise
+        # Iterate through the stream chunks
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     def available_models(self) -> list[str]:
-        """Return list of Groq-supported models."""
-        return list(GROQ_MODELS.keys())
+        """Return list of supported models."""
+        return ["llama-3.3-70b-versatile"]
 
 
 # ─────────────────────────────────────────────
-# Provider factory
+# Gemini provider (kept for embeddings)
 # ─────────────────────────────────────────────
 
-_PROVIDERS = {
-    "groq": GroqProvider,
-}
+from google import genai
+from google.genai import types
 
 
-def get_provider(
-    name: str = "groq",
-    api_key: str | None = None,
-    default_model: str | None = None,
-) -> LLMProvider:
+class GeminiProvider:
     """
-    Factory function to create an LLM provider by name.
+    Gemini LLM provider — uses Google's Gemini models via the google-genai SDK.
+
+    API key is read from GEMINI_API_KEY env var.
+    Kept in the codebase for embedding use in indexer.py / vectorstore.py.
+    """
+
+    name = "gemini"
+
+    def __init__(self, model_name: str = "gemini-2.0-flash"):
+        self.model_name = model_name
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY not found. Set the GEMINI_API_KEY environment variable."
+            )
+
+        self._client = genai.Client(api_key=api_key)
+        logger.info(f"GeminiProvider initialized with model={self.model_name}")
+
+    # ─────────────────────────────────────────
+    # Sync interface (backward-compatible with Explainer)
+    # ─────────────────────────────────────────
+
+    def complete(
+        self,
+        messages: list[Message],
+        model: str | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """
+        SYNCHRONOUS method matching the original GroqProvider.complete() interface.
+
+        Converts the Message list (system + user roles) into Gemini's
+        system_instruction + contents format.
+
+        Keeps existing explainer.py working without any changes.
+        """
+        model_name = model or self.model_name
+
+        # Extract system and user messages from the Message list
+        system_parts = []
+        user_parts = []
+        for msg in messages:
+            if msg.role == "system":
+                system_parts.append(msg.content)
+            else:
+                user_parts.append(msg.content)
+
+        system_instruction = "\n\n".join(system_parts) if system_parts else None
+        user_content = "\n\n".join(user_parts) if user_parts else ""
+
+        # Build config
+        config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if json_mode:
+            config_kwargs["response_mime_type"] = "application/json"
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        try:
+            response = self._client.models.generate_content(
+                model=model_name,
+                contents=user_content,
+                config=config,
+            )
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            raise
+
+        # Extract response text
+        content = response.text or ""
+
+        # Extract usage metadata
+        usage = {}
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
+            usage = {
+                "prompt_tokens": getattr(um, "prompt_token_count", 0),
+                "completion_tokens": getattr(um, "candidates_token_count", 0),
+                "total_tokens": getattr(um, "total_token_count", 0),
+            }
+
+        # Extract finish reason
+        finish_reason = ""
+        if response.candidates:
+            fr = response.candidates[0].finish_reason
+            finish_reason = str(fr) if fr else ""
+
+        return LLMResponse(
+            content=content,
+            model=model_name,
+            provider=self.name,
+            usage=usage,
+            finish_reason=finish_reason,
+        )
+
+    # ─────────────────────────────────────────
+    # Async interface (for orchestrator)
+    # ─────────────────────────────────────────
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+    ) -> str:
+        """
+        ASYNC method for the new orchestrator. Non-blocking.
+
+        Wraps the sync SDK call in run_in_executor.
+        """
+        loop = asyncio.get_event_loop()
+
+        def _sync_call():
+            config_kwargs = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+            if system_prompt:
+                config_kwargs["system_instruction"] = system_prompt
+            if json_mode:
+                config_kwargs["response_mime_type"] = "application/json"
+
+            config = types.GenerateContentConfig(**config_kwargs)
+
+            response = self._client.models.generate_content(
+                model=self.model_name,
+                contents=user_prompt,
+                config=config,
+            )
+            return response.text or ""
+
+        return await loop.run_in_executor(_executor, _sync_call)
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+    ) -> AsyncIterator[str]:
+        """
+        ASYNC streaming for future chat streaming.
+
+        Uses generate_content_stream, yields text chunks.
+        """
+        loop = asyncio.get_event_loop()
+
+        config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        # Run the initial stream creation in executor (blocking call)
+        def _create_stream():
+            return self._client.models.generate_content_stream(
+                model=self.model_name,
+                contents=user_prompt,
+                config=config,
+            )
+
+        stream = await loop.run_in_executor(_executor, _create_stream)
+
+        # Iterate through the stream chunks
+        for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+
+    def available_models(self) -> list[str]:
+        """Return list of supported models."""
+        return ["gemini-2.0-flash"]
+
+
+# ─────────────────────────────────────────────
+# Provider factory (cached singleton)
+# ─────────────────────────────────────────────
+
+_provider_cache: dict[str, GroqProvider | GeminiProvider] = {}
+
+
+def get_provider(task: str = "chat") -> GroqProvider:
+    """
+    Returns GroqProvider by default for all generation tasks.
+    Gemini is only used for embeddings (via indexer.py / vectorstore.py directly).
 
     Args:
-        name:          Provider name ("groq", ...)
-        api_key:       API key (or set via env var)
-        default_model: Override the default model
+        task: Task type hint (e.g. "chat", "overview", "viz_data").
+              Currently unused but reserved for future model routing.
 
     Returns:
-        An initialized LLMProvider instance.
+        A cached GroqProvider instance.
     """
-    provider_cls = _PROVIDERS.get(name.lower())
-    if not provider_cls:
-        available = ", ".join(_PROVIDERS.keys())
-        raise ValueError(f"Unknown provider '{name}'. Available: {available}")
-
-    return provider_cls(api_key=api_key, default_model=default_model)
+    if "groq" not in _provider_cache:
+        _provider_cache["groq"] = GroqProvider()
+    return _provider_cache["groq"]

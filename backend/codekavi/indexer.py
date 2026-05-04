@@ -11,6 +11,7 @@ from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from codekavi.vectorstore import zilliz_client
+from codekavi.config import EXTENSION_LANGUAGE_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,33 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
                 continue
             else:
                 raise  # non-retryable or exhausted retries
+
+
+def _detect_language(file_path: str) -> str:
+    """Detect language from file extension using the shared config map."""
+    _, ext = os.path.splitext(file_path)
+    return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")
+
+
+def _detect_layer(file_path: str) -> str:
+    """
+    Detect architectural layer from path keywords.
+    Used for metadata-based filtering in RAG retrieval.
+    """
+    path_lower = file_path.lower()
+    checks = [
+        (["route", "controller", "api", "endpoint"], "api"),
+        (["model", "schema", "entity"], "model"),
+        (["service", "logic", "handler", "pipeline", "rag"], "service"),
+        (["util", "helper", "lib"], "utility"),
+        (["config", "setting"], "config"),
+        (["component", "page", "layout", "ui", "css", "style", "theme"], "frontend"),
+        (["test", "spec"], "test"),
+    ]
+    for keywords, layer in checks:
+        if any(kw in path_lower for kw in keywords):
+            return layer
+    return "other"
 
 
 def index_repository(
@@ -122,12 +150,16 @@ def index_repository(
             repo_ids = [m["repo_id"] for m in current_batch_metadata]
             file_paths = [m["file_path"] for m in current_batch_metadata]
             roles = [m["role"] for m in current_batch_metadata]
+            languages = [m["language"] for m in current_batch_metadata]
+            layers = [m["layer"] for m in current_batch_metadata]
 
             insert_data = [
                 ids,
                 repo_ids,
                 file_paths,
                 roles,
+                languages,
+                layers,
                 current_batch_texts,
                 embeddings,
             ]
@@ -185,6 +217,8 @@ def index_repository(
                     "repo_id": repo_id[:64],
                     "file_path": file_path[:512],
                     "role": role[:64],
+                    "language": _detect_language(file_path)[:64],
+                    "layer": _detect_layer(file_path)[:32],
                 }
             )
 

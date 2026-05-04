@@ -218,3 +218,11 @@ FILENAME_LANGUAGE_MAP = {
     "build.gradle": "Gradle",
     "pom.xml": "Maven",
 }
+
+
+# ─────────────────────────────────────────────
+# Smart file selection
+# ─────────────────────────────────────────────
+MAX_FILES_FOR_LLM = 30
+MAX_TOTAL_INPUT_TOKENS = 80000
+MAX_PARALLEL_LLM_CALLS = 5
