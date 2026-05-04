@@ -226,3 +226,12 @@ FILENAME_LANGUAGE_MAP = {
 MAX_FILES_FOR_LLM = 30
 MAX_TOTAL_INPUT_TOKENS = 80000
 MAX_PARALLEL_LLM_CALLS = 5
+
+# ─────────────────────────────────────────────
+# Embedding model (single source of truth)
+# ─────────────────────────────────────────────
+# Used by both indexer.py (write path) and vectorstore.py (read path).
+# If you change this, ALL previously indexed repos must be re-analyzed
+# because the old vectors will be in a different embedding space.
+EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMENSION = 3072

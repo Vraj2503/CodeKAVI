@@ -17,8 +17,10 @@ from pymilvus import (
 
 logger = logging.getLogger(__name__)
 
+from codekavi.config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
+
 # Constants for schema
-DIMENSION = 3072  # gemini-embedding-001 is 3072-dimensional
+DIMENSION = EMBEDDING_DIMENSION
 COLLECTION_NAME = "codekavi_chunks"
 
 # Retry settings for transient errors
@@ -148,6 +150,9 @@ class ZillizClient:
         Returns the top 'limit' matching code chunks.
         Retries on transient errors with exponential backoff.
 
+        ⚠ Requires re-indexing if EMBEDDING_MODEL changes — old vectors
+        live in a different embedding space and will return poor results.
+
         Args:
             query: The user's question.
             repo_id: Repository identifier.
@@ -166,7 +171,7 @@ class ZillizClient:
                 api_key = os.environ.get("GEMINI_API_KEY")
                 client = genai.Client(api_key=api_key)
                 response = client.models.embed_content(
-                    model="gemini-embedding-001",
+                    model=EMBEDDING_MODEL,
                     contents=[query],
                 )
                 query_vector = response.embeddings[0].values

@@ -11,7 +11,7 @@ from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from codekavi.vectorstore import zilliz_client
-from codekavi.config import EXTENSION_LANGUAGE_MAP
+from codekavi.config import EXTENSION_LANGUAGE_MAP, EMBEDDING_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = client.models.embed_content(
-                model="gemini-embedding-2",
+                model=EMBEDDING_MODEL,
                 contents=texts,
             )
             return [emb.values for emb in response.embeddings]
