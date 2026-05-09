@@ -12,6 +12,7 @@ Event types:
   - "warning"  → {section, message} for failed sections
 """
 
+
 import asyncio
 import json
 import os
@@ -113,33 +114,37 @@ class ExplanationOrchestrator:
 
     async def _run_batch(self, tasks: dict, p_start: int, p_end: int):
         """Run a dict of {name: coroutine} in parallel, yield events as each completes."""
-        pending = {asyncio.create_task(coro): name for name, coro in tasks.items()}
+        named_tasks = {
+            name: asyncio.create_task(coro)
+            for name, coro in tasks.items()
+        }
         done_count = 0
-        total = len(pending)
-        for done_task in asyncio.as_completed(list(pending.keys())):
-            task_obj = await asyncio.ensure_future(done_task)
-            # Find which task completed
-            for t, name in pending.items():
-                if t.done():
-                    try:
-                        result = t.result()
-                        self.sections_completed += 1
-                        done_count += 1
-                        progress = p_start + int((done_count / total) * (p_end - p_start))
-                        yield {"type": "section", "data": {"name": name, **result}}
-                        yield self._progress(
-                            progress, "generating",
-                            f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})"
-                        )
-                    except Exception as e:
-                        self.sections_completed += 1
-                        done_count += 1
-                        logger.error(f"Section {name} failed: {e}")
-                        yield {"type": "warning", "data": {
-                            "section": name, "message": str(e)[:200]}}
-                    # Remove from pending so we don't process it again
-                    del pending[t]
-                    break
+        total = len(named_tasks)
+
+        pending = set(named_tasks.values())
+        task_to_name = {v: k for k, v in named_tasks.items()}
+
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                name = task_to_name[task]
+                self.sections_completed += 1
+                done_count += 1
+                progress = p_start + int((done_count / total) * (p_end - p_start))
+                try:
+                    result = task.result()
+                    yield {"type": "section", "data": {"name": name, **result}}
+                    yield self._progress(
+                        progress, "generating",
+                        f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})"
+                    )
+                except Exception as e:
+                    logger.error(f"Section {name} failed: {e}")
+                    yield {"type": "warning", "data": {
+                        "section": name, "message": str(e)[:200]
+                    }}
 
     # ─────────────────────────────────────────
     # Section generator
@@ -162,10 +167,11 @@ class ExplanationOrchestrator:
         if json_mode:
             try:
                 parsed = json.loads(response)
-                viz_data = parsed.get("visualization", parsed)
-                response = parsed.get("content", response)
+                raw_viz = parsed.get("visualization", {})
+                viz_data = {"root": raw_viz} if raw_viz else None
+                response = parsed.get("content", "")
             except json.JSONDecodeError:
-                pass
+                viz_data = None
 
         if viz_data is None:
             viz_data = self._auto_viz(name)
@@ -183,9 +189,12 @@ class ExplanationOrchestrator:
     # ─────────────────────────────────────────
 
     _SYSTEM_PROMPT = (
-        "You are a senior software architect explaining a codebase. Be specific — "
-        "reference actual file names and function names. Use markdown formatting "
-        "with headers, bullet points, and code blocks."
+        "You are a senior software architect explaining a codebase. "
+        "Be specific — reference actual file names and function names. "
+        "Use markdown formatting with headers, bullet points, and code blocks. "
+        "Do NOT generate ASCII diagrams, mermaid syntax, or any kind of "
+        "visual diagram in your response. Write prose and structured "
+        "markdown only. Visualization data is handled separately."
     )
 
     def _prompt_overview(self, file_contents: dict, graph_data: dict) -> dict:
@@ -408,7 +417,7 @@ class ExplanationOrchestrator:
                     code = f.read(2000)
                 lines = code.count("\n") + 1
                 snippets.append({
-                    "file": match,
+                    "file_path": match,
                     "code": code,
                     "line_start": 1,
                     "line_end": lines,
@@ -423,11 +432,12 @@ class ExplanationOrchestrator:
     # ─────────────────────────────────────────
 
     def _auto_viz(self, section_name: str) -> dict | None:
-        """Generate visualization data WITHOUT any LLM call."""
         if section_name == "dependencies":
             return self._auto_viz_dependencies()
         elif section_name == "complexity":
             return self._auto_viz_complexity()
+        elif section_name in ("architecture", "data_flow"):
+            return self._auto_viz_dependencies()  # reuse same graph data
         return None
 
     def _auto_viz_dependencies(self) -> dict:
@@ -445,7 +455,7 @@ class ExplanationOrchestrator:
                 nodes.append({
                     "id": src,
                     "label": os.path.basename(src),
-                    "layer": self._detect_layer(src),
+                    "type": self._detect_layer(src),
                 })
             target_list = targets if isinstance(targets, list) else [targets]
             for t in target_list:
@@ -456,24 +466,21 @@ class ExplanationOrchestrator:
                     nodes.append({
                         "id": t,
                         "label": os.path.basename(t),
-                        "layer": self._detect_layer(t),
+                        "type": self._detect_layer(t),
                     })
                 if t in seen_nodes:
                     edges.append({"source": src, "target": t})
 
         return {"nodes": nodes, "edges": edges}
 
-    def _auto_viz_complexity(self) -> list[dict]:
-        """Build complexity viz from tree + classification."""
-        result = []
+    def _auto_viz_complexity(self) -> dict:
+        children = []
         for fp in (self.classification or [])[:80]:
-            result.append({
-                "path": fp.get("path", ""),
+            children.append({
                 "name": os.path.basename(fp.get("path", "")),
-                "score": fp.get("importance_score", 0),
-                "layer": self._detect_layer(fp.get("path", "")),
+                "value": fp.get("importance_score", 1),
             })
-        return result
+        return {"name": "Complexity", "children": children}
 
     def _detect_layer(self, path: str) -> str:
         """Detect architectural layer from path keywords."""
@@ -551,10 +558,10 @@ class ExplanationOrchestrator:
 
     def _viz_type(self, name: str) -> str | None:
         viz_types = {
-            "dependencies": "graph",
+            "dependencies": "dependency_graph",
             "complexity": "treemap",
-            "architecture": "layers",
-            "data_flow": "flow",
-            "mindmap": "mindmap",
+            "architecture": "architecture_graph",
+            "data_flow": "flow_diagram",
+            "mindmap": "radial_mindmap",
         }
         return viz_types.get(name)

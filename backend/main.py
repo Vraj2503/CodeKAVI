@@ -8,7 +8,9 @@ This file only wires up the app, middleware, and health check.
 import os
 
 from fastapi import FastAPI
+# pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
+# pyrefly: ignore [missing-import]
 from dotenv import load_dotenv
 
 from codekavi.routes import api_router

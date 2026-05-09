@@ -6,6 +6,8 @@ import {
   Loader2,
   Search,
   ArrowLeft,
+  MessageSquare,
+  FileText,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { AnalyzeResponse } from "../lib/api";
@@ -19,9 +21,11 @@ interface SidebarProps {
   onAnalyze: (url: string) => void;
   error: string | null;
   onBack?: () => void;
+  viewMode?: "chat" | "report";
+  onViewModeChange?: (mode: "chat" | "report") => void;
 }
 
-export function Sidebar({ repoData, isAnalyzing, onAnalyze, error, onBack }: SidebarProps) {
+export function Sidebar({ repoData, isAnalyzing, onAnalyze, error, onBack, viewMode = "chat", onViewModeChange }: SidebarProps) {
   const [url, setUrl] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -34,6 +38,36 @@ export function Sidebar({ repoData, isAnalyzing, onAnalyze, error, onBack }: Sid
 
   return (
     <aside className="w-80 flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden">
+      {/* View Mode Tabs */}
+      {onViewModeChange && (
+        <div className="flex gap-1 p-2 border-b border-[#30363d]">
+          <button
+            onClick={() => onViewModeChange("chat")}
+            className={
+              "flex-1 px-3 py-2 rounded-md text-sm font-medium " +
+              "transition-colors flex items-center justify-center gap-2 " +
+              (viewMode === "chat"
+                ? "bg-[#21262d] border border-[#58a6ff]/50 text-[#58a6ff]"
+                : "text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d]/50")
+            }
+          >
+            <MessageSquare size={14} /> Chat
+          </button>
+          <button
+            onClick={() => onViewModeChange("report")}
+            className={
+              "flex-1 px-3 py-2 rounded-md text-sm font-medium " +
+              "transition-colors flex items-center justify-center gap-2 " +
+              (viewMode === "report"
+                ? "bg-[#21262d] border border-[#58a6ff]/50 text-[#58a6ff]"
+                : "text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d]/50")
+            }
+          >
+            <FileText size={14} /> Report
+          </button>
+        </div>
+      )}
+
       {/* Logo */}
       <div className="px-5 py-5 border-b border-border/30">
         <div className="flex items-center gap-3">

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPanel } from "./components/ChatPanel";
 import { WelcomeScreen } from "./components/WelcomeScreen";
+import { ReportView } from "./components/report/ReportView";
 import { Toaster, toast } from "sonner";
 import { analyzeRepo, type AnalyzeResponse } from "./lib/api";
 import { createSession, type Session } from "./lib/sessions";
@@ -32,6 +33,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"chat" | "report">("chat");
 
   // Dev bypass: add ?dev=true to URL to skip straight to chat UI
   useEffect(() => {
@@ -126,13 +128,25 @@ export default function App() {
             onAnalyze={handleAnalyze}
             error={error}
             onBack={handleBackToDashboard}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
           />
           <main className="flex-1 flex flex-col overflow-hidden bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl">
             {repoData ? (
-              <ChatPanel
-                repoData={repoData}
-                sessionId={activeSessionId}
-              />
+              <>
+                <div className="flex-1 flex flex-col overflow-hidden" style={{ display: viewMode === 'chat' ? 'flex' : 'none' }}>
+                  <ChatPanel
+                    repoData={repoData}
+                    sessionId={activeSessionId}
+                  />
+                </div>
+                <div className="flex-1 flex flex-col overflow-hidden" style={{ display: viewMode === 'report' ? 'flex' : 'none' }}>
+                  <ReportView
+                    repoId={repoData.repo_id}
+                    repoName={`${repoData.owner}/${repoData.repo_name}`}
+                  />
+                </div>
+              </>
             ) : null}
           </main>
         </div>

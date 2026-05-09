@@ -12,6 +12,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException
+# pyrefly: ignore [missing-import]
 from fastapi.responses import StreamingResponse
 
 from codekavi.schemas import ExplainRequest, ExplainFileRequest
