@@ -3,10 +3,10 @@ providers.py — LLM provider abstraction layer.
 
 Provides a unified interface over different LLM providers.
 Currently supports:
-  - Groq (default for generation) — via OpenAI-compatible SDK
+  - Groq (default for generation) — via native Groq SDK
   - Gemini — Google's Gemini 2.0 Flash model (used for embeddings)
 
-Groq uses the OpenAI SDK pointed at Groq's endpoint.
+Groq uses the official groq Python SDK.
 Gemini uses the google-genai SDK with the same import pattern as indexer.py.
 """
 
@@ -59,15 +59,14 @@ class Message:
 # Groq provider (DEFAULT for generation)
 # ─────────────────────────────────────────────
 
-from openai import OpenAI
+from groq import Groq
 
 
 class GroqProvider:
     """
-    Groq LLM provider — uses Groq's OpenAI-compatible API.
+    Groq LLM provider — uses the native Groq Python SDK.
 
     API key is read from GROQ_API_KEY env var.
-    Uses the openai SDK pointed at https://api.groq.com/openai/v1.
     """
 
     name = "groq"
@@ -81,8 +80,7 @@ class GroqProvider:
                 "GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable."
             )
 
-        self._client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",
+        self._client = Groq(
             api_key=api_key,
         )
         logger.info(f"GroqProvider initialized with model={self.model_name}")
@@ -102,17 +100,17 @@ class GroqProvider:
         """
         SYNCHRONOUS method matching the original GroqProvider.complete() interface.
 
-        Converts Message list to OpenAI chat format, calls Groq via OpenAI SDK.
+        Converts Message list to chat format, calls Groq via native SDK.
         Retries up to 3 times on 429 rate-limit errors with exponential backoff.
         """
         model_name = model or self.model_name
 
-        # Convert Message objects to OpenAI chat format
-        openai_messages = [{"role": m.role, "content": m.content} for m in messages]
+        # Convert Message objects to chat format
+        chat_messages = [{"role": m.role, "content": m.content} for m in messages]
 
         kwargs = {
             "model": model_name,
-            "messages": openai_messages,
+            "messages": chat_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
@@ -174,7 +172,7 @@ class GroqProvider:
         """
         ASYNC method for the orchestrator. Non-blocking.
 
-        Wraps the sync OpenAI/Groq call in run_in_executor.
+        Wraps the sync Groq SDK call in run_in_executor.
         Retries up to 3 times on 429 rate-limit errors with exponential backoff.
         """
         loop = asyncio.get_event_loop()
@@ -224,7 +222,7 @@ class GroqProvider:
         """
         ASYNC streaming for chat streaming.
 
-        Uses stream=True on the OpenAI/Groq call, yields text chunks.
+        Uses stream=True on the Groq SDK call, yields text chunks.
         """
         loop = asyncio.get_event_loop()
 

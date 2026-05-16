@@ -4,6 +4,6 @@ gitpython==3.1.44
 python-dotenv==1.1.0
 pymilvus
 google-genai>=1.0.0
-openai>=1.0.0
+groq>=0.9.0
 langchain-text-splitters
 jinja2>=3.1.0
