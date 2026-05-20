@@ -1,4 +1,3 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -42,6 +41,7 @@
     --sidebar-accent-foreground: 0 0% 9%;
     --sidebar-border: 0 0% 90%;
     --sidebar-ring: 0 0% 63%;
+    --font-sans: 'Geist Mono', monospace;
   }
 
   .dark {
@@ -84,13 +84,12 @@
   }
 
   body {
-    @apply font-sans antialiased bg-background text-foreground;
+    @apply antialiased bg-background text-foreground;
     overflow: hidden;
   }
 
   html {
-    font-family: "Inter", system-ui, sans-serif;
-    @apply font-sans;
+    font-family: var(--font-geist-mono), ui-monospace, monospace;
   }
 }
 
@@ -102,6 +101,7 @@
   font-size: 15px;
   line-height: 1.7;
 }
+
 .prose h1,
 .prose h2,
 .prose h3 {
@@ -155,11 +155,13 @@
    ══════════════════════════════════════════ */
 
 @keyframes typing-dot {
+
   0%,
   60%,
   100% {
     transform: translateY(0);
   }
+
   30% {
     transform: translateY(-4px);
   }
@@ -168,9 +170,11 @@
 .typing-dot:nth-child(1) {
   animation: typing-dot 1.4s ease-in-out infinite;
 }
+
 .typing-dot:nth-child(2) {
   animation: typing-dot 1.4s ease-in-out 0.2s infinite;
 }
+
 .typing-dot:nth-child(3) {
   animation: typing-dot 1.4s ease-in-out 0.4s infinite;
 }
@@ -180,10 +184,12 @@
    ══════════════════════════════════════════ */
 
 @keyframes glow-pulse {
+
   0%,
   100% {
     box-shadow: 0 0 8px hsl(var(--primary) / 0.3);
   }
+
   50% {
     box-shadow: 0 0 16px hsl(var(--primary) / 0.5);
   }
@@ -227,11 +233,9 @@
 
 .dark .spotlight {
   border-color: rgba(255, 255, 255, 0.06);
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.025) 0%,
-    transparent 70%
-  );
+  background: radial-gradient(circle,
+      rgba(255, 255, 255, 0.025) 0%,
+      transparent 70%);
 }
 
 .spotlight-left {
@@ -278,6 +282,7 @@
   0% {
     background-position: -200% 0;
   }
+
   100% {
     background-position: 200% 0;
   }
@@ -303,12 +308,15 @@
   cursor: pointer;
   transition: opacity 0.2s ease;
 }
+
 .viz-node:hover {
   opacity: 1 !important;
 }
+
 .viz-link {
   pointer-events: none;
 }
+
 .viz-tooltip {
   position: absolute;
   pointer-events: none;
