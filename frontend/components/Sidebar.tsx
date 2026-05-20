@@ -45,8 +45,8 @@ export function Sidebar({
   const activeTab = pathname.includes("/report")
     ? "report"
     : pathname.includes("/visualize")
-    ? "visualize"
-    : "chat";
+      ? "visualize"
+      : "chat";
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -73,8 +73,8 @@ export function Sidebar({
               "flex-1 px-3 py-2 rounded-md text-sm font-medium",
               "transition-colors flex items-center justify-center gap-2",
               activeTab === tab.key
-                ? "bg-[#21262d] border border-[#58a6ff]/50 text-[#58a6ff]"
-                : "text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d]/50"
+                ? "bg-primary/20 border border-primary/50 text-primary"
+                : "text-[#8b949e] hover:text-foreground hover:bg-[#21262d]/50"
             )}
           >
             <tab.icon size={14} />

@@ -199,7 +199,22 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                       className={cn(
                         "rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed shadow-md",
                         msg.role === "assistant"
-                          ? "bg-card/60 backdrop-blur-md border border-border/50 text-foreground prose dark:prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30"
+                          ? [
+                              "bg-card/60 backdrop-blur-md border border-border/50",
+                              "text-foreground prose dark:prose-invert max-w-none",
+                              // Paragraph spacing
+                              "prose-p:my-1",
+                              // Headings — force foreground color
+                              "prose-headings:text-foreground",
+                              // Inline code — visible background + text
+                              "prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-medium prose-code:before:content-none prose-code:after:content-none",
+                              // Code blocks
+                              "prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30",
+                              // Bold text
+                              "prose-strong:text-foreground",
+                              // Links
+                              "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2",
+                            ].join(" ")
                           : "bg-primary/10 border border-primary/20 text-foreground"
                       )}
                     >

@@ -43,8 +43,8 @@ const RadialMindmap = dynamic(
 
 function VizSkeleton() {
   return (
-    <div className="w-full h-[400px] rounded-lg bg-[#21262d] animate-pulse flex items-center justify-center">
-      <Loader2 className="w-6 h-6 text-[#8b949e] animate-spin" />
+    <div className="w-full h-[400px] rounded-lg bg-muted animate-pulse flex items-center justify-center">
+      <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
     </div>
   );
 }
@@ -54,7 +54,6 @@ interface VisualizationCardProps {
   label: string;
   description: string;
   icon: LucideIcon;
-  color: string;
   state: VizState;
   explanationState: ExplainState;
   onGenerate: () => void;
@@ -68,7 +67,6 @@ export function VisualizationCard({
   label,
   description,
   icon: Icon,
-  color,
   state,
   explanationState,
   onGenerate,
@@ -88,26 +86,23 @@ export function VisualizationCard({
   }, [includeExplanation, state.status, explanationState.status, onExplain]);
 
   return (
-    <div className="bg-[#161b22] rounded-xl border border-[#30363d] overflow-hidden transition-all duration-300 hover:border-[#484f58]">
+    <div className="bg-card rounded-xl border border-border overflow-hidden transition-all duration-300 hover:border-muted-foreground/40">
       {/* Card Header */}
-      <div className="px-5 py-4 border-b border-[#30363d]/50">
+      <div className="px-5 py-4 border-b border-border/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: `${color}15` }}
-            >
-              <Icon size={18} style={{ color }} />
+            <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-muted">
+              <Icon size={18} className="text-foreground" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-[#e6edf3]">{label}</h3>
-              <p className="text-xs text-[#8b949e] mt-0.5">{description}</p>
+              <h3 className="text-sm font-bold text-foreground">{label}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
             </div>
           </div>
 
           {/* Status badge */}
           {state.status === "success" && (
-            <div className="flex items-center gap-1.5 text-xs text-[#3fb950]">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <CheckCircle size={14} />
               <span>Cached</span>
             </div>
@@ -127,20 +122,16 @@ export function VisualizationCard({
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-8"
             >
-              <div
-                className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4"
-                style={{ backgroundColor: `${color}10` }}
-              >
-                <Icon size={28} style={{ color }} className="opacity-60" />
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-muted mb-4">
+                <Icon size={28} className="text-muted-foreground" />
               </div>
               <button
                 onClick={onGenerate}
-                className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-200 hover:brightness-110 active:scale-95"
-                style={{ backgroundColor: color }}
+                className="px-5 py-2.5 rounded-lg text-sm font-semibold bg-foreground text-background transition-all duration-200 hover:bg-foreground/90 active:scale-95"
               >
                 Generate {label}
               </button>
-              <p className="text-xs text-[#8b949e] mt-2">
+              <p className="text-xs text-muted-foreground mt-2">
                 {type === "mindmap" ? "Uses LLM when AI mode is on" : "Static data — zero LLM cost"}
               </p>
             </motion.div>
@@ -155,8 +146,8 @@ export function VisualizationCard({
               exit={{ opacity: 0 }}
               className="py-4"
             >
-              <div className="flex items-center gap-2 mb-4 text-sm text-[#8b949e]">
-                <Loader2 size={16} className="animate-spin" style={{ color }} />
+              <div className="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+                <Loader2 size={16} className="animate-spin text-foreground" />
                 <span>Generating {label}…</span>
               </div>
               <VizSkeleton />
@@ -173,7 +164,7 @@ export function VisualizationCard({
               className="py-2"
             >
               {/* Rendered visualization */}
-              <div className="w-full overflow-hidden rounded-lg border border-[#30363d]/50">
+              <div className="w-full overflow-hidden rounded-lg border border-border/50">
                 {renderVisualization(type, state.data.data)}
               </div>
 
@@ -181,7 +172,7 @@ export function VisualizationCard({
               <div className="flex items-center gap-3 mt-4">
                 <button
                   onClick={onRefresh}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[#8b949e] hover:text-[#e6edf3] bg-[#21262d] hover:bg-[#30363d] transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground bg-muted hover:bg-muted/80 transition-colors"
                 >
                   <RefreshCw size={12} />
                   Refresh
@@ -191,7 +182,7 @@ export function VisualizationCard({
                   explanationState.status === "idle" && (
                     <button
                       onClick={onExplain}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-[#58a6ff] bg-[#58a6ff]/10 hover:bg-[#58a6ff]/20 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-foreground bg-primary/10 hover:bg-primary/20 transition-colors"
                     >
                       <Sparkles size={12} />
                       Explain This Graph
@@ -206,9 +197,9 @@ export function VisualizationCard({
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: "auto" }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="mt-4 pt-4 border-t border-[#30363d]/50"
+                    className="mt-4 pt-4 border-t border-border/50"
                   >
-                    <div className="flex items-center gap-2 text-sm text-[#8b949e]">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 size={14} className="animate-spin" />
                       Generating AI explanation…
                     </div>
@@ -220,18 +211,18 @@ export function VisualizationCard({
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
-                      className="mt-4 pt-4 border-t border-[#30363d]/50"
+                      className="mt-4 pt-4 border-t border-border/50"
                     >
                       <div className="flex items-center gap-2 mb-2">
-                        <Sparkles size={14} className="text-[#58a6ff]" />
-                        <span className="text-xs font-semibold text-[#e6edf3]">
+                        <Sparkles size={14} className="text-foreground" />
+                        <span className="text-xs font-semibold text-foreground">
                           AI Explanation
                         </span>
-                        <span className="text-xs text-[#8b949e]">
+                        <span className="text-xs text-muted-foreground">
                           ({explanationState.tokensUsed} tokens)
                         </span>
                       </div>
-                      <div className="text-sm text-[#c9d1d9] leading-relaxed prose prose-invert prose-sm max-w-none">
+                      <div className="text-sm text-foreground/85 leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:before:content-none prose-code:after:content-none prose-strong:text-foreground">
                         <ReactMarkdown>
                           {explanationState.explanation}
                         </ReactMarkdown>
@@ -243,9 +234,9 @@ export function VisualizationCard({
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="mt-4 pt-4 border-t border-[#30363d]/50"
+                    className="mt-4 pt-4 border-t border-border/50"
                   >
-                    <div className="flex items-center gap-2 text-sm text-[#f85149]">
+                    <div className="flex items-center gap-2 text-sm text-destructive">
                       <AlertCircle size={14} />
                       {explanationState.error}
                     </div>
@@ -264,11 +255,11 @@ export function VisualizationCard({
               exit={{ opacity: 0 }}
               className="flex flex-col items-center py-8"
             >
-              <AlertCircle size={32} className="text-[#f85149] mb-3" />
-              <p className="text-sm text-[#f85149] mb-3">{state.error}</p>
+              <AlertCircle size={32} className="text-destructive mb-3" />
+              <p className="text-sm text-destructive mb-3">{state.error}</p>
               <button
                 onClick={onGenerate}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-[#e6edf3] bg-[#21262d] hover:bg-[#30363d] transition-colors"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-foreground bg-muted hover:bg-muted/80 transition-colors"
               >
                 Try Again
               </button>
@@ -301,7 +292,7 @@ function renderVisualization(type: VizType, data: any) {
       return <RadialMindmap root={data.root || data} />;
     default:
       return (
-        <p className="text-[#8b949e] text-center py-12">
+        <p className="text-muted-foreground text-center py-12">
           Unknown visualization type: {type}
         </p>
       );

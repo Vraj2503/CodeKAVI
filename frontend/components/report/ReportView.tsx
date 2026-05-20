@@ -22,24 +22,13 @@ const sectionOrder = [
   "mindmap",
 ] as const;
 
-const langColors = [
-  "#58a6ff",
-  "#3fb950",
-  "#bc8cff",
-  "#f0883e",
-  "#f778ba",
-  "#8b949e",
-  "#79c0ff",
-  "#7ee787",
-];
-
 // ── Helper components ──
 
 function StatCard({ value, label }: { value: number | string; label: string }) {
   return (
-    <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-4 text-center">
-      <div className="text-2xl font-bold text-[#58a6ff]">{value}</div>
-      <div className="text-sm text-[#8b949e] mt-1">{label}</div>
+    <div className="bg-card border border-border rounded-xl p-4 text-center">
+      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="text-sm text-muted-foreground mt-1">{label}</div>
     </div>
   );
 }
@@ -48,6 +37,18 @@ function LanguageBar({ languages }: { languages: Record<string, number> }) {
   const entries = Object.entries(languages).sort(([, a], [, b]) => b - a);
   const total = entries.reduce((sum, [, count]) => sum + count, 0);
   if (total === 0) return null;
+
+  // Monochrome shades from light to dark
+  const monoShades = [
+    "hsl(var(--foreground))",
+    "hsl(var(--muted-foreground))",
+    "hsl(var(--ring))",
+    "hsl(var(--primary))",
+    "hsl(0 0% 55%)",
+    "hsl(0 0% 40%)",
+    "hsl(0 0% 30%)",
+    "hsl(0 0% 70%)",
+  ];
 
   return (
     <div>
@@ -58,7 +59,7 @@ function LanguageBar({ languages }: { languages: Record<string, number> }) {
             key={lang}
             style={{
               width: `${(count / total) * 100}%`,
-              backgroundColor: langColors[i % langColors.length],
+              backgroundColor: monoShades[i % monoShades.length],
             }}
           />
         ))}
@@ -71,9 +72,9 @@ function LanguageBar({ languages }: { languages: Record<string, number> }) {
             <div key={lang} className="flex items-center gap-1.5 text-xs">
               <span
                 className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: langColors[i % langColors.length] }}
+                style={{ backgroundColor: monoShades[i % monoShades.length] }}
               />
-              <span className="text-[#c9d1d9]">
+              <span className="text-foreground">
                 {lang} ({pct}%)
               </span>
             </div>
@@ -132,16 +133,16 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
   }, [repoId, startStream]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d1117] overflow-y-auto">
+    <div className="flex flex-col h-full bg-background overflow-y-auto">
       {/* Sticky header */}
-      <div className="sticky top-0 z-10 bg-[#0d1117]/90 backdrop-blur-sm border-b border-[#30363d] px-6 py-4">
+      <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-sm border-b border-border px-6 py-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h1 className="text-xl font-bold text-[#e6edf3]">
+            <h1 className="text-xl font-bold text-foreground">
               Code Explanation Report
             </h1>
             {repoName && (
-              <p className="text-sm text-[#8b949e]">{repoName}</p>
+              <p className="text-sm text-muted-foreground">{repoName}</p>
             )}
           </div>
 
@@ -149,7 +150,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           {!isStreaming && !isComplete && (
             <button
               onClick={handleGenerate}
-              className="bg-[#238636] hover:bg-[#2ea043] text-white rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
+              className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
             >
               <Sparkles size={16} /> Generate Report
             </button>
@@ -157,7 +158,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           {isStreaming && (
             <button
               onClick={stop}
-              className="bg-[#da3633] hover:bg-[#f85149] text-white rounded-lg px-4 py-2 font-medium transition-colors"
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground rounded-lg px-4 py-2 font-medium transition-colors"
             >
               ⏹ Stop
             </button>
@@ -165,7 +166,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           {isComplete && !isStreaming && (
             <button
               onClick={handleGenerate}
-              className="bg-[#21262d] hover:bg-[#30363d] text-[#e6edf3] rounded-lg px-4 py-2 font-medium border border-[#30363d] transition-colors"
+              className="bg-card hover:bg-muted text-foreground rounded-lg px-4 py-2 font-medium border border-border transition-colors"
             >
               🔄 Regenerate
             </button>
@@ -187,11 +188,10 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
       {/* Empty state when not started */}
       {!hasStarted && !isStreaming && (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
-          <div className="text-6xl mb-4">📊</div>
-          <h2 className="text-2xl font-bold text-[#e6edf3] mb-2">
+          <h2 className="text-2xl font-bold text-foreground mb-2">
             Ready to Generate Your Report
           </h2>
-          <p className="text-[#8b949e] max-w-md">
+          <p className="text-muted-foreground max-w-md">
             AI will analyze your codebase and generate 8 comprehensive sections
             covering architecture, components, data flow, and more.
           </p>
@@ -257,7 +257,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
             initial={{ opacity: 0, y: 50 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 50 }}
-            className="fixed bottom-6 right-6 bg-[#238636] text-white px-4 py-3 rounded-lg shadow-2xl flex items-center gap-2 z-50"
+            className="fixed bottom-6 right-6 bg-foreground text-background px-4 py-3 rounded-lg shadow-2xl flex items-center gap-2 z-50"
           >
             <CheckCircle size={18} />
             Report Complete — {completedSections.length} sections

@@ -1,49 +1,19 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback } from "react";
-
-type Theme = "light" | "dark";
-
-interface ThemeContextType {
-  resolvedTheme: Theme;
-  setTheme: (theme: Theme) => void;
-}
-
-const ThemeContext = createContext<ThemeContextType>({
-  resolvedTheme: "dark",
-  setTheme: () => {},
-});
+import { ThemeProvider as NextThemesProvider } from "next-themes";
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [resolvedTheme, setResolvedTheme] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "dark";
-    const stored = localStorage.getItem("codekavi-theme") as Theme | null;
-    return stored || "dark";
-  });
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (resolvedTheme === "dark") {
-      root.classList.add("dark");
-      root.style.colorScheme = "dark";
-    } else {
-      root.classList.remove("dark");
-      root.style.colorScheme = "light";
-    }
-    localStorage.setItem("codekavi-theme", resolvedTheme);
-  }, [resolvedTheme]);
-
-  const setTheme = useCallback((theme: Theme) => {
-    setResolvedTheme(theme);
-  }, []);
-
   return (
-    <ThemeContext.Provider value={{ resolvedTheme, setTheme }}>
+    <NextThemesProvider
+      attribute="class"
+      defaultTheme="dark"
+      enableSystem={false}
+      disableTransitionOnChange
+    >
       {children}
-    </ThemeContext.Provider>
+    </NextThemesProvider>
   );
 }
 
-export function useTheme() {
-  return useContext(ThemeContext);
-}
+// Re-export useTheme so existing imports don't break
+export { useTheme } from "next-themes";
