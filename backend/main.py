@@ -2,7 +2,7 @@
 main.py — FastAPI application entry point for CodeKavi.
 
 All route handlers live in codekavi.routes.*
-This file only wires up the app, middleware, and health check.
+~This file only wires up the app, middleware, and health check.
 """
 
 import os

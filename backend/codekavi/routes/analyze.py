@@ -13,7 +13,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 
 from codekavi.schemas import AnalyzeRequest
@@ -52,7 +52,7 @@ async def _run_sync(func, *args, **kwargs):
 # ── Routes ──
 
 @router.post("/analyze")
-async def analyze(body: AnalyzeRequest):
+async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
     """Clone a GitHub repo and return its file metadata."""
     github_url = body.github_url.strip()
 
@@ -119,16 +119,6 @@ async def analyze(body: AnalyzeRequest):
         logger.warning(f"Smart file selection failed: {e}")
         selected_files = []
 
-    # Index repository for RAG (blocking network I/O)
-    if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
-        try:
-            await _run_sync(
-                index_repository,
-                clone_info["repo_id"], file_profiles, clone_info["clone_path"],
-            )
-        except Exception as e:
-            logging.error(f"Vector indexing failed: {e}")
-
     # Store session and results for later retrieval
     repo_id = clone_info["repo_id"]
     active_sessions[repo_id] = clone_info["clone_path"]
@@ -143,6 +133,13 @@ async def analyze(body: AnalyzeRequest):
         "module_graph": module_graph,
         "selected_files": selected_files,
     }
+
+    # Index repository for RAG in the background (prevents proxy timeouts)
+    if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
+        background_tasks.add_task(
+            index_repository,
+            repo_id, file_profiles, clone_info["clone_path"]
+        )
 
     return {
         "success": True,
