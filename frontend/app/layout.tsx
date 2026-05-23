@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/ui/theme-provider";
+import { AuthProvider } from "@/lib/auth-context";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
@@ -27,10 +28,13 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning className={geistMono.variable}>
       <body className={cn("font-sans antialiased", geistMono.className)}>
         <ThemeProvider>
-          <Toaster theme="system" position="top-right" />
-          {children}
+          <AuthProvider>
+            <Toaster theme="system" position="top-right" />
+            {children}
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
   );
 }
+

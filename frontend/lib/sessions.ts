@@ -29,9 +29,17 @@ export interface PersistedMessage {
 // ── Sessions ──
 
 export async function getSessions(): Promise<Session[]> {
+  // Get the authenticated user
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return [];
+
   const { data, error } = await supabase
     .from("sessions")
     .select("*")
+    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
   if (error) {
@@ -68,9 +76,20 @@ export async function createSession(params: {
   total_size_formatted: string;
   languages: Record<string, number>;
 }): Promise<Session | null> {
+  // Get the authenticated user's ID
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    console.error("Failed to create session: user not authenticated");
+    return null;
+  }
+
   const { data, error } = await supabase
     .from("sessions")
     .insert({
+      user_id: user.id,
       repo_id: params.repo_id,
       repo_name: params.repo_name,
       owner: params.owner,

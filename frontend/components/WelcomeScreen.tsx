@@ -13,6 +13,7 @@ import {
   Code2,
   X,
   Sparkles,
+  LogOut,
 } from "lucide-react";
 import { AnimatedInput } from "./ui/AnimatedInput";
 import SpotlightBackground from "./ui/spotlight-background";
@@ -22,10 +23,12 @@ import ThemeSwitch from "./ui/theme-switch";
 import { cn } from "@/lib/utils";
 import { analyzeRepo } from "@/lib/api";
 import { createSession, getSessions, type Session } from "@/lib/sessions";
+import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
 export function WelcomeScreen() {
   const router = useRouter();
+  const { user, loading: authLoading, signOut } = useAuth();
   const [url, setUrl] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,12 +36,21 @@ export function WelcomeScreen() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
 
+  // Redirect to login if not authenticated
   useEffect(() => {
-    getSessions().then((data) => {
-      setSessions(data);
-      setLoadingSessions(false);
-    });
-  }, []);
+    if (!authLoading && !user) {
+      router.replace("/login");
+    }
+  }, [user, authLoading, router]);
+
+  useEffect(() => {
+    if (user) {
+      getSessions().then((data) => {
+        setSessions(data);
+        setLoadingSessions(false);
+      });
+    }
+  }, [user]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -103,10 +115,39 @@ export function WelcomeScreen() {
     return sorted.map(([lang]) => lang).join(" · ");
   };
 
+  // Show loading spinner while checking auth
+  if (authLoading || !user) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background">
+        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  const handleSignOut = async () => {
+    await signOut();
+    router.replace("/login");
+  };
+
   return (
     <SpotlightBackground>
-      {/* Theme toggle — top right */}
-      <div className="fixed top-6 right-6 z-50">
+      {/* Top bar — user info + theme toggle */}
+      <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
+        {user.user_metadata?.avatar_url && (
+          <img
+            src={user.user_metadata.avatar_url}
+            alt={user.user_metadata.full_name || "Avatar"}
+            className="w-8 h-8 rounded-full border border-border/50"
+            referrerPolicy="no-referrer"
+          />
+        )}
+        <button
+          onClick={handleSignOut}
+          className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+          title="Sign out"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
         <ThemeSwitch />
       </div>
 

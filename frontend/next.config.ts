@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /* Allow Google profile photos */
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "lh3.googleusercontent.com",
+      },
+    ],
+  },
   /* Proxy API calls to FastAPI backend in development */
   async rewrites() {
     return [
@@ -13,3 +22,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+

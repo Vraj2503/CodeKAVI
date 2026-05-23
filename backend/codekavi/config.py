@@ -233,5 +233,5 @@ MAX_PARALLEL_LLM_CALLS = 5
 # Used by both indexer.py (write path) and vectorstore.py (read path).
 # If you change this, ALL previously indexed repos must be re-analyzed
 # because the old vectors will be in a different embedding space.
-EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_MODEL = "gemini-embedding-2"
 EMBEDDING_DIMENSION = 3072
