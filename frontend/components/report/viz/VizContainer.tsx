@@ -1,6 +1,8 @@
 "use client";
 
+import { DependencyGraph } from "@/components/report/viz/DependencyGraph";
 import { ArchitectureGraph } from "@/components/report/viz/ArchitectureGraph";
+import { DataFlowGraph } from "@/components/report/viz/DataFlowGraph";
 import { RadialMindmap } from "@/components/report/viz/RadialMindmap";
 import { TreemapViz } from "@/components/report/viz/TreemapViz";
 
@@ -19,11 +21,12 @@ const vizTitleMap: Record<string, string> = {
 
 function renderViz(type: string, data: any) {
   switch (type) {
-    case "architecture_graph":
     case "dependency_graph":
+      return <DependencyGraph nodes={data.nodes} edges={data.edges} />;
+    case "architecture_graph":
       return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
     case "flow_diagram":
-      return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
+      return <DataFlowGraph nodes={data.nodes} edges={data.edges} />;
     case "radial_mindmap":
       return <RadialMindmap root={data.root} />;
     case "treemap":

@@ -1,6 +1,16 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+/**
+ * ArchitectureGraph — Hierarchical layered layout with rounded rectangles.
+ *
+ * Redesigned to look like an architecture blueprint:
+ * - Nodes are rounded rectangles grouped into swim-lanes by layer
+ * - Curved Bézier edges with directional arrows
+ * - Pastel color palette distinct from the dependency graph
+ * - Top-to-bottom flow emphasising hierarchy
+ */
+
+import { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import * as d3 from "d3";
 
 interface Node {
@@ -18,215 +28,219 @@ interface Edge {
 interface ArchitectureGraphProps {
   nodes: Node[];
   edges: Edge[];
-  title?: string;
 }
 
-const typeColorMap: Record<string, string> = {
-  module: "#58a6ff",
-  file: "#58a6ff",
-  class: "#3fb950",
-  component: "#3fb950",
-  function: "#bc8cff",
-  method: "#bc8cff",
-  external: "#f0883e",
-  package: "#f0883e",
+// Pastel palette — visually distinct from the dependency graph neons
+const layerColors: Record<string, { bg: string; border: string; text: string }> = {
+  routes:   { bg: "#1a3a4a", border: "#4ecdc4", text: "#a8e6cf" },
+  services: { bg: "#2d1b4e", border: "#a78bfa", text: "#c4b5fd" },
+  models:   { bg: "#1a3320", border: "#4ade80", text: "#86efac" },
+  database: { bg: "#3b2a1a", border: "#fbbf24", text: "#fde68a" },
+  utils:    { bg: "#1e2a3a", border: "#60a5fa", text: "#93c5fd" },
+  config:   { bg: "#3a2a1e", border: "#f97316", text: "#fdba74" },
+  tests:    { bg: "#2a2a2a", border: "#9ca3af", text: "#d1d5db" },
+  module:   { bg: "#1e2640", border: "#818cf8", text: "#a5b4fc" },
+  other:    { bg: "#1c1c2e", border: "#8b949e", text: "#c9d1d9" },
 };
 
-function getNodeColor(type: string): string {
-  return typeColorMap[type.toLowerCase()] || "#8b949e";
+function getLayerStyle(type: string) {
+  return layerColors[type.toLowerCase()] || layerColors.other;
 }
 
-function truncate(text: string, max = 15): string {
+// Order layers top to bottom for the swim-lane layout
+const layerOrder = ["routes", "services", "models", "database", "utils", "config", "tests", "module", "other"];
+
+function truncate(text: string, max = 18): string {
   return text.length > max ? text.slice(0, max) + "…" : text;
 }
 
-export function ArchitectureGraph({ nodes, edges }: ArchitectureGraphProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphProps>(
+  function ArchitectureGraph({ nodes, edges }, ref) {
+    const svgRef = useRef<SVGSVGElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
+    useImperativeHandle(ref, () => containerRef.current!);
 
-    const width = containerRef.current.clientWidth || 800;
-    const height = 400;
+    useEffect(() => {
+      if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
 
-    // Clear previous render
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
+      const width = containerRef.current.clientWidth || 800;
+      const height = 500;
+      const nodeW = 140;
+      const nodeH = 36;
+      const layerPadding = 24;
 
-    svg.attr("width", width).attr("height", height);
+      const svg = d3.select(svgRef.current);
+      svg.selectAll("*").remove();
+      svg.attr("width", width).attr("height", height);
 
-    // Root group for zoom/pan
-    const g = svg.append("g");
+      const g = svg.append("g");
 
-    // Arrow marker
-    svg
-      .append("defs")
-      .append("marker")
-      .attr("id", "arrowhead")
-      .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 28)
-      .attr("refY", 0)
-      .attr("markerWidth", 6)
-      .attr("markerHeight", 6)
-      .attr("orient", "auto")
-      .append("path")
-      .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", "#30363d");
+      // Arrow marker — styled differently from dependency graph
+      const defs = svg.append("defs");
+      defs
+        .append("marker")
+        .attr("id", "arch-arrow")
+        .attr("viewBox", "0 -4 8 8")
+        .attr("refX", 8)
+        .attr("refY", 0)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+        .attr("d", "M0,-4L8,0L0,4")
+        .attr("fill", "#4b5563");
 
-    // Build simulation data — deep copy nodes/edges so D3 can mutate them
-    type SimNode = d3.SimulationNodeDatum & Node;
-    type SimEdge = d3.SimulationLinkDatum<SimNode> & { label?: string };
+      // Group nodes by layer
+      const groups = new Map<string, Node[]>();
+      nodes.forEach((n) => {
+        const layer = n.type?.toLowerCase() || "other";
+        if (!groups.has(layer)) groups.set(layer, []);
+        groups.get(layer)!.push(n);
+      });
 
-    const simNodes: SimNode[] = nodes.map((n) => ({ ...n }));
-    const simEdges: SimEdge[] = edges.map((e) => ({
-      source: e.source,
-      target: e.target,
-      label: e.label,
-    }));
-
-    // Simulation
-    const simulation = d3
-      .forceSimulation<SimNode>(simNodes)
-      .force(
-        "link",
-        d3
-          .forceLink<SimNode, SimEdge>(simEdges)
-          .id((d) => d.id)
-          .distance(120)
-      )
-      .force("charge", d3.forceManyBody().strength(-300))
-      .force("center", d3.forceCenter(width / 2, height / 2));
-
-    // Edge lines
-    const link = g
-      .append("g")
-      .selectAll("line")
-      .data(simEdges)
-      .join("line")
-      .attr("class", "viz-link")
-      .attr("stroke", "#30363d")
-      .attr("stroke-width", 1.5)
-      .attr("marker-end", "url(#arrowhead)");
-
-    // Edge labels
-    const edgeLabel = g
-      .append("g")
-      .selectAll("text")
-      .data(simEdges.filter((e) => e.label))
-      .join("text")
-      .attr("font-size", 10)
-      .attr("fill", "#8b949e")
-      .attr("text-anchor", "middle")
-      .text((d) => d.label || "");
-
-    // Node groups
-    const node = g
-      .append("g")
-      .selectAll<SVGGElement, SimNode>("g")
-      .data(simNodes)
-      .join("g")
-      .attr("class", "viz-node")
-      .call(
-        d3
-          .drag<SVGGElement, SimNode>()
-          .on("start", (event, d) => {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          })
-          .on("drag", (event, d) => {
-            d.fx = event.x;
-            d.fy = event.y;
-          })
-          .on("end", (event, d) => {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          })
+      // Sort groups by layer order
+      const sortedLayers = [...groups.keys()].sort(
+        (a, b) => (layerOrder.indexOf(a) === -1 ? 99 : layerOrder.indexOf(a)) -
+                   (layerOrder.indexOf(b) === -1 ? 99 : layerOrder.indexOf(b))
       );
 
-    // Node circles
-    node
-      .append("circle")
-      .attr("r", 20)
-      .attr("fill", (d) => getNodeColor(d.type))
-      .attr("stroke", "#30363d")
-      .attr("stroke-width", 2);
+      // Position nodes in swim-lanes
+      const nodePositions = new Map<string, { x: number; y: number }>();
+      let currentY = 40;
 
-    // Node labels
-    node
-      .append("text")
-      .attr("text-anchor", "middle")
-      .attr("dy", 32)
-      .attr("font-size", 11)
-      .attr("fill", "#e6edf3")
-      .text((d) => truncate(d.label));
+      sortedLayers.forEach((layer) => {
+        const layerNodes = groups.get(layer)!;
+        const style = getLayerStyle(layer);
+        const laneW = width - 40;
+        const nodesPerRow = Math.max(1, Math.floor(laneW / (nodeW + 16)));
+        const rows = Math.ceil(layerNodes.length / nodesPerRow);
+        const laneH = rows * (nodeH + 12) + layerPadding * 2 + 24;
 
-    // Hover interactions
-    node
-      .on("mouseenter", function (_event, d) {
-        // Highlight hovered node
-        d3.select(this).select("circle").attr("stroke", "#58a6ff").attr("stroke-width", 3);
+        // Swim-lane background
+        g.append("rect")
+          .attr("x", 20)
+          .attr("y", currentY)
+          .attr("width", laneW)
+          .attr("height", laneH)
+          .attr("rx", 12)
+          .attr("fill", style.bg)
+          .attr("stroke", style.border)
+          .attr("stroke-width", 1)
+          .attr("stroke-opacity", 0.25)
+          .attr("fill-opacity", 0.4);
 
-        // Get connected node IDs
-        const connected = new Set<string>();
-        connected.add(d.id);
-        simEdges.forEach((e) => {
-          const src = typeof e.source === "object" ? (e.source as SimNode).id : String(e.source);
-          const tgt = typeof e.target === "object" ? (e.target as SimNode).id : String(e.target);
-          if (src === d.id) connected.add(tgt);
-          if (tgt === d.id) connected.add(src);
+        // Lane label
+        g.append("text")
+          .attr("x", 36)
+          .attr("y", currentY + 20)
+          .attr("fill", style.border)
+          .attr("font-size", 11)
+          .attr("font-weight", 600)
+          .attr("letter-spacing", "0.05em")
+          .text(layer.toUpperCase());
+
+        // Position each node inside the lane
+        layerNodes.forEach((node, i) => {
+          const row = Math.floor(i / nodesPerRow);
+          const col = i % nodesPerRow;
+          const totalCols = Math.min(layerNodes.length - row * nodesPerRow, nodesPerRow);
+          const startX = 20 + (laneW - totalCols * (nodeW + 16)) / 2;
+          const x = startX + col * (nodeW + 16) + nodeW / 2;
+          const y = currentY + layerPadding + 28 + row * (nodeH + 12) + nodeH / 2;
+          nodePositions.set(node.id, { x, y });
         });
 
-        // Dim non-connected nodes
-        node.style("opacity", (n) => (connected.has(n.id) ? 1 : 0.3));
-        link.style("opacity", (l) => {
-          const src = typeof l.source === "object" ? (l.source as SimNode).id : String(l.source);
-          const tgt = typeof l.target === "object" ? (l.target as SimNode).id : String(l.target);
-          return connected.has(src) && connected.has(tgt) ? 1 : 0.15;
+        currentY += laneH + 12;
+      });
+
+      // Adjust SVG height
+      svg.attr("height", Math.max(height, currentY + 20));
+
+      // Draw edges — curved Bézier
+      edges.forEach((edge) => {
+        const src = nodePositions.get(edge.source);
+        const tgt = nodePositions.get(edge.target);
+        if (!src || !tgt) return;
+
+        const midY = (src.y + tgt.y) / 2;
+
+        g.append("path")
+          .attr("d", `M${src.x},${src.y + nodeH / 2} C${src.x},${midY} ${tgt.x},${midY} ${tgt.x},${tgt.y - nodeH / 2}`)
+          .attr("fill", "none")
+          .attr("stroke", "#4b5563")
+          .attr("stroke-width", 1.5)
+          .attr("stroke-opacity", 0.6)
+          .attr("marker-end", "url(#arch-arrow)");
+      });
+
+      // Draw node rectangles
+      nodes.forEach((node) => {
+        const pos = nodePositions.get(node.id);
+        if (!pos) return;
+        const style = getLayerStyle(node.type);
+
+        const nodeGroup = g.append("g")
+          .attr("transform", `translate(${pos.x},${pos.y})`)
+          .style("cursor", "pointer");
+
+        // Rounded rectangle
+        nodeGroup
+          .append("rect")
+          .attr("x", -nodeW / 2)
+          .attr("y", -nodeH / 2)
+          .attr("width", nodeW)
+          .attr("height", nodeH)
+          .attr("rx", 8)
+          .attr("fill", style.bg)
+          .attr("stroke", style.border)
+          .attr("stroke-width", 1.5)
+          .attr("fill-opacity", 0.9);
+
+        // Label
+        nodeGroup
+          .append("text")
+          .attr("text-anchor", "middle")
+          .attr("dy", "0.35em")
+          .attr("fill", style.text)
+          .attr("font-size", 11)
+          .attr("font-weight", 500)
+          .text(truncate(node.label));
+
+        // Hover effect
+        nodeGroup
+          .on("mouseenter", function () {
+            d3.select(this).select("rect")
+              .transition().duration(150)
+              .attr("stroke-width", 2.5)
+              .attr("fill-opacity", 1);
+          })
+          .on("mouseleave", function () {
+            d3.select(this).select("rect")
+              .transition().duration(150)
+              .attr("stroke-width", 1.5)
+              .attr("fill-opacity", 0.9);
+          });
+      });
+
+      // Zoom + pan
+      const zoom = d3
+        .zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.3, 3])
+        .on("zoom", (event) => {
+          g.attr("transform", event.transform);
         });
-      })
-      .on("mouseleave", function () {
-        node.style("opacity", 1);
-        link.style("opacity", 1);
-        d3.select(this).select("circle").attr("stroke", "#30363d").attr("stroke-width", 2);
-      });
+      svg.call(zoom);
 
-    // Tick
-    simulation.on("tick", () => {
-      link
-        .attr("x1", (d) => (d.source as SimNode).x!)
-        .attr("y1", (d) => (d.source as SimNode).y!)
-        .attr("x2", (d) => (d.target as SimNode).x!)
-        .attr("y2", (d) => (d.target as SimNode).y!);
+      return () => {
+        svg.selectAll("*").remove();
+      };
+    }, [nodes, edges]);
 
-      edgeLabel
-        .attr("x", (d) => ((d.source as SimNode).x! + (d.target as SimNode).x!) / 2)
-        .attr("y", (d) => ((d.source as SimNode).y! + (d.target as SimNode).y!) / 2);
-
-      node.attr("transform", (d) => `translate(${d.x},${d.y})`);
-    });
-
-    // Zoom + pan
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.3, 3])
-      .on("zoom", (event) => {
-        g.attr("transform", event.transform);
-      });
-    svg.call(zoom);
-
-    // Cleanup
-    return () => {
-      simulation.stop();
-      svg.selectAll("*").remove();
-    };
-  }, [nodes, edges]);
-
-  return (
-    <div ref={containerRef} className="w-full overflow-hidden">
-      <svg ref={svgRef} className="w-full" style={{ minHeight: 400 }} />
-    </div>
-  );
-}
+    return (
+      <div ref={containerRef} className="w-full overflow-hidden">
+        <svg ref={svgRef} className="w-full" style={{ minHeight: 500 }} />
+      </div>
+    );
+  }
+);

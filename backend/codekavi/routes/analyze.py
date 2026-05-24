@@ -3,18 +3,20 @@ routes/analyze.py — Repo analysis, graph export, and cleanup endpoints.
 
 Endpoints:
     POST   /analyze             — Clone a GitHub repo and return full analysis.
+    POST   /analyze/stream      — SSE streaming version with stage-by-stage progress.
     GET    /graph/{repo_id}     — Get dependency graph in a specific format.
     DELETE /cleanup/{repo_id}   — Remove a previously cloned repo.
 """
 
 import os
+import json
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from codekavi.schemas import AnalyzeRequest
 from codekavi.session import active_sessions, active_results, ensure_repo_loaded
@@ -159,6 +161,153 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
             "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
         },
     }
+
+
+# ── SSE Streaming Analysis ──
+
+def _sse_event(stage: str, progress: int, message: str, data: dict | None = None) -> str:
+    """Format a single SSE event."""
+    payload = {"stage": stage, "progress": progress, "message": message}
+    if data is not None:
+        payload["data"] = data
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@router.post("/analyze/stream")
+async def analyze_stream(body: AnalyzeRequest):
+    """
+    SSE streaming version of /analyze.
+    Yields progress events as each stage completes, then the final result.
+    """
+    github_url = body.github_url.strip()
+
+    try:
+        parse_github_url(github_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    async def event_generator():
+        # Stage 1: Cloning
+        yield _sse_event("cloning", 10, "Cloning repository…")
+        try:
+            clone_info = await _run_sync(clone_repo, github_url)
+        except RuntimeError as e:
+            yield _sse_event("error", 0, str(e))
+            return
+
+        # Stage 2: Traversing
+        yield _sse_event("traversing", 25, "Scanning file structure…")
+        try:
+            repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+        except Exception as e:
+            cleanup_repo(clone_info["clone_path"])
+            yield _sse_event("error", 0, f"Failed to traverse repository: {e}")
+            return
+
+        # Stage 3: Analyzing dependencies
+        yield _sse_event("analyzing", 40, "Analyzing dependencies…")
+        try:
+            dep_data = await _run_sync(
+                analyze_dependencies, clone_info["clone_path"], repo_data["files"]
+            )
+        except Exception as e:
+            dep_data = {
+                "error": f"Dependency analysis failed: {e}",
+                "edges": [], "adjacency": {}, "reverse_adjacency": {},
+                "entry_points": [], "central_files": [], "stats": {},
+            }
+
+        # Stage 4: Classifying files
+        yield _sse_event("classifying", 55, "Classifying file roles…")
+        try:
+            file_profiles = await _run_sync(
+                classify_files, clone_info["clone_path"], repo_data["files"], dep_data
+            )
+            role_summary = summarize_roles(file_profiles)
+        except Exception as e:
+            file_profiles = []
+            role_summary = {"error": f"Classification failed: {e}"}
+
+        # Stage 5: Building graphs
+        yield _sse_event("graphing", 70, "Building dependency graphs…")
+        try:
+            graph_json = export_graph_json(dep_data, file_profiles)
+            mermaid_file = export_mermaid(graph_json)
+            module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+            cycles = detect_cycles(dep_data)
+        except Exception as e:
+            graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
+            mermaid_file = ""
+            module_graph = {"error": f"Module graph failed: {e}"}
+            cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+
+        # Stage 6: Smart file selection
+        yield _sse_event("selecting", 80, "Selecting key files…")
+        selector = SmartFileSelector()
+        try:
+            selected_files = selector.select_files(
+                repo_data["files"], dep_data, file_profiles
+            )
+        except Exception as e:
+            logger.warning(f"Smart file selection failed: {e}")
+            selected_files = []
+
+        # Store session and results
+        repo_id = clone_info["repo_id"]
+        active_sessions[repo_id] = clone_info["clone_path"]
+        active_results[repo_id] = {
+            "repo_name": clone_info["repo_name"],
+            "owner": clone_info["owner"],
+            "repo_data": repo_data,
+            "dep_data": dep_data,
+            "file_profiles": file_profiles,
+            "role_summary": role_summary,
+            "graph_json": graph_json,
+            "module_graph": module_graph,
+            "selected_files": selected_files,
+        }
+
+        # Stage 7: Indexing (embedding) — done INLINE so chat is ready
+        yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
+        if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
+            try:
+                await _run_sync(
+                    index_repository,
+                    repo_id, file_profiles, clone_info["clone_path"]
+                )
+            except Exception as e:
+                logger.warning(f"Indexing failed (non-fatal): {e}")
+
+        # Stage 8: Complete — include full result data
+        result = {
+            "success": True,
+            "repo_id": repo_id,
+            "repo_name": clone_info["repo_name"],
+            "owner": clone_info["owner"],
+            "github_url": github_url,
+            **repo_data,
+            "dependencies": dep_data,
+            "file_profiles": file_profiles,
+            "role_summary": role_summary,
+            "graph": graph_json,
+            "module_graph": module_graph,
+            "cycles": cycles,
+            "mermaid": {
+                "file_level": mermaid_file,
+                "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
+            },
+        }
+        yield _sse_event("complete", 100, "Analysis complete!", result)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/graph/{repo_id}")

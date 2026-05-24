@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -15,12 +15,29 @@ import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
 import type { VizType } from "@/lib/api";
+import { DownloadMenu } from "./DownloadMenu";
 
 // Lazy-load D3 viz components — they're heavy (~300KB) and need browser APIs
+const DependencyGraph = dynamic(
+  () =>
+    import("@/components/report/viz/DependencyGraph").then((m) => ({
+      default: m.DependencyGraph,
+    })),
+  { ssr: false, loading: () => <VizSkeleton /> }
+);
+
 const ArchitectureGraph = dynamic(
   () =>
     import("@/components/report/viz/ArchitectureGraph").then((m) => ({
       default: m.ArchitectureGraph,
+    })),
+  { ssr: false, loading: () => <VizSkeleton /> }
+);
+
+const DataFlowGraph = dynamic(
+  () =>
+    import("@/components/report/viz/DataFlowGraph").then((m) => ({
+      default: m.DataFlowGraph,
     })),
   { ssr: false, loading: () => <VizSkeleton /> }
 );
@@ -74,6 +91,9 @@ export function VisualizationCard({
   onExplain,
   includeExplanation,
 }: VisualizationCardProps) {
+  // Ref for the visualization container (used by DownloadMenu)
+  const vizContainerRef = useRef<HTMLDivElement>(null);
+
   // Auto-trigger explanation when visualization completes and toggle is on
   useEffect(() => {
     if (
@@ -164,7 +184,7 @@ export function VisualizationCard({
               className="py-2"
             >
               {/* Rendered visualization */}
-              <div className="w-full overflow-hidden rounded-lg border border-border/50">
+              <div ref={vizContainerRef} className="w-full overflow-hidden rounded-lg border border-border/50">
                 {renderVisualization(type, state.data.data)}
               </div>
 
@@ -177,6 +197,13 @@ export function VisualizationCard({
                   <RefreshCw size={12} />
                   Refresh
                 </button>
+
+                {/* Download menu */}
+                <DownloadMenu
+                  containerRef={vizContainerRef}
+                  data={state.data.data}
+                  filename={`${type}-visualization`}
+                />
 
                 {!includeExplanation &&
                   explanationState.status === "idle" && (
@@ -278,10 +305,22 @@ function renderVisualization(type: VizType, data: any) {
 
   switch (type) {
     case "dependencies":
+      return (
+        <DependencyGraph
+          nodes={data.nodes || []}
+          edges={data.edges || []}
+        />
+      );
     case "architecture":
-    case "dataflow":
       return (
         <ArchitectureGraph
+          nodes={data.nodes || []}
+          edges={data.edges || []}
+        />
+      );
+    case "dataflow":
+      return (
+        <DataFlowGraph
           nodes={data.nodes || []}
           edges={data.edges || []}
         />

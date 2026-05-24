@@ -182,6 +182,84 @@ export async function analyzeRepo(
   return data;
 }
 
+// ── SSE Streaming Analysis ──
+
+export interface AnalysisProgressEvent {
+  stage: string;
+  progress: number;
+  message: string;
+  data?: AnalyzeResponse;
+}
+
+/**
+ * Stream repo analysis with real-time progress updates via SSE.
+ * Falls back to the regular analyzeRepo() if streaming fails.
+ */
+export async function analyzeRepoStream(
+  githubUrl: string,
+  onProgress: (event: AnalysisProgressEvent) => void
+): Promise<AnalyzeResponse> {
+  const res = await fetch(`${API_BASE}/analyze/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ github_url: githubUrl }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Analysis failed" }));
+    throw new Error(err.detail || "Analysis failed");
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error("Streaming not supported");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalData: AnalyzeResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE events from the buffer
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        try {
+          const event: AnalysisProgressEvent = JSON.parse(line.slice(6));
+          onProgress(event);
+
+          if (event.stage === "error") {
+            throw new Error(event.message);
+          }
+
+          if (event.stage === "complete" && event.data) {
+            finalData = event.data;
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError) {
+            // Skip malformed JSON
+            continue;
+          }
+          throw e;
+        }
+      }
+    }
+  }
+
+  if (!finalData) {
+    throw new Error("Analysis stream ended without complete event");
+  }
+
+  return finalData;
+}
+
 export async function chatWithRepo(
   repoId: string,
   query: string

@@ -20,8 +20,9 @@ import SpotlightBackground from "./ui/spotlight-background";
 import { HeroShutterText } from "./ui/HeroShutterText";
 import { Button } from "./ui/NeonButton";
 import ThemeSwitch from "./ui/theme-switch";
+import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
-import { analyzeRepo } from "@/lib/api";
+import { analyzeRepo, type AnalyzeResponse } from "@/lib/api";
 import { createSession, getSessions, type Session } from "@/lib/sessions";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
@@ -35,6 +36,8 @@ export function WelcomeScreen() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
+  const [progressUrl, setProgressUrl] = useState("");
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -56,11 +59,14 @@ export function WelcomeScreen() {
     e.preventDefault();
     if (!url.trim() || isAnalyzing) return;
 
-    setIsAnalyzing(true);
-    setError(null);
+    // Show the full-screen progress component instead of navigating immediately
+    setProgressUrl(url.trim());
+    setShowProgress(true);
+    setShowNewChat(false);
+  };
 
+  const handleAnalysisComplete = async (data: AnalyzeResponse) => {
     try {
-      const data = await analyzeRepo(url.trim());
       const session = await createSession({
         repo_id: data.repo_id,
         repo_name: data.repo_name,
@@ -80,11 +86,18 @@ export function WelcomeScreen() {
       // Navigate to the chat page for this repo
       router.push(`/repo/${data.repo_id}/chat`);
     } catch (err: any) {
-      setError(err.message || "Analysis failed");
-      toast.error(err.message || "Analysis failed");
-    } finally {
-      setIsAnalyzing(false);
+      toast.error(err.message || "Failed to create session");
+      setShowProgress(false);
     }
+  };
+
+  const handleAnalysisError = (errorMsg: string) => {
+    toast.error(errorMsg);
+  };
+
+  const handleAnalysisCancel = () => {
+    setShowProgress(false);
+    setProgressUrl("");
   };
 
   const handleResumeSession = (session: Session) => {
@@ -130,7 +143,20 @@ export function WelcomeScreen() {
   };
 
   return (
-    <SpotlightBackground>
+    <>
+      {/* Full-screen analysis progress overlay */}
+      <AnimatePresence>
+        {showProgress && (
+          <AnalysisProgress
+            repoUrl={progressUrl}
+            onComplete={handleAnalysisComplete}
+            onError={handleAnalysisError}
+            onCancel={handleAnalysisCancel}
+          />
+        )}
+      </AnimatePresence>
+
+      <SpotlightBackground>
       {/* Top bar — user info + theme toggle */}
       <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
         {user.user_metadata?.avatar_url && (
@@ -381,5 +407,6 @@ export function WelcomeScreen() {
         )}
       </AnimatePresence>
     </SpotlightBackground>
+    </>
   );
 }
