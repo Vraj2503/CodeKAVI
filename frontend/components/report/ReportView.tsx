@@ -168,7 +168,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
               onClick={handleGenerate}
               className="bg-card hover:bg-muted text-foreground rounded-lg px-4 py-2 font-medium border border-border transition-colors"
             >
-              🔄 Regenerate
+              Regenerate
             </button>
           )}
         </div>

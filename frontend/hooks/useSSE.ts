@@ -44,6 +44,43 @@ export function useSSE(callbacks: SSECallbacks) {
         abortRef.current.abort();
       }
 
+      if (url.includes("dev-mock-repo")) {
+        setIsStreaming(true);
+        setProgress(0);
+        setPhase("Starting mock analysis");
+        setMessage("Initializing");
+
+        const sections = ["overview", "architecture", "components", "data_flow", "dependencies", "complexity", "patterns", "mindmap"];
+        let step = 0;
+
+        const interval = setInterval(() => {
+          if (step === 0) {
+            callbacksRef.current.onStats?.({
+              total_files: 42,
+              languages: { TypeScript: 60, CSS: 20, HTML: 20 },
+              selected_files: 10,
+              entry_points: ["index.ts"]
+            });
+          } else if (step <= sections.length) {
+            const sectionName = sections[step - 1];
+            const p = (step / sections.length) * 100;
+            callbacksRef.current.onProgress?.({ phase: "generating", progress: p, message: `Generating ${sectionName}...` });
+            callbacksRef.current.onSection?.({
+              name: sectionName,
+              content: `### Mock ${sectionName} content\n\nThis is fake content for testing the UI. It doesn't cost any Groq tokens!\n\n\`\`\`javascript\nconsole.log("Mock code snippet");\n\`\`\``
+            });
+          } else {
+            clearInterval(interval);
+            callbacksRef.current.onDone?.({ status: "success" });
+            setIsStreaming(false);
+          }
+          step++;
+        }, 1000);
+
+        abortRef.current = { abort: () => clearInterval(interval) } as any;
+        return;
+      }
+
       const controller = new AbortController();
       abortRef.current = controller;
 

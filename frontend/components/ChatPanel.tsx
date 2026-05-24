@@ -48,11 +48,10 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
     setIsLoadingHistory(true);
     getMessages(sessionId).then((persisted) => {
       if (persisted.length > 0) {
-        setMessages(persisted);
+        setMessages([welcomeMsg, ...persisted]);
       } else {
-        // No history — show welcome message and save it
+        // No history — show welcome message but don't save it to the DB
         setMessages([welcomeMsg]);
-        saveMessage(sessionId, welcomeMsg);
       }
       setIsLoadingHistory(false);
     });
@@ -174,39 +173,23 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25 }}
                     className={cn(
-                      "flex gap-3 max-w-[85%]",
-                      msg.role === "user" && "ml-auto flex-row-reverse"
+                      "flex w-full",
+                      msg.role === "user" ? "justify-end" : "justify-start"
                     )}
                   >
-                    {/* Avatar */}
+                    {/* Message Body */}
                     <div
                       className={cn(
-                        "w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5",
-                        msg.role === "assistant"
-                          ? "bg-primary/20 border border-primary/30 shadow-lg shadow-primary/10"
-                          : "bg-card border border-border/50"
-                      )}
-                    >
-                      {msg.role === "assistant" ? (
-                        <Bot className="w-4 h-4 text-primary" />
-                      ) : (
-                        <User className="w-4 h-4 text-muted-foreground" />
-                      )}
-                    </div>
-
-                    {/* Bubble */}
-                    <div
-                      className={cn(
-                        "rounded-2xl px-5 py-3.5 text-[15px] leading-relaxed shadow-md",
+                        "text-[15px] leading-relaxed",
                         msg.role === "assistant"
                           ? [
-                              "bg-card/60 backdrop-blur-md border border-border/50",
+                              "w-full",
                               "text-foreground prose dark:prose-invert max-w-none",
                               // Paragraph spacing
                               "prose-p:my-1",
                               // Headings — force foreground color
                               "prose-headings:text-foreground",
-                              // Inline code — visible background + text
+                              // Inline code
                               "prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-medium prose-code:before:content-none prose-code:after:content-none",
                               // Code blocks
                               "prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30",
@@ -215,7 +198,7 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                               // Links
                               "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2",
                             ].join(" ")
-                          : "bg-primary/10 border border-primary/20 text-foreground"
+                          : "bg-muted/60 border border-border/40 rounded-2xl px-5 py-3.5 text-foreground shadow-sm max-w-[85%]"
                       )}
                     >
                       {msg.role === "assistant" ? (
@@ -234,12 +217,9 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex gap-3"
+                className="flex w-full justify-start"
               >
-                <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 shadow-lg flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-4 h-4 text-primary" />
-                </div>
-                <div className="bg-card/60 backdrop-blur-md border border-border/50 rounded-2xl px-5 py-4 flex items-center gap-1.5 shadow-md">
+                <div className="py-2 flex items-center gap-1.5">
                   <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
                   <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />
                   <span className="typing-dot w-1.5 h-1.5 rounded-full bg-muted-foreground" />

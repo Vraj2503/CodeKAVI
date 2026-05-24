@@ -33,10 +33,9 @@ def get_genai_client():
         return None
 
 
-def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
+def _embed_single_with_retry(client, text: str) -> list[float]:
     """
-    Call Gemini embed_content with exponential backoff on rate-limit (429) errors.
-    Raises on non-retryable failures after exhausting retries.
+    Call Gemini embed_content for a single text with exponential backoff on rate-limit (429) errors.
     """
     backoff = INITIAL_BACKOFF_S
 
@@ -44,9 +43,9 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
         try:
             response = client.models.embed_content(
                 model=EMBEDDING_MODEL,
-                contents=texts,
+                contents=text,
             )
-            return [emb.values for emb in response.embeddings]
+            return response.embeddings[0].values
 
         except Exception as e:
             err_str = str(e)
@@ -62,6 +61,13 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
                 continue
             else:
                 raise  # non-retryable or exhausted retries
+
+
+def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
+    """
+    Generate embeddings for a list of texts, ensuring we get one embedding per text.
+    """
+    return [_embed_single_with_retry(client, text) for text in texts]
 
 
 def _detect_language(file_path: str) -> str:

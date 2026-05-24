@@ -4,8 +4,9 @@ import { useRef, useEffect } from "react";
 import * as d3 from "d3";
 
 interface MindmapNode {
-  id: string;
-  label: string;
+  id?: string;
+  label?: string;
+  name?: string;
   children?: MindmapNode[];
 }
 
@@ -95,7 +96,7 @@ export function RadialMindmap({ root }: RadialMindmapProps) {
       .attr("fill", "#c9d1d9")
       .attr("font-size", 11)
       .text((d) => {
-        const label = d.data.label || d.data.id;
+        const label = d.data.label || d.data.name || d.data.id || "";
         return label.length > 20 ? label.slice(0, 20) + "…" : label;
       });
 

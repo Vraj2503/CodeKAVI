@@ -1,4 +1,5 @@
 const API_BASE = "/api";
+import { mockChatResponse, mockVizResponse, mockExplanationResponse } from "./mockData";
 
 export interface AnalyzeResponse {
   success: boolean;
@@ -185,6 +186,15 @@ export async function chatWithRepo(
   repoId: string,
   query: string
 ): Promise<ChatResponse> {
+  if (repoId === "dev-mock-repo") {
+    return new Promise((resolve) => setTimeout(() => resolve({
+      success: true,
+      repo_id: repoId,
+      answer: mockChatResponse(),
+      sources: [{ file_path: "src/index.ts", score: 0.95 }, { file_path: "src/utils.ts", score: 0.88 }]
+    }), 1000));
+  }
+
   const res = await fetch(`${API_BASE}/chat/${repoId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -204,6 +214,13 @@ export async function fetchVisualization(
   type: VizType,
   useLlm: boolean = false
 ): Promise<VizResponse> {
+  if (repoId === "dev-mock-repo") {
+    return new Promise((resolve) => setTimeout(() => resolve({
+      type,
+      data: mockVizResponse(type)
+    }), 500));
+  }
+
   const isPost = type === "mindmap";
   const endpoint = `${API_BASE}/visualize/${type}/${repoId}`;
 
@@ -227,6 +244,14 @@ export async function fetchVisualizationExplanation(
   repoId: string,
   vizType: string
 ): Promise<ExplanationResponse> {
+  if (repoId === "dev-mock-repo") {
+    return new Promise((resolve) => setTimeout(() => resolve({
+      explanation: mockExplanationResponse(vizType),
+      tokens_used: 120,
+      model: "mock-model"
+    }), 1000));
+  }
+
   const res = await fetch(`${API_BASE}/explain/visualization/${vizType}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
