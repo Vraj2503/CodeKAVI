@@ -6,6 +6,7 @@ import {
   useEffect,
   type FormEvent,
   type KeyboardEvent,
+  type ComponentProps,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { SendHorizontal, Sparkles, FileCode2, Bot, User } from "lucide-react";
@@ -13,6 +14,7 @@ import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "./ui/ScrollArea";
 import ThemeSwitch from "./ui/theme-switch";
+import { CodeBlockWithFile } from "./CodeRefCard";
 import {
   chatWithRepo,
   type AnalyzeResponse,
@@ -20,6 +22,74 @@ import {
   type ChatSource,
 } from "@/lib/api";
 import { getMessages, saveMessage } from "@/lib/sessions";
+
+// ── Custom Markdown Components ──
+
+/**
+ * Parse the code fence info-string to extract language, file path, and line range.
+ * Expected format: "python:codekavi/indexer.py:L1-L25"
+ * Falls back gracefully if the format doesn't match.
+ */
+function parseCodeFenceInfo(infoString: string) {
+  // Pattern: language:filepath:Lstart-Lend
+  const match = infoString.match(/^([^:]+):(.+?):(L\d+-L\d+)$/);
+  if (match) {
+    return { language: match[1], filePath: match[2], lineRange: match[3] };
+  }
+
+  // Pattern: language:filepath (no line range)
+  const match2 = infoString.match(/^([^:]+):(.+\..+)$/);
+  if (match2) {
+    return { language: match2[1], filePath: match2[2], lineRange: undefined };
+  }
+
+  // No file info — just a regular code block
+  return null;
+}
+
+/** Custom `pre` renderer — delegates to CodeBlockWithFile when file info is present */
+function MarkdownPre({ children, ...rest }: ComponentProps<"pre">) {
+  // ReactMarkdown wraps <code> inside <pre>
+  // Check if the child is a <code> element with a className like "language-python:path:lines"
+  const child = Array.isArray(children) ? children[0] : children;
+
+  if (
+    child &&
+    typeof child === "object" &&
+    "props" in child &&
+    child.props?.className
+  ) {
+    const className: string = child.props.className || "";
+    // className looks like "language-python:codekavi/indexer.py:L1-L25"
+    const langMatch = className.match(/^language-(.+)$/);
+    if (langMatch) {
+      const parsed = parseCodeFenceInfo(langMatch[1]);
+      if (parsed) {
+        // Extract the raw code text from the <code> children
+        const codeText =
+          typeof child.props.children === "string"
+            ? child.props.children.replace(/\n$/, "")
+            : String(child.props.children || "").replace(/\n$/, "");
+
+        return (
+          <CodeBlockWithFile
+            code={codeText}
+            language={parsed.language}
+            filePath={parsed.filePath}
+            lineRange={parsed.lineRange}
+          />
+        );
+      }
+    }
+  }
+
+  // Default: render as normal <pre>
+  return <pre {...rest}>{children}</pre>;
+}
+
+const markdownComponents = {
+  pre: MarkdownPre,
+};
 
 interface ChatPanelProps {
   repoData: AnalyzeResponse;
@@ -202,7 +272,9 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                       )}
                     >
                       {msg.role === "assistant" ? (
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown components={markdownComponents}>
+                          {msg.content}
+                        </ReactMarkdown>
                       ) : (
                         msg.content
                       )}

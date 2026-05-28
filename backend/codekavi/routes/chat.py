@@ -88,13 +88,28 @@ async def chat_repo(repo_id: str, body: ChatRequest):
 
         context_blocks = []
         for i, res in enumerate(results):
+            chunk_text = res['text']
+            start_line = res.get('start_line', 0)
+
+            # Prepend actual line numbers to each line of code so the LLM
+            # sees them and naturally preserves them when picking subsets.
+            if start_line > 0:
+                raw_lines = chunk_text.split('\n')
+                numbered_lines = [
+                    f"{start_line + j} | {line}"
+                    for j, line in enumerate(raw_lines)
+                ]
+                display_text = '\n'.join(numbered_lines)
+            else:
+                display_text = chunk_text
+
             context_blocks.append(
                 f"--- Context {i+1} ---\n"
                 f"File: {res['file_path']}\n"
                 f"Role: {res['role']}\n"
                 f"Language: {res.get('language', 'Unknown')}\n"
                 f"Layer: {res.get('layer', 'other')}\n"
-                f"Code Snippet:\n{res['text']}\n"
+                f"Code Snippet:\n{display_text}\n"
             )
 
         combined_context = "\n".join(context_blocks)
@@ -114,7 +129,18 @@ async def chat_repo(repo_id: str, body: ChatRequest):
             "2. When asked technical questions, discuss: why certain patterns "
             "were chosen, what alternatives exist, scalability implications, "
             "and potential improvements.\n"
-            "3. Always cite specific file paths in backticks.\n"
+            "3. When showing relevant code, include ONLY the relevant portion "
+            "in a fenced code block. The opening fence MUST use this format:\n"
+            "   ```language:path/to/file.py\n"
+            "IMPORTANT: Each line in the code snippets is prefixed with its "
+            "real line number like '54 | code here'. You MUST preserve these "
+            "prefixes exactly as-is when showing code. Do NOT remove them, "
+            "do NOT renumber them, do NOT add your own numbers. Example:\n"
+            "   ```python:codekavi/indexer.py\n"
+            "   54 | def index_repository(repo_id, file_profiles, clone_path):\n"
+            "   55 |     logger.info(f\"Starting indexing...\")\n"
+            "   56 |     collection = zilliz_client.setup_collection()\n"
+            "   ```\n"
             "4. If the retrieved context doesn't contain relevant backend/AI "
             "code, say so honestly instead of discussing irrelevant UI code.\n"
             "5. Structure answers with clear sections and bullet points.\n"

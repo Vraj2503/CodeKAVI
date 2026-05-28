@@ -51,7 +51,7 @@ class ZillizClient:
             return False
 
     # Fields that MUST exist in the schema (added for metadata filtering)
-    _REQUIRED_FIELDS = {"id", "repo_id", "file_path", "role", "language", "layer", "text", "vector"}
+    _REQUIRED_FIELDS = {"id", "repo_id", "file_path", "role", "language", "layer", "start_line", "end_line", "text", "vector"}
 
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
@@ -102,6 +102,8 @@ class ZillizClient:
             FieldSchema(name="role", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="language", dtype=DataType.VARCHAR, max_length=64),
             FieldSchema(name="layer", dtype=DataType.VARCHAR, max_length=32),
+            FieldSchema(name="start_line", dtype=DataType.INT64),
+            FieldSchema(name="end_line", dtype=DataType.INT64),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
         ]
@@ -190,7 +192,7 @@ class ZillizClient:
                     param=search_params,
                     limit=limit,
                     expr=expr,
-                    output_fields=["file_path", "role", "language", "layer", "text"],
+                    output_fields=["file_path", "role", "language", "layer", "start_line", "end_line", "text"],
                 )
 
                 formatted_results = []
@@ -202,6 +204,8 @@ class ZillizClient:
                                 "role": hit.entity.get("role"),
                                 "language": hit.entity.get("language", ""),
                                 "layer": hit.entity.get("layer", ""),
+                                "start_line": hit.entity.get("start_line", 0),
+                                "end_line": hit.entity.get("end_line", 0),
                                 "text": hit.entity.get("text"),
                                 "score": hit.distance,
                             }

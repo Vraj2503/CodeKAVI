@@ -134,7 +134,7 @@ def index_repository(
 
     # Batch accumulators
     current_batch_texts: List[str] = []
-    current_batch_metadata: List[Dict[str, str]] = []
+    current_batch_metadata: List[Dict[str, Any]] = []
     total_chunks_attempted = 0
     total_chunks_inserted = 0
 
@@ -158,6 +158,8 @@ def index_repository(
             roles = [m["role"] for m in current_batch_metadata]
             languages = [m["language"] for m in current_batch_metadata]
             layers = [m["layer"] for m in current_batch_metadata]
+            start_lines = [m["start_line"] for m in current_batch_metadata]
+            end_lines = [m["end_line"] for m in current_batch_metadata]
 
             insert_data = [
                 ids,
@@ -166,6 +168,8 @@ def index_repository(
                 roles,
                 languages,
                 layers,
+                start_lines,
+                end_lines,
                 current_batch_texts,
                 embeddings,
             ]
@@ -210,8 +214,24 @@ def index_repository(
         # Consistent stable hash for file
         file_hash = hashlib.md5(file_path.encode()).hexdigest()[:10]
 
+        # Compute exact line numbers for each chunk by locating it
+        # in the original file content
+        search_start = 0
         for i, chunk in enumerate(chunks):
             chunk_id = f"{repo_id[:20]}_{file_hash}_{i}"
+
+            # Find chunk position in original content to get exact lines
+            char_offset = content.find(chunk, search_start)
+            if char_offset == -1:
+                # Fallback: if exact match fails (e.g. truncation), use 0
+                start_line = 0
+                end_line = 0
+            else:
+                start_line = content[:char_offset].count('\n') + 1
+                end_line = start_line + chunk.count('\n')
+                # Advance search_start past this chunk's start to handle
+                # overlapping chunks correctly
+                search_start = char_offset + 1
 
             if len(chunk) > 65000:
                 chunk = chunk[:65000]
@@ -225,6 +245,8 @@ def index_repository(
                     "role": role[:64],
                     "language": _detect_language(file_path)[:64],
                     "layer": _detect_layer(file_path)[:32],
+                    "start_line": start_line,
+                    "end_line": end_line,
                 }
             )
 
