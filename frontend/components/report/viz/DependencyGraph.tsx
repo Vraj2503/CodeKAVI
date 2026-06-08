@@ -8,7 +8,7 @@
  * arrows and hover-highlight behaviour.
  */
 
-import { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from "react";
 import * as d3 from "d3";
 
 interface Node {
@@ -59,14 +59,31 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
   function DependencyGraph({ nodes, edges }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
 
     useImperativeHandle(ref, () => containerRef.current!);
+
+    // Track container width for re-rendering on sidebar toggle
+    useEffect(() => {
+      if (!containerRef.current) return;
+      setContainerWidth(containerRef.current.clientWidth);
+      let resizeTimer: NodeJS.Timeout;
+      const observer = new ResizeObserver((entries) => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const w = entries[0]?.contentRect.width || 0;
+          setContainerWidth(w);
+        }, 200);
+      });
+      observer.observe(containerRef.current);
+      return () => { observer.disconnect(); clearTimeout(resizeTimer); };
+    }, []);
 
     useEffect(() => {
       if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
 
       const width = containerRef.current.clientWidth || 800;
-      const height = 400;
+      const height = 350;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -106,10 +123,11 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           d3
             .forceLink<SimNode, SimEdge>(simEdges)
             .id((d) => d.id)
-            .distance(120)
+            .distance(140)
         )
-        .force("charge", d3.forceManyBody().strength(-300))
-        .force("center", d3.forceCenter(width / 2, height / 2));
+        .force("charge", d3.forceManyBody().strength(-400))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collide", d3.forceCollide(30));
 
       const link = g
         .append("g")
@@ -219,11 +237,11 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         simulation.stop();
         svg.selectAll("*").remove();
       };
-    }, [nodes, edges]);
+    }, [nodes, edges, containerWidth]);
 
     return (
       <div ref={containerRef} className="w-full overflow-hidden">
-        <svg ref={svgRef} className="w-full" style={{ minHeight: 400 }} />
+        <svg ref={svgRef} className="w-full" style={{ minHeight: 350 }} />
       </div>
     );
   }

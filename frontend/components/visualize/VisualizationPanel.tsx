@@ -21,12 +21,15 @@ interface VisualizationPanelProps {
   repoName?: string;
 }
 
-const VIZ_CONFIG: {
+type VizConfigItem = {
   type: VizType;
   label: string;
   description: string;
   icon: typeof GitBranch;
-}[] = [
+};
+
+// Top 4 graphs — rendered in a 2×2 grid
+const TOP_VIZ_CONFIG: VizConfigItem[] = [
   {
     type: "dependencies",
     label: "Dependency Graph",
@@ -55,6 +58,10 @@ const VIZ_CONFIG: {
       "Trace data flow from entry points through the system layers.",
     icon: ArrowRightLeft,
   },
+];
+
+// Bottom row — full-width mind map (radial trees need more space)
+const BOTTOM_VIZ_CONFIG: VizConfigItem[] = [
   {
     type: "mindmap",
     label: "Mind Map",
@@ -125,10 +132,10 @@ export function VisualizationPanel({
         </div>
       </div>
 
-      {/* Visualization Grid */}
-      <div className="px-6 py-6">
+      {/* Top 2×2 Visualization Grid */}
+      <div className="px-6 pt-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {VIZ_CONFIG.map((viz, i) => (
+          {TOP_VIZ_CONFIG.map((viz, i) => (
             <motion.div
               key={viz.type}
               initial={{ opacity: 0, y: 20 }}
@@ -150,6 +157,32 @@ export function VisualizationPanel({
             </motion.div>
           ))}
         </div>
+      </div>
+
+      {/* Bottom 1×2 Full-Width Mind Map */}
+      <div className="px-6 py-6">
+        {BOTTOM_VIZ_CONFIG.map((viz, i) => (
+          <motion.div
+            key={viz.type}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: (TOP_VIZ_CONFIG.length + i) * 0.08, duration: 0.4 }}
+          >
+            <VisualizationCard
+              type={viz.type}
+              label={viz.label}
+              description={viz.description}
+              icon={viz.icon}
+              state={getState(viz.type)}
+              explanationState={getExplanation(viz.type)}
+              onGenerate={() => generate(viz.type)}
+              onRefresh={() => generate(viz.type, true)}
+              onExplain={() => explain(viz.type)}
+              includeExplanation={includeExplanation}
+              fullWidth
+            />
+          </motion.div>
+        ))}
       </div>
     </div>
   );

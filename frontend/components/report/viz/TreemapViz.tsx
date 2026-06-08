@@ -17,14 +17,14 @@ export function TreemapViz({ data }: TreemapVizProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 400 });
+  const [dimensions, setDimensions] = useState({ width: 800, height: 350 });
 
   // Measure container on mount
   useEffect(() => {
     if (containerRef.current) {
       setDimensions({
         width: containerRef.current.clientWidth || 800,
-        height: 400,
+        height: 350,
       });
     }
   }, []);
@@ -141,7 +141,7 @@ export function TreemapViz({ data }: TreemapVizProps) {
 
   return (
     <div ref={containerRef} className="w-full overflow-hidden relative">
-      <svg ref={svgRef} className="w-full" style={{ minHeight: 400 }} />
+      <svg ref={svgRef} className="w-full" style={{ minHeight: 350 }} />
       <div
         ref={tooltipRef}
         className="viz-tooltip"

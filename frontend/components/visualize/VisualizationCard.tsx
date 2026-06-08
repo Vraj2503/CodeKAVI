@@ -58,9 +58,9 @@ const RadialMindmap = dynamic(
   { ssr: false, loading: () => <VizSkeleton /> }
 );
 
-function VizSkeleton() {
+function VizSkeleton({ height = 350 }: { height?: number }) {
   return (
-    <div className="w-full h-[400px] rounded-lg bg-muted animate-pulse flex items-center justify-center">
+    <div className={`w-full rounded-lg bg-muted animate-pulse flex items-center justify-center`} style={{ height }}>
       <Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
     </div>
   );
@@ -77,6 +77,7 @@ interface VisualizationCardProps {
   onRefresh: () => void;
   onExplain: () => void;
   includeExplanation: boolean;
+  fullWidth?: boolean;
 }
 
 export function VisualizationCard({
@@ -90,6 +91,7 @@ export function VisualizationCard({
   onRefresh,
   onExplain,
   includeExplanation,
+  fullWidth = false,
 }: VisualizationCardProps) {
   // Ref for the visualization container (used by DownloadMenu)
   const vizContainerRef = useRef<HTMLDivElement>(null);
@@ -140,7 +142,7 @@ export function VisualizationCard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex flex-col items-center py-8"
+              className={`flex flex-col items-center ${fullWidth ? 'py-12' : 'py-8'}`}
             >
               <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-muted mb-4">
                 <Icon size={28} className="text-muted-foreground" />
@@ -170,7 +172,7 @@ export function VisualizationCard({
                 <Loader2 size={16} className="animate-spin text-foreground" />
                 <span>Generating {label}…</span>
               </div>
-              <VizSkeleton />
+              <VizSkeleton height={fullWidth ? 500 : 350} />
             </motion.div>
           )}
 

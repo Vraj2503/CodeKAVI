@@ -54,23 +54,28 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       if (!svgRef.current || !containerRef.current || !root) return;
 
       const containerWidth = containerRef.current.clientWidth || 700;
-      const size = Math.max(containerWidth, 600);
-      const radius = size / 2 - 120;
+      const size = Math.max(containerWidth, 500);
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
       svg.attr("width", size).attr("height", size);
 
+      const tooltip = d3.select(tooltipRef.current);
+
+      // Build hierarchy FIRST so we can use its depth for radius
+      const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
+
+      // Scale radius based on hierarchy depth — smaller data = smaller radius
+      const treeDepth = hierarchy.height || 1;
+      const baseRadius = size / 2 - 120;
+      const radius = Math.max(baseRadius, treeDepth * 100);
+
+      // The main group starts centered; zoom will manage transforms
       const g = svg
         .append("g")
         .attr("transform", `translate(${size / 2},${size / 2})`);
 
-      const tooltip = d3.select(tooltipRef.current);
-
-      // Build hierarchy
-      const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
-
-      // Collapse all children beyond depth 1 initially
+      // Collapse all children beyond depth 1 initially (user can expand)
       function collapse(node: TreeNode) {
         if (node.children) {
           if (node.depth >= 1) {
@@ -87,11 +92,11 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       hierarchy.x0 = 0;
       hierarchy.y0 = 0;
 
-      // Tree layout
+      // Tree layout — generous separation to avoid overlaps
       const treeLayout = d3
         .tree<MindmapNode>()
         .size([2 * Math.PI, radius])
-        .separation((a, b) => (a.parent === b.parent ? 1.5 : 2.5) / Math.max(a.depth, 1));
+        .separation((a, b) => (a.parent === b.parent ? 2 : 3) / Math.max(a.depth, 1));
 
       // Radial link generator
       const linkGen = d3
@@ -200,7 +205,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           .attr("class", "node-label")
           .attr("dy", "0.31em")
           .attr("fill", "#c9d1d9")
-          .attr("font-size", 11)
+          .attr("font-size", 12)
           .attr("pointer-events", "none");
 
         // Merge enter + update
@@ -316,17 +321,58 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       // Initial render
       update(hierarchy);
 
-      // Zoom + pan
+      // Zoom + pan — use raw d3 transform (initial centering via zoomIdentity)
       const zoom = d3
         .zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.3, 3])
         .on("zoom", (event) => {
-          g.attr(
-            "transform",
-            `translate(${size / 2 + event.transform.x},${size / 2 + event.transform.y}) scale(${event.transform.k})`
-          );
+          g.attr("transform", event.transform.toString());
         });
       svg.call(zoom);
+
+      // Set initial transform to center the tree, then auto-fit
+      const initialTransform = d3.zoomIdentity.translate(size / 2, size / 2);
+      svg.call(zoom.transform as any, initialTransform);
+
+      // Auto-fit: compute bounds of visible nodes and zoom to fit them
+      setTimeout(() => {
+        const allNodes = hierarchy.descendants();
+        if (allNodes.length <= 1) return;
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        allNodes.forEach((d: any) => {
+          if (d.x !== undefined && d.y !== undefined) {
+            const angle = d.x - Math.PI / 2;
+            const px = d.y * Math.cos(angle);
+            const py = d.y * Math.sin(angle);
+            minX = Math.min(minX, px);
+            maxX = Math.max(maxX, px);
+            minY = Math.min(minY, py);
+            maxY = Math.max(maxY, py);
+          }
+        });
+
+        const contentW = maxX - minX || 1;
+        const contentH = maxY - minY || 1;
+        const padding = 100;
+        const scaleX = (size - padding * 2) / contentW;
+        const scaleY = (size - padding * 2) / contentH;
+        const fitScale = Math.min(scaleX, scaleY, 2.0);
+
+        // Center of content in radial coordinates
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+
+        // Apply fit transform: translate to center the content, then scale
+        const fitTransform = d3.zoomIdentity
+          .translate(size / 2 - cx * fitScale, size / 2 - cy * fitScale)
+          .scale(fitScale);
+
+        svg.transition().duration(600).call(
+          zoom.transform as any,
+          fitTransform
+        );
+      }, 150);
 
       return () => {
         svg.selectAll("*").remove();
@@ -335,6 +381,20 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
     useEffect(() => {
       renderTree();
+    }, [renderTree]);
+
+    // Re-render on container resize (e.g. sidebar toggle)
+    useEffect(() => {
+      if (!containerRef.current) return;
+      let resizeTimer: NodeJS.Timeout;
+      const observer = new ResizeObserver(() => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          renderTree();
+        }, 200);
+      });
+      observer.observe(containerRef.current);
+      return () => { observer.disconnect(); clearTimeout(resizeTimer); };
     }, [renderTree]);
 
     return (

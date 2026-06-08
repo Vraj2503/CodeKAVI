@@ -10,7 +10,7 @@
  * - Top-to-bottom flow emphasising hierarchy
  */
 
-import { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from "react";
 import * as d3 from "d3";
 
 interface Node {
@@ -58,17 +58,34 @@ export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphPro
   function ArchitectureGraph({ nodes, edges }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const [containerWidth, setContainerWidth] = useState(0);
 
     useImperativeHandle(ref, () => containerRef.current!);
+
+    // Track container width for re-rendering on sidebar toggle
+    useEffect(() => {
+      if (!containerRef.current) return;
+      setContainerWidth(containerRef.current.clientWidth);
+      let resizeTimer: NodeJS.Timeout;
+      const observer = new ResizeObserver((entries) => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => {
+          const w = entries[0]?.contentRect.width || 0;
+          setContainerWidth(w);
+        }, 200);
+      });
+      observer.observe(containerRef.current);
+      return () => { observer.disconnect(); clearTimeout(resizeTimer); };
+    }, []);
 
     useEffect(() => {
       if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
 
       const width = containerRef.current.clientWidth || 800;
-      const height = 500;
+      const height = 350;
       const nodeW = 140;
-      const nodeH = 36;
-      const layerPadding = 24;
+      const nodeH = 32;
+      const layerPadding = 18;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -154,8 +171,9 @@ export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphPro
         currentY += laneH + 12;
       });
 
-      // Adjust SVG height
-      svg.attr("height", Math.max(height, currentY + 20));
+      // Set SVG height to fit content
+      const totalContentH = currentY + 20;
+      svg.attr("height", Math.max(height, totalContentH));
 
       // Draw edges — curved Bézier
       edges.forEach((edge) => {
@@ -226,20 +244,39 @@ export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphPro
       // Zoom + pan
       const zoom = d3
         .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.3, 3])
+        .scaleExtent([0.15, 3])
         .on("zoom", (event) => {
           g.attr("transform", event.transform);
         });
       svg.call(zoom);
 
+      // Auto-fit: compute actual content bounding box and fit to viewport
+      // Content spans from x=20 to x=width-20, y=40 to y=totalContentH
+      const bboxX = 10;
+      const bboxY = 30;
+      const bboxW = width - 20;
+      const bboxH = totalContentH - 20;
+      const pad = 15;
+      const fitScaleX = (width - pad * 2) / bboxW;
+      const fitScaleY = (height - pad * 2) / bboxH;
+      const fitScale = Math.min(fitScaleX, fitScaleY, 1);
+      // Center the scaled content in the viewport
+      const fitX = (width - bboxW * fitScale) / 2 - bboxX * fitScale;
+      const fitY = (height - bboxH * fitScale) / 2 - bboxY * fitScale;
+
+      svg.call(
+        zoom.transform as any,
+        d3.zoomIdentity.translate(fitX, fitY).scale(fitScale)
+      );
+
       return () => {
         svg.selectAll("*").remove();
       };
-    }, [nodes, edges]);
+    }, [nodes, edges, containerWidth]);
 
     return (
       <div ref={containerRef} className="w-full overflow-hidden">
-        <svg ref={svgRef} className="w-full" style={{ minHeight: 500 }} />
+        <svg ref={svgRef} className="w-full" style={{ minHeight: 350 }} />
       </div>
     );
   }
