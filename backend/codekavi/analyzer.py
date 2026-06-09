@@ -409,6 +409,9 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
     reverse_adjacency: dict[str, set] = defaultdict(set)   # file -> imported_by
     file_imports: dict[str, list] = defaultdict(list)       # file -> raw import list
 
+    # Content cache: read each file ONCE, reuse in classifier + entry point detection
+    content_cache: dict[str, str] = {}
+
     resolved_count = 0
     unresolved_count = 0
 
@@ -421,13 +424,14 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
         if not extractor:
             continue
 
-        # Read file
+        # Read file ONCE and cache
         try:
             file_size = os.path.getsize(abs_path)
             if file_size > MAX_FILE_SIZE_BYTES:
                 continue
             with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
                 source = f.read()
+            content_cache[rel_path] = source
         except (OSError, UnicodeDecodeError):
             continue
 
@@ -451,8 +455,8 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             else:
                 unresolved_count += 1
 
-    # ── Detect entry points ──
-    entry_points = _detect_entry_points(repo_root, known_files, adjacency, reverse_adjacency)
+    # ── Detect entry points (using content_cache to avoid re-reading files) ──
+    entry_points = _detect_entry_points(repo_root, known_files, adjacency, reverse_adjacency, content_cache)
 
     # ── Find central/important files ──
     central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
@@ -469,6 +473,7 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             "resolved_edges": resolved_count,
             "unresolved_edges": unresolved_count,
         },
+        "content_cache": content_cache,
     }
 
 
@@ -511,6 +516,7 @@ def _detect_entry_points(
     known_files: set[str],
     adjacency: dict[str, set],
     reverse_adjacency: dict[str, set],
+    content_cache: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Detect likely entry point files using heuristics:
@@ -547,12 +553,16 @@ def _detect_entry_points(
 
         # ── Heuristic 2: content-based (source code files only) ──
         if is_source:
-            abs_path = os.path.join(repo_root, fpath)
-            try:
-                with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read(4096)  # Only read first 4KB for speed
-            except OSError:
-                content = ""
+            # Use content_cache if available, otherwise read from disk
+            if content_cache and fpath in content_cache:
+                content = content_cache[fpath][:4096]
+            else:
+                abs_path = os.path.join(repo_root, fpath)
+                try:
+                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read(4096)
+                except OSError:
+                    content = ""
 
             if 'if __name__' in content and '__main__' in content:
                 score += 4

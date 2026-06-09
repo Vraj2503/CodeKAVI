@@ -21,7 +21,7 @@ import logging
 from typing import AsyncIterator
 
 from codekavi.llm.providers import get_provider
-from codekavi.config import EXTENSION_LANGUAGE_MAP
+from codekavi.config import EXTENSION_LANGUAGE_MAP, detect_layer
 
 logger = logging.getLogger(__name__)
 
@@ -398,7 +398,9 @@ class ExplanationOrchestrator:
         # Match backtick-wrapped file paths like `src/auth.js`
         matches = re.findall(r'`([^\s`]+\.[a-zA-Z]{1,5})`', response)
 
-        selected_set = set(self.selected_files) if self.selected_files else set()
+        selected_set = set(
+            (f["path"] if isinstance(f, dict) else f) for f in self.selected_files
+        ) if self.selected_files else set()
         seen = set()
 
         for match in matches:
@@ -483,21 +485,8 @@ class ExplanationOrchestrator:
         return {"name": "Complexity", "children": children}
 
     def _detect_layer(self, path: str) -> str:
-        """Detect architectural layer from path keywords."""
-        path_lower = path.lower()
-        checks = [
-            (["route", "controller", "api", "endpoint"], "routes"),
-            (["model", "schema", "entity"], "models"),
-            (["service", "logic", "handler"], "services"),
-            (["db", "database", "repo", "migration"], "database"),
-            (["util", "helper", "lib", "common"], "utils"),
-            (["config", "setting", "constant"], "config"),
-            (["test", "spec"], "tests"),
-        ]
-        for keywords, layer in checks:
-            if any(kw in path_lower for kw in keywords):
-                return layer
-        return "other"
+        """Delegate to canonical detect_layer in config.py."""
+        return detect_layer(path)
 
     # ─────────────────────────────────────────
     # Helper methods
@@ -517,7 +506,9 @@ class ExplanationOrchestrator:
     def _load_selected_file_contents(self) -> dict[str, str]:
         """Read selected files from disk, truncate to 12000 chars each."""
         contents = {}
-        for file_path in self.selected_files:
+        for item in self.selected_files:
+            # Handle both dict (from SmartFileSelector) and plain string formats
+            file_path = item["path"] if isinstance(item, dict) else item
             abs_path = os.path.join(self.repo_path, file_path)
             try:
                 with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import logging
 from typing import List, Dict, Any
@@ -26,6 +27,16 @@ COLLECTION_NAME = "codekavi_chunks"
 # Retry settings for transient errors
 MAX_RETRIES = 3
 INITIAL_BACKOFF_S = 2
+
+# Repo ID validation — must be a safe alphanumeric hex string
+_REPO_ID_PATTERN = re.compile(r"^[a-f0-9]{12}$")
+
+
+def _validate_repo_id(repo_id: str) -> str:
+    """Validate repo_id is a safe hex string to prevent expression injection."""
+    if not _REPO_ID_PATTERN.match(repo_id):
+        raise ValueError(f"Invalid repo_id format: {repo_id!r}")
+    return repo_id
 
 
 class ZillizClient:
@@ -132,6 +143,7 @@ class ZillizClient:
 
     def clear_repo(self, repo_id: str):
         """Removes all chunks associated with a specific repo_id."""
+        repo_id = _validate_repo_id(repo_id)
         if not self.collection:
             self.setup_collection()
 
@@ -181,6 +193,7 @@ class ZillizClient:
                 search_params = {"metric_type": "COSINE", "params": {}}
 
                 # Build filter expression
+                repo_id = _validate_repo_id(repo_id)
                 expr = f"repo_id == '{repo_id}'"
                 if layer_filter == "exclude_frontend":
                     expr += ' and layer not in ["frontend", "test"]'

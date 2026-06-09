@@ -6,43 +6,17 @@ Endpoints:
 """
 
 import os
-import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 
 from fastapi import APIRouter, HTTPException
 
 from codekavi.schemas import ChatRequest
-from codekavi.llm import get_provider, Explainer
+from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
+from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-_executor = ThreadPoolExecutor(max_workers=4)
-
-
-async def _run_sync(func, *args, **kwargs):
-    """Run a synchronous function in the thread-pool executor."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        _executor, partial(func, *args, **kwargs)
-    )
-
-
-def _get_explainer(model: str | None = None):
-    """Create an Explainer instance. Raises HTTPException if no API key."""
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="GEMINI_API_KEY environment variable not set. "
-                   "Set it to your Gemini API key to enable LLM explanations."
-        )
-
-    provider = get_provider("chat")
-    return Explainer(provider, model=model)
 
 
 # Keywords that signal a technical/architecture question
@@ -65,8 +39,32 @@ async def chat_repo(repo_id: str, body: ChatRequest):
     For technical/architecture questions, retrieves more chunks (top_k=8)
     and filters out frontend/test code for higher relevance.
     """
+    # Validate repo_id format early (must be 12-char hex from clone_repo)
+    import re
+    if not re.match(r'^[a-f0-9]{12}$', repo_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid repo_id format: {repo_id!r}. Must be a 12-character hex string."
+        )
+
     try:
         from codekavi.vectorstore import zilliz_client
+
+        # Check Zilliz is configured before attempting search
+        if not zilliz_client.uri or not zilliz_client.token:
+            raise HTTPException(
+                status_code=503,
+                detail="Vector store not configured. Set ZILLIZ_URI and ZILLIZ_API_KEY environment variables."
+            )
+
+        # Verify repo exists in our cache (ensures we can serve other endpoints too)
+        from codekavi.session import ensure_repo_loaded
+        result, _ = ensure_repo_loaded(repo_id)
+        if not result:
+            raise HTTPException(
+                status_code=404,
+                detail="Repo not found. Run /api/analyze first, or the repo may have expired."
+            )
 
         # 1. Detect if the question is technical/architectural
         query_lower = body.query.lower()
@@ -172,6 +170,8 @@ async def chat_repo(repo_id: str, body: ChatRequest):
             "sources": [{"file_path": r["file_path"], "score": r["score"]} for r in results]
         }
 
+    except HTTPException:
+        raise  # Re-raise our own HTTP exceptions (400, 404, 503)
     except Exception as e:
         logger.error(f"Chat RAG error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

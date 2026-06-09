@@ -16,8 +16,9 @@ from __future__ import annotations
 import os
 import logging
 from dataclasses import dataclass, field
+import time
 
-from codekavi.llm.providers import GeminiProvider, Message
+from codekavi.llm.providers import GeminiProvider, GroqProvider, Message
 from codekavi.llm.prompts import (
     build_file_explanation_prompt,
     build_architecture_prompt,
@@ -82,7 +83,7 @@ class Explainer:
 
     def __init__(
         self,
-        provider: GeminiProvider,
+        provider: GroqProvider | GeminiProvider,
         model: str | None = None,
         temperature: float = 0.3,
         max_tokens: int = 4096,

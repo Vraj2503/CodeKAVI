@@ -11,15 +11,14 @@ from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from codekavi.vectorstore import zilliz_client
-from codekavi.config import EXTENSION_LANGUAGE_MAP, EMBEDDING_MODEL
+from codekavi.config import EXTENSION_LANGUAGE_MAP, EMBEDDING_MODEL, detect_layer as _detect_layer
 
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──
-BATCH_SIZE = 20          # Keep well under free-tier 100 req/min limit
-BATCH_DELAY_S = 1.5      # Pause between batches to avoid rate-limit bursts
-MAX_RETRIES = 4           # Retry attempts on transient / rate-limit errors
-INITIAL_BACKOFF_S = 10    # First retry waits this long; doubles each attempt
+BATCH_SIZE = 20          # Gemini batch-embed accepts up to ~100 items/call; 20 is safe
+MAX_RETRIES = 6          # Retry attempts on transient / rate-limit errors
+INITIAL_BACKOFF_S = 20   # Start at 20s; doubles each attempt on 429
 
 
 def get_genai_client():
@@ -65,9 +64,38 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
 
 def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
     """
-    Generate embeddings for a list of texts, ensuring we get one embedding per text.
+    Generate embeddings for a batch of texts in a SINGLE API call.
+    Gemini's embed_content accepts a list of strings, so we send all
+    texts at once instead of making N individual requests.
+    Falls back to sequential per-text embedding if batch call fails.
     """
-    return [_embed_single_with_retry(client, text) for text in texts]
+    backoff = INITIAL_BACKOFF_S
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            # Single API call for the entire batch
+            response = client.models.embed_content(
+                model=EMBEDDING_MODEL,
+                contents=texts,
+            )
+            return [e.values for e in response.embeddings]
+
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+            if is_rate_limit and attempt < MAX_RETRIES:
+                logger.warning(
+                    f"Rate-limited on batch embed (attempt {attempt}/{MAX_RETRIES}). "
+                    f"Waiting {backoff:.0f}s before retry…"
+                )
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            else:
+                # Fallback: try sequential embedding
+                logger.warning(f"Batch embed failed, falling back to sequential: {e}")
+                return [_embed_single_with_retry(client, text) for text in texts]
 
 
 def _detect_language(file_path: str) -> str:
@@ -75,26 +103,6 @@ def _detect_language(file_path: str) -> str:
     _, ext = os.path.splitext(file_path)
     return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")
 
-
-def _detect_layer(file_path: str) -> str:
-    """
-    Detect architectural layer from path keywords.
-    Used for metadata-based filtering in RAG retrieval.
-    """
-    path_lower = file_path.lower()
-    checks = [
-        (["route", "controller", "api", "endpoint"], "api"),
-        (["model", "schema", "entity"], "model"),
-        (["service", "logic", "handler", "pipeline", "rag"], "service"),
-        (["util", "helper", "lib"], "utility"),
-        (["config", "setting"], "config"),
-        (["component", "page", "layout", "ui", "css", "style", "theme"], "frontend"),
-        (["test", "spec"], "test"),
-    ]
-    for keywords, layer in checks:
-        if any(kw in path_lower for kw in keywords):
-            return layer
-    return "other"
 
 
 def index_repository(
@@ -252,8 +260,8 @@ def index_repository(
 
             if len(current_batch_texts) >= BATCH_SIZE:
                 flush_batch()
-                # Pause between batches to respect rate limits
-                time.sleep(BATCH_DELAY_S)
+                # No inter-batch delay needed — rate limits are handled
+                # per-API-call in _embed_with_retry via exponential backoff
 
     # Flush remaining
     flush_batch()

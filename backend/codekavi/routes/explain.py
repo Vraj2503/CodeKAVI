@@ -19,23 +19,10 @@ from codekavi.schemas import ExplainRequest, ExplainFileRequest
 from codekavi.session import active_sessions, active_results, ensure_repo_loaded
 from codekavi.llm import get_provider, Explainer
 from codekavi.orchestrator import ExplanationOrchestrator
+from codekavi.utils import get_explainer as _get_explainer
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-
-def _get_explainer(model: str | None = None):
-    """Create an Explainer instance. Raises HTTPException if no API key."""
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="GEMINI_API_KEY environment variable not set. "
-                   "Set it to your Gemini API key to enable LLM explanations."
-        )
-
-    provider = get_provider("explain")
-    return Explainer(provider, model=model)
 
 
 @router.post("/explain/{repo_id}")

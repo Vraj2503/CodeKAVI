@@ -167,6 +167,32 @@ export interface ExplanationResponse {
 
 // ── API Functions ──
 
+/**
+ * Restore analysis results from backend cache (Redis/Supabase).
+ * Returns null if the repo has expired (404), throws on other errors.
+ */
+export async function restoreRepo(
+  repoId: string
+): Promise<AnalyzeResponse | null> {
+  try {
+    const res = await fetch(`${API_BASE}/restore/${repoId}`);
+    if (res.status === 404) {
+      return null; // Repo expired — caller should show re-analyze prompt
+    }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`Restore failed: ${res.status} ${errText}`);
+    }
+    return res.json();
+  } catch (e: any) {
+    if (e.message?.includes("Restore failed")) throw e;
+    // Network error — return null so UI degrades gracefully
+    console.warn("Failed to restore repo:", e);
+    return null;
+  }
+}
+
+
 export async function analyzeRepo(
   githubUrl: string
 ): Promise<AnalyzeResponse> {
@@ -175,9 +201,20 @@ export async function analyzeRepo(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ github_url: githubUrl }),
   });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    let errDetail = "Analysis failed";
+    try {
+      const errJson = JSON.parse(errText);
+      errDetail = errJson.detail || errJson.error || errDetail;
+    } catch {
+      if (errText.trim()) errDetail = errText;
+    }
+    throw new Error(errDetail);
+  }
   const data = await res.json();
-  if (!res.ok || !data.success) {
-    throw new Error(data.detail || data.error || "Analysis failed");
+  if (!data.success) {
+    throw new Error(data.error || "Analysis failed");
   }
   return data;
 }
@@ -278,11 +315,18 @@ export async function chatWithRepo(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
   });
-  const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.detail || "Chat request failed");
+    const errText = await res.text().catch(() => "");
+    let errDetail = "Chat request failed";
+    try {
+      const errJson = JSON.parse(errText);
+      errDetail = errJson.detail || errJson.error || errDetail;
+    } catch {
+      if (errText.trim()) errDetail = errText;
+    }
+    throw new Error(errDetail);
   }
-  return data;
+  return res.json();
 }
 
 // ── NEW: Visualization API Functions ──

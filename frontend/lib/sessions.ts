@@ -47,19 +47,22 @@ export async function getSessions(): Promise<Session[]> {
     return [];
   }
 
-  // Get message counts in a single query
-  const { data: counts } = await supabase
-    .from("messages")
-    .select("session_id")
-    .in(
-      "session_id",
-      (data || []).map((s) => s.id)
+  // Get message counts via server-side RPC (single query instead of N+1)
+  const sessionIds = (data || []).map((s) => s.id);
+  const countMap: Record<string, number> = {};
+
+  if (sessionIds.length > 0) {
+    const { data: counts, error: rpcError } = await supabase.rpc(
+      "get_session_message_counts",
+      { session_ids: sessionIds }
     );
 
-  const countMap: Record<string, number> = {};
-  (counts || []).forEach((row) => {
-    countMap[row.session_id] = (countMap[row.session_id] || 0) + 1;
-  });
+    if (!rpcError && counts) {
+      counts.forEach((row: { session_id: string; count: number }) => {
+        countMap[row.session_id] = row.count;
+      });
+    }
+  }
 
   return (data || []).map((s) => ({
     ...s,

@@ -12,14 +12,12 @@ import os
 import json
 import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from codekavi.schemas import AnalyzeRequest
-from codekavi.session import active_sessions, active_results, ensure_repo_loaded
+from codekavi.session import active_sessions, active_results, ensure_repo_loaded, save_analysis
 from codekavi.cloner import clone_repo, cleanup_repo, parse_github_url
 from codekavi.traverser import traverse_repo
 from codekavi.analyzer import analyze_dependencies
@@ -33,22 +31,12 @@ from codekavi.graph import (
 )
 from codekavi.indexer import index_repository
 from codekavi.file_selector import SmartFileSelector
+from codekavi.utils import run_sync as _run_sync
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Thread pool for CPU-bound / blocking I/O work inside async handlers
-_executor = ThreadPoolExecutor(max_workers=4)
-
-
-# ── Helpers ──
-
-async def _run_sync(func, *args, **kwargs):
-    """Run a synchronous function in the thread-pool executor."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        _executor, partial(func, *args, **kwargs)
-    )
 
 
 # ── Routes ──
@@ -89,10 +77,14 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
             "entry_points": [], "central_files": [], "stats": {},
         }
 
+    # Extract content_cache (ephemeral — used by classifier, not persisted)
+    content_cache = dep_data.pop("content_cache", None)
+
     # Classify file roles
     try:
         file_profiles = await _run_sync(
-            classify_files, clone_info["clone_path"], repo_data["files"], dep_data
+            classify_files, clone_info["clone_path"], repo_data["files"], dep_data,
+            content_cache=content_cache,
         )
         role_summary = summarize_roles(file_profiles)
     except Exception as e:
@@ -121,10 +113,9 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
         logger.warning(f"Smart file selection failed: {e}")
         selected_files = []
 
-    # Store session and results for later retrieval
+    # Store session and results in 3-tier cache (memory + Redis + Supabase)
     repo_id = clone_info["repo_id"]
-    active_sessions[repo_id] = clone_info["clone_path"]
-    active_results[repo_id] = {
+    result_data = {
         "repo_name": clone_info["repo_name"],
         "owner": clone_info["owner"],
         "repo_data": repo_data,
@@ -135,6 +126,7 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
         "module_graph": module_graph,
         "selected_files": selected_files,
     }
+    save_analysis(repo_id, clone_info["clone_path"], result_data)
 
     # Index repository for RAG in the background (prevents proxy timeouts)
     if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
@@ -217,11 +209,15 @@ async def analyze_stream(body: AnalyzeRequest):
                 "entry_points": [], "central_files": [], "stats": {},
             }
 
+        # Extract content_cache (ephemeral — used by classifier, not persisted)
+        content_cache = dep_data.pop("content_cache", None)
+
         # Stage 4: Classifying files
         yield _sse_event("classifying", 55, "Classifying file roles…")
         try:
             file_profiles = await _run_sync(
-                classify_files, clone_info["clone_path"], repo_data["files"], dep_data
+                classify_files, clone_info["clone_path"], repo_data["files"], dep_data,
+                content_cache=content_cache,
             )
             role_summary = summarize_roles(file_profiles)
         except Exception as e:
@@ -252,10 +248,9 @@ async def analyze_stream(body: AnalyzeRequest):
             logger.warning(f"Smart file selection failed: {e}")
             selected_files = []
 
-        # Store session and results
+        # Store session and results in 3-tier cache
         repo_id = clone_info["repo_id"]
-        active_sessions[repo_id] = clone_info["clone_path"]
-        active_results[repo_id] = {
+        stream_result_data = {
             "repo_name": clone_info["repo_name"],
             "owner": clone_info["owner"],
             "repo_data": repo_data,
@@ -266,6 +261,7 @@ async def analyze_stream(body: AnalyzeRequest):
             "module_graph": module_graph,
             "selected_files": selected_files,
         }
+        save_analysis(repo_id, clone_info["clone_path"], stream_result_data)
 
         # Stage 7: Indexing (embedding) — done INLINE so chat is ready
         yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
@@ -352,11 +348,44 @@ async def get_graph(
         raise HTTPException(status_code=400, detail=f"Unknown format: {format}. Use json, dot, mermaid, or module.")
 
 
+@router.get("/restore/{repo_id}")
+async def restore_repo(repo_id: str):
+    """Restore analysis results from cache chain for a previously analyzed repo."""
+    try:
+        result, _ = ensure_repo_loaded(repo_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to restore repo: {e}") from e
+
+    if not result:
+        raise HTTPException(status_code=404, detail="Repo not found or expired. Please re-analyze.")
+
+    repo_data = result.get("repo_data", {})
+    dep_data = result.get("dep_data", {})
+    graph_json = result.get("graph_json", {})
+    module_graph = result.get("module_graph", {})
+
+    return {
+        "success": True,
+        "repo_id": repo_id,
+        "repo_name": result.get("repo_name", ""),
+        "owner": result.get("owner", ""),
+        **repo_data,
+        "dependencies": dep_data,
+        "file_profiles": result.get("file_profiles", []),
+        "role_summary": result.get("role_summary", {}),
+        "graph": graph_json,
+        "module_graph": module_graph,
+    }
+
+
 @router.delete("/cleanup/{repo_id}")
 async def cleanup(repo_id: str):
     """Remove a previously cloned repo by its ID."""
+    from codekavi.cache import analysis_cache
+
     clone_path = active_sessions.pop(repo_id, None)
     active_results.pop(repo_id, None)
+    analysis_cache.delete(repo_id)
     if clone_path:
         cleanup_repo(clone_path)
         return {"success": True, "message": f"Repo {repo_id} cleaned up."}

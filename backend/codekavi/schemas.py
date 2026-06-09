@@ -16,17 +16,17 @@ class ExplainRequest(BaseModel):
     """Request body for /api/explain/{repo_id} endpoint. Contains parameters for LLM explanations."""
     top_n: int = 10
     min_importance: float = 10.0
-    model: str | None = "gemini-2.0-flash"
+    model: str | None = None
     depth: str = "detailed"
 
 
 class ExplainFileRequest(BaseModel):
     """Request body for /api/explain/file/{repo_id} endpoint. Contains the file path and optional model."""
     file_path: str
-    model: str | None = "gemini-2.0-flash"
+    model: str | None = None
 
 
 class ChatRequest(BaseModel):
     """Request body for /api/chat/{repo_id} endpoint."""
     query: str
-    model: str | None = "gemini-2.0-flash"
+    model: str | None = None

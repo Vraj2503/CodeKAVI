@@ -24,3 +24,11 @@ test/
 .env
 /Components
 secrets/
+
+# Generated output
+backend/output/
+
+# Node modules (defense-in-depth for root-level git add)
+node_modules/
+supabase_migrations/
+

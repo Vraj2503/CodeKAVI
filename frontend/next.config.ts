@@ -10,10 +10,17 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  /* Proxy API calls to FastAPI backend in development */
+  /* Route /api/analyze/stream to its dedicated Route Handler (app/api/analyze/stream/route.ts).
+     All other /api/* calls are proxied to FastAPI without buffering. */
   async rewrites() {
     return [
       {
+        // Specific match for the SSE endpoint — handled by the route handler
+        source: "/api/analyze/stream",
+        destination: "/api/analyze/stream",
+      },
+      {
+        // Catch-all for everything else
         source: "/api/:path*",
         destination: "http://localhost:8000/api/:path*",
       },
@@ -22,4 +29,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-

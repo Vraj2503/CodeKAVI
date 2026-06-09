@@ -235,3 +235,31 @@ MAX_PARALLEL_LLM_CALLS = 5
 # because the old vectors will be in a different embedding space.
 EMBEDDING_MODEL = "gemini-embedding-2"
 EMBEDDING_DIMENSION = 3072
+
+
+# ─────────────────────────────────────────────
+# Layer detection (single canonical copy)
+# ─────────────────────────────────────────────
+# Used by indexer.py, orchestrator.py, and visualize.py.
+# Change this list to update layer detection across the whole app.
+
+def detect_layer(file_path: str) -> str:
+    """
+    Detect architectural layer from file path keywords.
+    Used for metadata-based filtering in RAG retrieval and visualization grouping.
+    """
+    path_lower = file_path.lower()
+    checks = [
+        (["route", "controller", "api", "endpoint"], "api"),
+        (["model", "schema", "entity"], "model"),
+        (["service", "logic", "handler", "pipeline", "rag"], "service"),
+        (["db", "database", "repo", "migration"], "database"),
+        (["util", "helper", "lib", "common"], "utility"),
+        (["config", "setting", "constant"], "config"),
+        (["component", "page", "layout", "ui", "css", "style", "theme"], "frontend"),
+        (["test", "spec"], "test"),
+    ]
+    for keywords, layer in checks:
+        if any(kw in path_lower for kw in keywords):
+            return layer
+    return "other"

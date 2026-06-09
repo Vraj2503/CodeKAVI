@@ -124,7 +124,7 @@ _SOURCE_EXTENSIONS = {
 # Content-based role signals
 # ─────────────────────────────────────────────
 
-def _content_signals(abs_path: str, ext: str) -> dict:
+def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | None = None, rel_path: str | None = None) -> dict:
     """
     Read up to 4KB of a source file and detect structural signals.
     Returns a dict of boolean flags.
@@ -142,11 +142,15 @@ def _content_signals(abs_path: str, ext: str) -> dict:
     if ext.lower() not in _SOURCE_EXTENSIONS:
         return signals
 
-    try:
-        with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read(4096)
-    except OSError:
-        return signals
+    # Use content_cache if available, otherwise read from disk
+    if content_cache and rel_path and rel_path in content_cache:
+        content = content_cache[rel_path][:4096]
+    else:
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read(4096)
+        except OSError:
+            return signals
 
     # Python main guard
     if 'if __name__' in content and '__main__' in content:
@@ -209,6 +213,7 @@ def classify_files(
     repo_root: str,
     file_list: list[dict],
     dep_data: dict,
+    content_cache: dict[str, str] | None = None,
 ) -> list[dict]:
     """
     Produce a rich profile for every file in the repo.
@@ -262,7 +267,7 @@ def classify_files(
         used_by = reverse_adjacency.get(rel_path, [])
 
         # Collect signals
-        signals = _content_signals(abs_path, ext)
+        signals = _content_signals(abs_path, ext, content_cache=content_cache, rel_path=rel_path)
 
         # ── Classify ──
         role, role_label, confidence, tags = _determine_role(

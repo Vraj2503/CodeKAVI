@@ -14,15 +14,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from codekavi.routes import api_router
+from codekavi.cloner import cleanup_old_repos
 
 load_dotenv()
 
 app = FastAPI(title="CodeKavi API", version="2.0.0")
 
-# CORS — allow all origins during development
+# CORS — configurable origins for production, defaults to localhost:3000 for dev
+ALLOWED_ORIGINS = os.environ.get(
+    "CORS_ORIGINS", "http://localhost:3000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,6 +36,12 @@ app.add_middleware(
 app.include_router(api_router)
 
 os.makedirs("output/reports", exist_ok=True)
+
+
+@app.on_event("startup")
+async def startup_cleanup():
+    """Clean stale cloned repos on startup to prevent disk bloat."""
+    cleanup_old_repos(max_age_hours=2)
 
 
 @app.get("/api/health")

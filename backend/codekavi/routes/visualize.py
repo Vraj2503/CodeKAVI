@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from codekavi.session import active_sessions, active_results, ensure_repo_loaded
+from codekavi.config import detect_layer as _detect_layer
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,22 +42,7 @@ def _load_repo(repo_id: str):
     return result, clone_path
 
 
-def _detect_layer(path: str) -> str:
-    """Detect architectural layer from path keywords."""
-    path_lower = path.lower()
-    checks = [
-        (["route", "controller", "api", "endpoint"], "routes"),
-        (["model", "schema", "entity"], "models"),
-        (["service", "logic", "handler"], "services"),
-        (["db", "database", "repo", "migration"], "database"),
-        (["util", "helper", "lib", "common"], "utils"),
-        (["config", "setting", "constant"], "config"),
-        (["test", "spec"], "tests"),
-    ]
-    for keywords, layer in checks:
-        if any(kw in path_lower for kw in keywords):
-            return layer
-    return "other"
+
 
 
 # ─────────────────────────────────────────

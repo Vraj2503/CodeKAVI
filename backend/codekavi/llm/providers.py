@@ -26,7 +26,7 @@ dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Thread pool for wrapping sync SDK calls in async handlers
-_executor = ThreadPoolExecutor(max_workers=6)
+_executor = ThreadPoolExecutor(max_workers=12)
 
 # Retry config for 429 rate-limit errors
 _MAX_RETRIES = 3
@@ -175,7 +175,7 @@ class GroqProvider:
         Wraps the sync Groq SDK call in run_in_executor.
         Retries up to 3 times on 429 rate-limit errors with exponential backoff.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _sync_call():
             messages = []
@@ -224,7 +224,7 @@ class GroqProvider:
 
         Uses stream=True on the Groq SDK call, yields text chunks.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         messages = []
         if system_prompt:
@@ -243,8 +243,14 @@ class GroqProvider:
 
         stream = await loop.run_in_executor(_executor, _create_stream)
 
-        # Iterate through the stream chunks
-        for chunk in stream:
+        # Iterate asynchronously — wrap each next() in executor to avoid
+        # blocking the event loop (the Groq stream is synchronous)
+        while True:
+            chunk = await loop.run_in_executor(
+                _executor, lambda: next(stream, None)
+            )
+            if chunk is None:
+                break
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
@@ -383,7 +389,7 @@ class GeminiProvider:
 
         Wraps the sync SDK call in run_in_executor.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _sync_call():
             config_kwargs = {
@@ -418,7 +424,7 @@ class GeminiProvider:
 
         Uses generate_content_stream, yields text chunks.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         config_kwargs = {
             "temperature": temperature,
@@ -439,8 +445,14 @@ class GeminiProvider:
 
         stream = await loop.run_in_executor(_executor, _create_stream)
 
-        # Iterate through the stream chunks
-        for chunk in stream:
+        # Iterate asynchronously — wrap each next() in executor to avoid
+        # blocking the event loop (the Gemini stream is synchronous)
+        while True:
+            chunk = await loop.run_in_executor(
+                _executor, lambda: next(stream, None)
+            )
+            if chunk is None:
+                break
             if chunk.text:
                 yield chunk.text
 

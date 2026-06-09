@@ -63,6 +63,7 @@ export function WelcomeScreen() {
     setProgressUrl(url.trim());
     setShowProgress(true);
     setShowNewChat(false);
+    setIsAnalyzing(true);
   };
 
   const handleAnalysisComplete = async (data: AnalyzeResponse) => {
@@ -77,8 +78,17 @@ export function WelcomeScreen() {
         languages: data.languages,
       });
 
-      // Persist analysis data so RepoProvider can hydrate on the next page
-      sessionStorage.setItem(`codekavi-repo-${data.repo_id}`, JSON.stringify(data));
+      // Store only lightweight identifiers — NOT the full analysis data (which can exceed 5MB)
+      // RepoProvider will hydrate from session metadata instead
+      sessionStorage.setItem(`codekavi-session-meta-${data.repo_id}`, JSON.stringify({
+        repo_id: data.repo_id,
+        repo_name: data.repo_name,
+        owner: data.owner,
+        github_url: data.github_url,
+        total_files: data.total_files,
+        total_size_formatted: data.total_size_formatted,
+        languages: data.languages,
+      }));
       if (session) {
         sessionStorage.setItem(`codekavi-session-${data.repo_id}`, session.id);
       }
@@ -93,11 +103,15 @@ export function WelcomeScreen() {
 
   const handleAnalysisError = (errorMsg: string) => {
     toast.error(errorMsg);
+    setShowProgress(false);
+    setProgressUrl("");
+    setIsAnalyzing(false);
   };
 
   const handleAnalysisCancel = () => {
     setShowProgress(false);
     setProgressUrl("");
+    setIsAnalyzing(false);
   };
 
   const handleResumeSession = (session: Session) => {
