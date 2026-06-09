@@ -22,6 +22,8 @@ REDIS_TTL_SECONDS = 24 * 60 * 60  # 24 hours
 
 # Redis key prefix
 _REDIS_PREFIX = "codekavi:result:"
+# T4.4 — Redis key prefix for the cross-user signature index.
+_REDIS_SIG_PREFIX = "codekavi:sig:"
 
 
 def _make_serializable(obj: Any) -> Any:
@@ -50,6 +52,12 @@ class AnalysisCache:
         # L1: in-memory
         self._memory: dict[str, dict] = {}
         self._sessions: dict[str, str] = {}  # repo_id → clone_path
+
+        # T4.4 — cross-user deduplication index (signature → repo_id).
+        # ``f"{owner}/{repo}@{commit_sha}"`` is keyed against the repo_id whose
+        # analysis produced it. Subsequent callers probing the same commit get
+        # the cached result without re-running the pipeline.
+        self._signatures: dict[str, str] = {}
 
         # L2: Redis (lazy init)
         self._redis = None
@@ -252,6 +260,64 @@ class AnalysisCache:
             sb.table("analysis_cache").delete().eq("repo_id", repo_id).execute()
         except Exception as e:
             logger.warning(f"Supabase DELETE failed for {repo_id}: {e}")
+
+    # ─────────────────────────────────────────────────────────────────
+    # T4.4 — signature-based deduplication (cross-user cache sharing)
+    # ─────────────────────────────────────────────────────────────────
+
+    def lookup_by_signature(self, signature: str) -> dict | None:
+        """
+        Return the cached analysis result for ``signature`` (i.e. an
+        ``owner/name@sha`` string), or ``None`` if no prior user analyzed
+        that exact commit.
+
+        Order: L1 in-memory → L2 Redis (read-only — we don't promote signature
+        hits into other L1 entries since the ``repo_id`` linkage is the
+        canonical index).
+        """
+        repo_id = self._signatures.get(signature)
+        if repo_id:
+            return self.get(repo_id)
+
+        redis_repo_id = self._redis_get_signature(signature)
+        if redis_repo_id:
+            self._signatures[signature] = redis_repo_id
+            return self.get(redis_repo_id)
+
+        return None
+
+    def register_signature(self, signature: str, repo_id: str) -> None:
+        """
+        Index ``signature`` against ``repo_id`` so subsequent callers using
+        the same signature can find the analysis result.
+
+        Best-effort: in-memory always succeeds, Redis is fire-and-forget.
+        """
+        if not signature or not repo_id:
+            return
+        self._signatures[signature] = repo_id
+        if self._redis is not None:
+            try:
+                key = f"{_REDIS_SIG_PREFIX}{signature}"
+                self._redis.set(key, repo_id, ex=REDIS_TTL_SECONDS)
+            except Exception as e:
+                logger.warning(f"Redis signature SET failed: {e}")
+
+    def _redis_get_signature(self, signature: str) -> str | None:
+        if self._redis is None:
+            return None
+        try:
+            return self._redis.get(f"{_REDIS_SIG_PREFIX}{signature}")
+        except Exception as e:
+            logger.warning(f"Redis signature GET failed: {e}")
+            return None
+
+    def _fork_of_repo_id(self, repo_id: str) -> str | None:
+        """Reverse-lookup which signature indexes a given repo_id (nullable)."""
+        for sig, rid in self._signatures.items():
+            if rid == repo_id:
+                return sig
+        return None
 
 
 # AnalysisCache class is instantiated on startup and stored on app.state
