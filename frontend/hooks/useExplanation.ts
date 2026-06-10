@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { fetchVisualizationExplanation } from "@/lib/api";
 
 export type ExplainStatus = "idle" | "loading" | "success" | "error";
@@ -25,10 +25,12 @@ const INITIAL_STATE: ExplainState = {
  */
 export function useExplanation(repoId: string) {
   const [cache, setCache] = useState<Map<string, ExplainState>>(new Map());
+  const cacheRef = useRef(cache);
+  cacheRef.current = cache;
 
   const explain = useCallback(
     async (vizType: string, forceRefresh = false) => {
-      const existing = cache.get(vizType);
+      const existing = cacheRef.current.get(vizType);
       if (!forceRefresh && existing?.status === "success") return;
 
       setCache((prev) => {
@@ -63,7 +65,7 @@ export function useExplanation(repoId: string) {
         });
       }
     },
-    [repoId, cache]
+    [repoId]
   );
 
   const getExplanation = useCallback(

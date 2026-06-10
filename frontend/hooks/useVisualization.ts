@@ -22,12 +22,14 @@ const INITIAL_STATE: VizState = { status: "idle", data: null, error: null };
  */
 export function useVisualization(repoId: string) {
   const [cache, setCache] = useState<Map<VizType, VizState>>(new Map());
+  const cacheRef = useRef(cache);
+  cacheRef.current = cache;
   const abortRefs = useRef<Map<VizType, AbortController>>(new Map());
 
   const generate = useCallback(
     async (type: VizType, forceRefresh = false) => {
       // Return cached data unless forced
-      const existing = cache.get(type);
+      const existing = cacheRef.current.get(type);
       if (!forceRefresh && existing?.status === "success") return;
 
       // Cancel any in-flight request for this type
@@ -69,7 +71,7 @@ export function useVisualization(repoId: string) {
         });
       }
     },
-    [repoId, cache]
+    [repoId]
   );
 
   const getState = useCallback(

@@ -6,7 +6,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * This is required by @supabase/ssr to keep sessions alive and propagate
  * cookie updates (token refresh, etc.) to the browser.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
