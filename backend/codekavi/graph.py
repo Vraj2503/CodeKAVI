@@ -18,7 +18,11 @@ from typing import Any, cast
 # ─────────────────────────────────────────────
 
 
-def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -> dict:
+def export_graph_json(
+    dep_data: dict,
+    file_profiles: list[dict] | None = None,
+    max_nodes: int = 100,
+) -> dict:
     """
     Convert dependency data into a { nodes, edges, metadata } structure
     suitable for visualization libraries (D3.js, Cytoscape, vis.js, etc.).
@@ -26,12 +30,20 @@ def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -
     Args:
         dep_data:       Output from analyze_dependencies().
         file_profiles:  Optional output from classify_files() for enriched nodes.
+        max_nodes:      Maximum connected nodes to include. When the connected
+                        set exceeds ``max_nodes``, surplus nodes are aggregated
+                        into a single synthetic ``__collapsed__`` node. Edges
+                        from removed source/target are routed through the
+                        collapsed node and de-duplicated by (source, target).
+                        Default 100; very large repos should pass a smaller
+                        budget to keep payloads manageable.
 
     Returns:
         dict with:
           - nodes: list of { id, label, group, role, importance, in_degree, out_degree, ... }
           - edges: list of { source, target, raw, line, type }
-          - metadata: { total_nodes, total_edges, connected_nodes, isolated_nodes }
+          - metadata: { total_nodes, total_edges, connected_nodes, isolated_nodes,
+                        is_truncated, truncated_count, groups }
     """
     # Build a profile lookup for enrichment
     profile_map = {}
@@ -99,6 +111,70 @@ def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -
             seen_edges.add(key)
             deduped_edges.append(e)
 
+    # ──────────────────────────────────────────────────────────────────
+    # T2.3 — Progressive node capping via synthetic __collapsed__ node.
+    # If too many connected nodes, keep top (max_nodes - 1) by importance,
+    # aggregate the rest into a single "collapsed" sentinel node, and
+    # re-route edges connecting kept/removed nodes through it. Net nodes
+    # after truncation == max_nodes (top kept + 1 collapsed).
+    # ──────────────────────────────────────────────────────────────────
+    is_truncated = False
+    truncated_count = 0
+    if len(nodes) > max_nodes:
+        is_truncated = True
+        nodes_sorted = sorted(nodes, key=lambda n: n.get("importance", 0), reverse=True)
+        kept_top = nodes_sorted[: max(0, max_nodes - 1)]
+        removed = nodes_sorted[max(0, max_nodes - 1) :]
+        truncated_count = len(removed)
+        kept_ids = {n["id"] for n in kept_top}
+
+        # Aggregate the in/out degree of all removed nodes so the collapsed
+        # sentinel carries an honest weight statistic for the UI.
+        agg_in = sum(n.get("in_degree", 0) for n in removed)
+        agg_out = sum(n.get("out_degree", 0) for n in removed)
+        collapsed_node = {
+            "id": "__collapsed__",
+            "label": f"{truncated_count} more files",
+            "group": "(collapsed)",
+            "full_path": "__collapsed__",
+            "in_degree": agg_in,
+            "out_degree": agg_out,
+            "role": "collapsed",
+            "role_label": "Collapsed",
+            "importance": 0,
+            "language": "Unknown",
+            "is_entry_point": False,
+            "size": "xl",
+        }
+
+        # Edges that survive ONLY if both endpoints are in kept_ids OR one
+        # endpoint is the collapsed sentinel. Edges whose removed endpoint
+        # points at a kept node get re-routed through __collapsed__.
+        collapsed_edge_set: set[tuple[str, str]] = set()
+        collapsed_edges: list[dict[str, Any]] = []
+        for e in deduped_edges:
+            src, tgt = e["source"], e["target"]
+            src_kept = src in kept_ids or src == "__collapsed__"
+            tgt_kept = tgt in kept_ids or tgt == "__collapsed__"
+            if src_kept and tgt_kept:
+                # Both survived — keep the original edge.
+                collapsed_edges.append(e)
+                continue
+            # One or both endpoints were removed — route through __collapsed__.
+            new_src = src if src_kept else "__collapsed__"
+            new_tgt = tgt if tgt_kept else "__collapsed__"
+            # Skip self-loops on the collapsed sentinel entirely.
+            if new_src == new_tgt:
+                continue
+            key = (new_src, new_tgt)
+            if key in collapsed_edge_set:
+                continue
+            collapsed_edge_set.add(key)
+            collapsed_edges.append({**e, "source": new_src, "target": new_tgt})
+
+        nodes = kept_top + [collapsed_node]
+        deduped_edges = collapsed_edges
+
     return {
         "nodes": nodes,
         "edges": deduped_edges,
@@ -107,6 +183,8 @@ def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -
             "total_edges": len(deduped_edges),
             "connected_nodes": len(all_connected),
             "groups": sorted(set(n["group"] for n in nodes)),
+            "is_truncated": is_truncated,
+            "truncated_count": truncated_count,
         },
     }
 
