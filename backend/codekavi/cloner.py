@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import shutil
+import subprocess
 import time
 import uuid
 from typing import Any, cast
@@ -52,7 +53,10 @@ def clone_repo(github_url: str) -> dict:
     Enforces repo size and file limits.
 
     Returns:
-        dict with keys: repo_id, repo_name, owner, clone_path
+        dict with keys: repo_id, repo_name, owner, clone_path, commit_sha, repo_signature.
+        ``repo_signature`` is ``f"{owner}/{repo_name}@{commit_sha}"`` — a stable key for
+        cross-user cache deduplication (T4.4). Two users probing the same repo at the
+        same commit get the same repo_signature and share a single analysis result.
     """
     parsed = parse_repo_url(github_url)
     repo_id = uuid.uuid4().hex[:12]
@@ -108,12 +112,48 @@ def clone_repo(github_url: str) -> dict:
 
         raise CloneError(f"Failed to clone repository: {e}") from e
 
+    # T4.4 — Read HEAD commit SHA for cross-user cache deduplication. Use the
+    # absolute path with forward slashes to avoid platform-specific issues.
+    commit_sha = _read_head_sha(clone_path)
+    repo_signature = f"{parsed['owner']}/{parsed['repo']}@{commit_sha}"
+
     return {
         "repo_id": repo_id,
         "repo_name": parsed["repo"],
         "owner": parsed["owner"],
         "clone_path": clone_path,
+        "commit_sha": commit_sha,
+        "repo_signature": repo_signature,
     }
+
+
+def _read_head_sha(clone_path: str) -> str:
+    """
+    Read the HEAD commit SHA from a freshly cloned repo.
+
+    Falls back to the mtime-encoded fallback ("unknown-<mtime>") if git's
+    plumbing command is unavailable (e.g. the clone corrupted on disk).
+    """
+    try:
+        sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=clone_path,
+                stderr=subprocess.PIPE,
+            )
+            .decode("utf-8", errors="ignore")
+            .strip()
+        )
+        if sha:
+            return sha
+    except Exception as e:
+        logger.debug(f"Failed to read HEAD SHA from {clone_path}: {e}")
+    # Fallback: include mtime so two distinct clones yield different sigs.
+    try:
+        mtime = int(os.path.getmtime(clone_path))
+    except OSError:
+        mtime = 0
+    return f"unknown-{mtime}"
 
 
 def cleanup_repo(clone_path: str) -> None:
