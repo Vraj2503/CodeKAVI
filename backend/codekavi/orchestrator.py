@@ -15,13 +15,13 @@ Event types:
 
 import asyncio
 import json
+import logging
 import os
 import re
-import logging
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
-from codekavi.llm.providers import get_provider
 from codekavi.config import EXTENSION_LANGUAGE_MAP, detect_layer
+from codekavi.llm.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +394,8 @@ class ExplanationOrchestrator:
 
     def _extract_snippets(self, response: str) -> list[dict]:
         """Extract code snippets referenced in the LLM response by matching backtick-wrapped file paths."""
-        snippets = []
+        from typing import Any
+        snippets: list[dict[str, Any]] = []
         # Match backtick-wrapped file paths like `src/auth.js`
         matches = re.findall(r'`([^\s`]+\.[a-zA-Z]{1,5})`', response)
 
@@ -415,7 +416,7 @@ class ExplanationOrchestrator:
             # Read actual file content from disk
             abs_path = os.path.join(self.repo_path, match)
             try:
-                with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     code = f.read(2000)
                 lines = code.count("\n") + 1
                 snippets.append({
@@ -424,7 +425,7 @@ class ExplanationOrchestrator:
                     "line_start": 1,
                     "line_end": lines,
                 })
-            except (OSError, IOError):
+            except OSError:
                 continue
 
         return snippets
@@ -438,14 +439,17 @@ class ExplanationOrchestrator:
             return self._auto_viz_dependencies()
         elif section_name == "complexity":
             return self._auto_viz_complexity()
-        elif section_name in ("architecture", "data_flow"):
-            return self._auto_viz_dependencies()  # reuse same graph data
+        elif section_name == "architecture":
+            return self._auto_viz_architecture()
+        elif section_name == "data_flow":
+            return self._auto_viz_dataflow()
         return None
 
     def _auto_viz_dependencies(self) -> dict:
         """Build dependency graph viz from analysis data."""
-        nodes = []
-        edges = []
+        from typing import Any
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
         seen_nodes = set()
 
         adjacency = self.analysis.get("adjacency", {})
@@ -484,6 +488,86 @@ class ExplanationOrchestrator:
             })
         return {"name": "Complexity", "children": children}
 
+    def _auto_viz_dataflow(self) -> dict:
+        """Build data flow viz via BFS from entry points (depth ≤ 3)."""
+        adjacency = self.analysis.get("adjacency", {})
+        entry_points = self.analysis.get("entry_points", [])
+
+        from typing import Any
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        seen = set()
+
+        # Start BFS from the top entry points
+        queue = [(ep.get("file", ""), 0) for ep in entry_points[:5]]
+
+        while queue and len(nodes) < 50:
+            file_path, depth = queue.pop(0)
+            if file_path in seen or depth > 3:
+                continue
+            seen.add(file_path)
+            nodes.append({
+                "id": file_path,
+                "label": os.path.basename(file_path),
+                "type": "entry_point" if depth == 0 else self._detect_layer(file_path),
+            })
+            targets = adjacency.get(file_path, [])
+            if not isinstance(targets, list):
+                targets = [targets]
+            for target in targets:
+                edges.append({"source": file_path, "target": target})
+                if target not in seen:
+                    queue.append((target, depth + 1))
+
+        return {"nodes": nodes, "edges": edges}
+
+    def _auto_viz_architecture(self) -> dict:
+        """Build module-level architecture graph from file classifications."""
+        # Group files by top-level directory
+        module_files: dict[str, list[str]] = {}
+        for fp in (self.classification or []):
+            path = fp.get("path", "")
+            parts = path.split("/")
+            module = parts[0] if len(parts) > 1 else "root"
+            if module not in module_files:
+                module_files[module] = []
+            module_files[module].append(path)
+
+        # Create module nodes
+        nodes = []
+        for module_name in module_files:
+            nodes.append({
+                "id": module_name,
+                "label": module_name,
+                "type": "module",
+            })
+
+        # Compute inter-module edges from adjacency data
+        adjacency = self.analysis.get("adjacency", {})
+        file_to_module = {}
+        for mod, files in module_files.items():
+            for f in files:
+                file_to_module[f] = mod
+
+        edge_weights: dict[tuple[str, str], int] = {}
+        for src, targets in adjacency.items():
+            src_mod = file_to_module.get(src)
+            if not src_mod:
+                continue
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list:
+                tgt_mod = file_to_module.get(t)
+                if tgt_mod and src_mod != tgt_mod:
+                    key = (src_mod, tgt_mod)
+                    edge_weights[key] = edge_weights.get(key, 0) + 1
+
+        edges = [
+            {"source": src, "target": tgt}
+            for (src, tgt) in edge_weights
+        ]
+
+        return {"nodes": nodes, "edges": edges}
+
     def _detect_layer(self, path: str) -> str:
         """Delegate to canonical detect_layer in config.py."""
         return detect_layer(path)
@@ -511,9 +595,9 @@ class ExplanationOrchestrator:
             file_path = item["path"] if isinstance(item, dict) else item
             abs_path = os.path.join(self.repo_path, file_path)
             try:
-                with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     contents[file_path] = f.read(12000)
-            except (OSError, IOError):
+            except OSError:
                 continue
         return contents
 

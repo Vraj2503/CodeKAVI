@@ -28,6 +28,7 @@ import os
 import re
 from collections import defaultdict
 
+from codekavi.utils import BoundedContentCache
 
 # ─────────────────────────────────────────────
 # Filename pattern → role hints
@@ -124,7 +125,7 @@ _SOURCE_EXTENSIONS = {
 # Content-based role signals
 # ─────────────────────────────────────────────
 
-def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | None = None, rel_path: str | None = None) -> dict:
+def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | BoundedContentCache | None = None, rel_path: str | None = None) -> dict:
     """
     Read up to 4KB of a source file and detect structural signals.
     Returns a dict of boolean flags.
@@ -147,7 +148,7 @@ def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | No
         content = content_cache[rel_path][:4096]
     else:
         try:
-            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read(4096)
         except OSError:
             return signals
@@ -191,15 +192,15 @@ def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | No
         signals["has_route_defs"] = True
 
     # "Exports-only" file (like __init__.py or index.ts barrel)
-    lines = [l.strip() for l in content.split('\n') if l.strip() and not l.strip().startswith('#') and not l.strip().startswith('//')]
-    if lines:
-        export_lines = sum(1 for l in lines if l.startswith(('from ', 'export ', 'module.exports', '__all__')))
-        if export_lines / len(lines) > 0.7:
+    code_lines = [ln.strip() for ln in content.split('\n') if ln.strip() and not ln.strip().startswith('#') and not ln.strip().startswith('//')]
+    if code_lines:
+        export_lines = sum(1 for ln in code_lines if ln.startswith(('from ', 'export ', 'module.exports', '__all__')))
+        if export_lines / len(code_lines) > 0.7:
             signals["exports_only"] = True
 
     # Mostly constants (UPPER_CASE assignments)
-    const_lines = sum(1 for l in lines if re.match(r'^[A-Z][A-Z_0-9]+\s*=', l))
-    if len(lines) > 3 and const_lines / len(lines) > 0.4:
+    const_lines = sum(1 for ln in code_lines if re.match(r'^[A-Z][A-Z_0-9]+\s*=', ln))
+    if len(code_lines) > 3 and const_lines / len(code_lines) > 0.4:
         signals["mostly_constants"] = True
 
     return signals
@@ -213,7 +214,7 @@ def classify_files(
     repo_root: str,
     file_list: list[dict],
     dep_data: dict,
-    content_cache: dict[str, str] | None = None,
+    content_cache: dict[str, str] | BoundedContentCache | None = None,
 ) -> list[dict]:
     """
     Produce a rich profile for every file in the repo.
@@ -228,7 +229,7 @@ def classify_files(
           - path, name, language, size
           - role:          primary classification string
           - role_label:    human-readable label
-          - role_confidence: float 0.0–1.0
+          - role_confidence: float 0.0-1.0
           - depends_on:    [files this file imports]
           - used_by:       [files that import this file]
           - in_degree, out_degree
@@ -361,7 +362,7 @@ def _determine_role(
     candidates: list[tuple[str, float, list[str]]] = []
 
     # ── 1. Documentation (check first — these are never code) ──
-    if basename in _DOC_BASENAMES or ext.lower() in {".md", ".rst", ".txt"} and _is_doc_path(rel_path):
+    if basename in _DOC_BASENAMES or (ext.lower() in {".md", ".rst", ".txt"} and _is_doc_path(rel_path)):
         candidates.append(("documentation", 0.95, ["docs"]))
 
     # ── 2. Test files ──
@@ -440,10 +441,9 @@ def _determine_role(
         # Leaf: no or minimal connections
         elif in_degree == 0 and out_degree == 0:
             candidates.append(("leaf", 0.50, ["standalone", "isolated"]))
-        elif in_degree == 0 and out_degree >= 1:
+        elif in_degree == 0 and out_degree >= 1 and not is_entry_point:
             # Imports others but nobody imports it — could be entry or orphan
-            if not is_entry_point:
-                candidates.append(("leaf", 0.45, ["unused", "potential_entry"]))
+            candidates.append(("leaf", 0.45, ["unused", "potential_entry"]))
 
     # ── Pick the best candidate ──
     if not candidates:
@@ -470,7 +470,7 @@ def _compute_importance(
     depth: int,
 ) -> float:
     """
-    Compute a 0–100 importance score for a file.
+    Compute a 0-100 importance score for a file.
     Higher = more important to understand the codebase.
     """
     score = 0.0

@@ -11,7 +11,7 @@ Converts raw dependency data from analyzer.py into:
 
 import os
 from collections import defaultdict
-
+from typing import Any, cast
 
 # ─────────────────────────────────────────────
 # 1. Visualization-ready JSON export
@@ -173,11 +173,11 @@ def export_dot(graph_json: dict, title: str = "CodeKavi Dependency Graph") -> st
         cluster_name = _dot_escape(group_name).replace(".", "_").replace("/", "_")
         lines.append(f'    subgraph cluster_{cluster_name} {{')
         lines.append(f'        label="{_dot_escape(group_name)}";')
-        lines.append(f'        style="rounded,dashed";')
-        lines.append(f'        color="#444444";')
-        lines.append(f'        fontname="Inter";')
-        lines.append(f'        fontsize=11;')
-        lines.append(f'        fontcolor="#888888";')
+        lines.append('        style="rounded,dashed";')
+        lines.append('        color="#444444";')
+        lines.append('        fontname="Inter";')
+        lines.append('        fontsize=11;')
+        lines.append('        fontcolor="#888888";')
         lines.append('')
 
         for node in group_nodes:
@@ -249,8 +249,6 @@ def export_mermaid(
         included_ids = {n["id"] for n in nodes}
         edges = [e for e in edges if e["source"] in included_ids and e["target"] in included_ids]
 
-    node_ids = {n["id"] for n in nodes}
-
     lines = [f"flowchart {direction}"]
 
     # Group by directory using subgraphs
@@ -295,9 +293,9 @@ def export_mermaid(
     lines.append("")
     role_to_aliases: dict[str, list[str]] = defaultdict(list)
     for node in nodes:
-        alias = node_alias_map.get(node["id"])
-        if alias:
-            role_to_aliases[node["role"]].append(alias)
+        node_alias = node_alias_map.get(node["id"])
+        if node_alias:
+            role_to_aliases[node["role"]].append(node_alias)
 
     for role, style in _MERMAID_ROLE_STYLES.items():
         aliases = role_to_aliases.get(role, [])
@@ -385,10 +383,10 @@ def build_module_graph(
             })
 
     # Build module metadata
-    modules = []
+    modules: list[dict[str, Any]] = []
     for mod_name, files in sorted(module_files.items()):
-        languages = defaultdict(int)
-        roles = defaultdict(int)
+        languages: dict[str, int] = defaultdict(int)
+        roles: dict[str, int] = defaultdict(int)
         total_importance = 0
 
         for fpath in files:
@@ -409,10 +407,10 @@ def build_module_graph(
             "internal_edges": internal_edges.get(mod_name, 0),
         })
 
-    modules.sort(key=lambda m: m["importance"], reverse=True)
+    modules.sort(key=lambda m: cast(float, m["importance"]), reverse=True)  # type: ignore[arg-type]
 
     # Build connections list
-    connections = []
+    connections: list[dict[str, Any]] = []
     for (src_mod, tgt_mod), file_pairs in sorted(cross_edges.items()):
         connections.append({
             "source": src_mod,
@@ -421,13 +419,15 @@ def build_module_graph(
             "files": file_pairs,
         })
 
-    connections.sort(key=lambda c: c["weight"], reverse=True)
+    connections.sort(key=lambda c: cast(int, c["weight"]), reverse=True)  # type: ignore[arg-type]
 
     # Build visualization-ready graph for modules
     mod_nodes = []
     for mod in modules:
-        in_weight = sum(c["weight"] for c in connections if c["target"] == mod["name"])
-        out_weight = sum(c["weight"] for c in connections if c["source"] == mod["name"])
+        in_weight = sum(c["weight"] for c in connections if c["target"] == mod["name"])  # type: ignore[operator]
+        out_weight = sum(c["weight"] for c in connections if c["source"] == mod["name"])  # type: ignore[operator]
+        languages_keys = list(mod.get("languages", {}).keys())
+        primary_lang = languages_keys[0] if languages_keys else "Unknown"
         mod_nodes.append({
             "id": mod["name"],
             "label": mod["name"],
@@ -436,7 +436,7 @@ def build_module_graph(
             "importance": mod["importance"],
             "in_weight": in_weight,
             "out_weight": out_weight,
-            "primary_language": next(iter(mod["languages"]), "Unknown"),
+            "primary_language": primary_lang,
             "size": _node_size(in_weight, out_weight),
         })
 
@@ -562,11 +562,11 @@ def _find_all_cycles(adjacency: dict[str, list]) -> list[list[str]]:
                 if neighbor in path_set:
                     # Found a cycle — extract it
                     cycle_start = path_list.index(neighbor)
-                    cycle = path_list[cycle_start:] + [neighbor]
+                    cycle = [*path_list[cycle_start:], neighbor]
                     cycles.append(cycle)
                 elif neighbor not in visited_global:
                     new_path_set = path_set | {neighbor}
-                    new_path_list = path_list + [neighbor]
+                    new_path_list = [*path_list, neighbor]
                     stack.append((neighbor, new_path_set, new_path_list, 0))
             else:
                 visited_global.add(node)

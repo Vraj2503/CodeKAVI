@@ -9,9 +9,9 @@ On a cache hit at any tier, lower tiers are populated automatically
 so subsequent reads are faster.
 """
 
-import os
 import json
 import logging
+import os
 from typing import Any
 
 from dotenv import load_dotenv
@@ -261,5 +261,5 @@ class AnalysisCache:
             logger.warning(f"Supabase DELETE failed for {repo_id}: {e}")
 
 
-# Global singleton — imported by session.py and route handlers
-analysis_cache = AnalysisCache()
+# AnalysisCache class is instantiated on startup and stored on app.state
+

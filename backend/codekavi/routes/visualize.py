@@ -13,15 +13,18 @@ Endpoints:
     POST /explain/visualization/{viz_type}  — LLM explanation for a visualization
 """
 
-import os
 import json
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from codekavi.session import active_sessions, active_results, ensure_repo_loaded
+from codekavi.cache import AnalysisCache
 from codekavi.config import detect_layer as _detect_layer
+from codekavi.routes.dependencies import get_cache
+from codekavi.session import ensure_repo_loaded
+from codekavi.utils import run_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,14 +32,14 @@ logger = logging.getLogger(__name__)
 
 # ── Helpers ──
 
-def _load_repo(repo_id: str):
+async def _load_repo(repo_id: str, cache: AnalysisCache):
     """Load repo analysis data. Raises HTTPException if not found."""
     try:
-        result, clone_path = ensure_repo_loaded(repo_id)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
 
-    if not result or not clone_path:
+    if not result:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
 
     return result, clone_path
@@ -50,17 +53,18 @@ def _load_repo(repo_id: str):
 # ─────────────────────────────────────────
 
 @router.get("/visualize/dependencies/{repo_id}")
-async def visualize_dependencies(repo_id: str):
+async def visualize_dependencies(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """
     Build dependency graph visualization from static analysis data.
     Zero LLM cost — uses adjacency data computed during /analyze.
     """
-    result, _ = _load_repo(repo_id)
+    result, _ = await _load_repo(repo_id, cache)
     analysis = result.get("dep_data", {})
     adjacency = analysis.get("adjacency", {})
 
-    nodes = []
-    edges = []
+    from typing import Any
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
     seen_nodes = set()
 
     for src, targets in adjacency.items():
@@ -98,12 +102,12 @@ async def visualize_dependencies(repo_id: str):
 # ─────────────────────────────────────────
 
 @router.get("/visualize/complexity/{repo_id}")
-async def visualize_complexity(repo_id: str):
+async def visualize_complexity(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """
     Build complexity treemap from file classifications.
     Zero LLM cost — uses importance scores from /analyze.
     """
-    result, _ = _load_repo(repo_id)
+    result, _ = await _load_repo(repo_id, cache)
     classification = result.get("file_profiles", [])
 
     children = []
@@ -124,12 +128,12 @@ async def visualize_complexity(repo_id: str):
 # ─────────────────────────────────────────
 
 @router.get("/visualize/architecture/{repo_id}")
-async def visualize_architecture(repo_id: str):
+async def visualize_architecture(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """
     Build module-level architecture graph from module_graph data.
     Zero LLM cost — uses module groupings from /analyze.
     """
-    result, _ = _load_repo(repo_id)
+    result, _ = await _load_repo(repo_id, cache)
     module_graph = result.get("module_graph", {})
 
     if isinstance(module_graph, dict) and "graph_json" in module_graph:
@@ -179,18 +183,19 @@ async def visualize_architecture(repo_id: str):
 # ─────────────────────────────────────────
 
 @router.get("/visualize/dataflow/{repo_id}")
-async def visualize_dataflow(repo_id: str):
+async def visualize_dataflow(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """
     Build data flow diagram from entry points and their dependencies.
     Zero LLM cost — uses entry_points and adjacency from /analyze.
     """
-    result, _ = _load_repo(repo_id)
+    result, _ = await _load_repo(repo_id, cache)
     analysis = result.get("dep_data", {})
     adjacency = analysis.get("adjacency", {})
     entry_points = analysis.get("entry_points", [])
 
-    nodes = []
-    edges = []
+    from typing import Any
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
     seen = set()
 
     # Start from entry points and follow dependencies (BFS, depth=3)
@@ -226,12 +231,12 @@ class MindmapRequest(BaseModel):
 
 
 @router.post("/visualize/mindmap/{repo_id}")
-async def visualize_mindmap(repo_id: str, body: MindmapRequest):
+async def visualize_mindmap(repo_id: str, body: MindmapRequest, cache: AnalysisCache = Depends(get_cache)):
     """
     Build mind map. Static by default (zero LLM cost).
     Set use_llm=true for LLM-enhanced categorization.
     """
-    result, clone_path = _load_repo(repo_id)
+    result, _clone_path = await _load_repo(repo_id, cache)
     classification = result.get("file_profiles", [])
 
     if body.use_llm:
@@ -240,7 +245,7 @@ async def visualize_mindmap(repo_id: str, body: MindmapRequest):
 
         provider = get_provider("mindmap_data")
         file_list = [fp.get("path", "") for fp in classification[:20]]
-        languages = {}
+        languages: dict[str, int] = {}
         for fp in classification:
             lang = fp.get("language", "Unknown")
             languages[lang] = languages.get(lang, 0) + 1
@@ -311,13 +316,13 @@ class ExplainVizRequest(BaseModel):
 
 
 @router.post("/explain/visualization/{viz_type}")
-async def explain_visualization(viz_type: str, body: ExplainVizRequest):
+async def explain_visualization(viz_type: str, body: ExplainVizRequest, cache: AnalysisCache = Depends(get_cache)):
     """
     Generate an LLM explanation for a specific visualization type.
     This is a SEPARATE endpoint from the visualization data itself.
     Only called when user explicitly clicks "Explain This Graph".
     """
-    result, clone_path = _load_repo(body.repo_id)
+    result, _clone_path = await _load_repo(body.repo_id, cache)
 
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -409,7 +414,7 @@ def _explain_prompt_dataflow(analysis: dict) -> str:
 
 
 def _explain_prompt_mindmap(classification: list) -> str:
-    roles = {}
+    roles: dict[str, int] = {}
     for fp in classification[:30]:
         role = fp.get("role_label", "Unknown")
         roles[role] = roles.get(role, 0) + 1

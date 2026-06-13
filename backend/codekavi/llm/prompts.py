@@ -12,8 +12,8 @@ Prompt design principles:
 """
 
 from __future__ import annotations
-from codekavi.llm.providers import Message
 
+from codekavi.llm.providers import Message
 
 # ─────────────────────────────────────────────
 # System prompts
@@ -249,7 +249,7 @@ def build_module_summary_prompt(
     Build a prompt for explaining what a single module/directory does.
     """
     files_str = "\n".join(f"  - `{f}`" for f in files[:30])
-    lang_str = ", ".join(f"{l} ({c})" for l, c in languages.items())
+    lang_str = ", ".join(f"{lang} ({count})" for lang, count in languages.items())
     role_str = ", ".join(f"{r} ({c})" for r, c in roles.items())
 
     in_str = ", ".join(f"`{c['source']}/`" for c in connections_in[:10]) if connections_in else "None"

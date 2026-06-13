@@ -22,11 +22,23 @@ import json
 import os
 import re
 from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
 
 try:
-    from codekavi.config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP, MAX_FILE_SIZE_BYTES
+    from codekavi.config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP, MAX_FILE_SIZE_BYTES, settings
 except ModuleNotFoundError:
-    from config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP, MAX_FILE_SIZE_BYTES
+    from config import (  # type: ignore[no-redef]
+        EXTENSION_LANGUAGE_MAP,
+        FILENAME_LANGUAGE_MAP,
+        MAX_FILE_SIZE_BYTES,
+        settings,
+    )
+
+try:
+    from codekavi.utils import BoundedContentCache
+except ModuleNotFoundError:
+    from utils import BoundedContentCache  # type: ignore[no-redef]
 
 
 # ─────────────────────────────────────────────
@@ -42,7 +54,7 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
       - from .foo import bar  (relative)
       - from ..foo import bar (relative)
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
     try:
         tree = ast.parse(source, filename=filepath)
     except SyntaxError:
@@ -120,7 +132,7 @@ def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[d
       - import('path')
       - export ... from 'path'
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     patterns = [
@@ -183,9 +195,9 @@ def _resolve_js_path(import_path: str, file_dir: str, repo_root: str) -> str | N
     return None
 
 
-def _extract_go_imports(source: str) -> list[dict]:
+def _extract_go_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Go imports."""
-    imports = []
+    imports: list[dict[str, Any]] = []
 
     # Single import: import "path"
     for match in re.finditer(r'import\s+"([^"]+)"', source):
@@ -208,7 +220,7 @@ def _extract_go_imports(source: str) -> list[dict]:
 
 def _extract_java_imports(source: str, repo_root: str) -> list[dict]:
     """Extract Java/Kotlin imports."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     for match in re.finditer(r'import\s+([\w.]+(?:\.\*)?)\s*;', source):
         raw = match.group(1)
         line = source[:match.start()].count("\n") + 1
@@ -222,7 +234,7 @@ def _extract_java_imports(source: str, repo_root: str) -> list[dict]:
 
 def _extract_c_cpp_includes(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract C/C++ #include directives."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     for match in re.finditer(r'#\s*include\s*[<"]([^>"]+)[>"]', source):
@@ -241,7 +253,7 @@ def _extract_c_cpp_includes(filepath: str, source: str, repo_root: str) -> list[
 
 def _extract_ruby_requires(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Ruby require/require_relative."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     for match in re.finditer(r"""require_relative\s+['"]([^'"]+)['"]""", source):
@@ -263,9 +275,9 @@ def _extract_ruby_requires(filepath: str, source: str, repo_root: str) -> list[d
     return imports
 
 
-def _extract_rust_uses(source: str) -> list[dict]:
+def _extract_rust_uses(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Rust use/mod declarations."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     for match in re.finditer(r'(?:use|mod)\s+([\w:]+)', source):
         raw = match.group(1)
         line = source[:match.start()].count("\n") + 1
@@ -275,7 +287,7 @@ def _extract_rust_uses(source: str) -> list[dict]:
 
 def _extract_php_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract PHP use/include/require statements."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     for match in re.finditer(r"""(?:include|include_once|require|require_once)\s+['"]([^'"]+)['"]""", source):
         raw = match.group(1)
         line = source[:match.start()].count("\n") + 1
@@ -299,7 +311,7 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
     Python AST-based import extraction on each cell's source.
     Tracks cell index in the 'line' field (cell_1, cell_2, ...).
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
 
     try:
         notebook = json.loads(source)
@@ -348,7 +360,7 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
 # ─────────────────────────────────────────────
 
 # Map language names to extractor functions
-_EXTRACTORS: dict[str, callable] = {
+_EXTRACTORS: dict[str, Callable[..., Any]] = {
     "Python":               _extract_python_imports,
     "JavaScript":           _extract_js_ts_imports,
     "JavaScript (React)":   _extract_js_ts_imports,
@@ -383,7 +395,11 @@ def _detect_language(filepath: str) -> str:
 # Core: Build dependency graph
 # ─────────────────────────────────────────────
 
-def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
+def analyze_dependencies(
+    repo_root: str,
+    file_list: list[dict],
+    content_cache: BoundedContentCache | None = None,
+) -> dict:
     """
     Analyze all files in the repo and build a full dependency graph.
 
@@ -404,13 +420,16 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
     # All file paths in the repo (relative)
     known_files = {f["path"] for f in file_list}
 
-    edges = []                                   # { source, target, ... }
+    edges: list[dict[str, Any]] = []                                   # { source, target, ... }
     adjacency: dict[str, set] = defaultdict(set)           # file -> imports
     reverse_adjacency: dict[str, set] = defaultdict(set)   # file -> imported_by
     file_imports: dict[str, list] = defaultdict(list)       # file -> raw import list
 
     # Content cache: read each file ONCE, reuse in classifier + entry point detection
-    content_cache: dict[str, str] = {}
+    local_cache = False
+    if content_cache is None:
+        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+        local_cache = True
 
     resolved_count = 0
     unresolved_count = 0
@@ -429,9 +448,9 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             file_size = os.path.getsize(abs_path)
             if file_size > MAX_FILE_SIZE_BYTES:
                 continue
-            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 source = f.read()
-            content_cache[rel_path] = source
+            content_cache[rel_path] = source[:4096]
         except (OSError, UnicodeDecodeError):
             continue
 
@@ -461,6 +480,10 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
     # ── Find central/important files ──
     central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
 
+    if local_cache:
+        content_cache.clear()
+        del content_cache
+
     return {
         "edges": edges,
         "adjacency": {k: sorted(v) for k, v in adjacency.items()},
@@ -473,7 +496,6 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             "resolved_edges": resolved_count,
             "unresolved_edges": unresolved_count,
         },
-        "content_cache": content_cache,
     }
 
 
@@ -516,7 +538,7 @@ def _detect_entry_points(
     known_files: set[str],
     adjacency: dict[str, set],
     reverse_adjacency: dict[str, set],
-    content_cache: dict[str, str] | None = None,
+    content_cache: dict[str, str] | BoundedContentCache | None = None,
 ) -> list[dict]:
     """
     Detect likely entry point files using heuristics:
@@ -528,7 +550,7 @@ def _detect_entry_points(
     scored: dict[str, dict] = {}
 
     # Extensions that are actual source code (not docs/config)
-    _SOURCE_EXTENSIONS = {
+    source_extensions = {
         ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
         ".go", ".java", ".kt", ".rs", ".rb", ".php",
         ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
@@ -538,7 +560,7 @@ def _detect_entry_points(
     for fpath in known_files:
         basename = os.path.basename(fpath)
         _, ext = os.path.splitext(basename)
-        is_source = ext.lower() in _SOURCE_EXTENSIONS
+        is_source = ext.lower() in source_extensions
         score = 0
         reasons = []
 
@@ -559,7 +581,7 @@ def _detect_entry_points(
             else:
                 abs_path = os.path.join(repo_root, fpath)
                 try:
-                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(abs_path, encoding="utf-8", errors="ignore") as f:
                         content = f.read(4096)
                 except OSError:
                     content = ""
@@ -627,7 +649,7 @@ def _find_central_files(
 
     Returns top files sorted by score.
     """
-    file_scores = []
+    file_scores: list[dict[str, Any]] = []
 
     for fpath in known_files:
         in_deg = len(reverse_adjacency.get(fpath, set()))
@@ -672,7 +694,7 @@ def _classify_role(in_deg: int, out_deg: int) -> str:
 #Testing
 if __name__ == "__main__":
     notebook_path = "/Applications/Projects/CodeKavi/test/test.ipynb"
-    with open(notebook_path, "r") as f:
+    with open(notebook_path) as f:
         notebook_content = f.read()
     imports = _extract_ipynb_imports(notebook_path, notebook_content, "/Applications/Projects/CodeKavi")
     print(imports)

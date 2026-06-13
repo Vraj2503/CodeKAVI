@@ -5,14 +5,15 @@ Endpoints:
     POST /chat/{repo_id} — Ask a question about a previously analyzed repo.
 """
 
-import os
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from codekavi.schemas import ChatRequest
+from codekavi.cache import AnalysisCache
 from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
+from codekavi.routes.dependencies import get_cache
+from codekavi.schemas import ChatRequest
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
@@ -31,7 +32,7 @@ _TECHNICAL_KEYWORDS = [
 
 
 @router.post("/chat/{repo_id}")
-async def chat_repo(repo_id: str, body: ChatRequest):
+async def chat_repo(repo_id: str, body: ChatRequest, cache: AnalysisCache = Depends(get_cache)):
     """
     RAG endpoint that searches the Zilliz vector store for relevant code context
     and answers the user's question using the LLM.
@@ -59,7 +60,7 @@ async def chat_repo(repo_id: str, body: ChatRequest):
 
         # Verify repo exists in our cache (ensures we can serve other endpoints too)
         from codekavi.session import ensure_repo_loaded
-        result, _ = ensure_repo_loaded(repo_id)
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
         if not result:
             raise HTTPException(
                 status_code=404,
@@ -174,4 +175,4 @@ async def chat_repo(repo_id: str, body: ChatRequest):
         raise  # Re-raise our own HTTP exceptions (400, 404, 503)
     except Exception as e:
         logger.error(f"Chat RAG error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

@@ -8,31 +8,33 @@ Endpoints:
     DELETE /cleanup/{repo_id}   — Remove a previously cloned repo.
 """
 
-import os
 import json
-import asyncio
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from codekavi.schemas import AnalyzeRequest
-from codekavi.session import active_sessions, active_results, ensure_repo_loaded, save_analysis
-from codekavi.cloner import clone_repo, cleanup_repo, parse_github_url
-from codekavi.traverser import traverse_repo
 from codekavi.analyzer import analyze_dependencies
+from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
+from codekavi.cloner import cleanup_repo, clone_repo, parse_github_url
+from codekavi.config import settings
+from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
-    export_graph_json,
-    export_dot,
-    export_mermaid,
     build_module_graph,
     detect_cycles,
+    export_dot,
+    export_graph_json,
+    export_mermaid,
 )
 from codekavi.indexer import index_repository
-from codekavi.file_selector import SmartFileSelector
+from codekavi.routes.dependencies import get_cache
+from codekavi.schemas import AnalyzeRequest
+from codekavi.session import ensure_repo_loaded, save_analysis
+from codekavi.traverser import traverse_repo
+from codekavi.utils import BoundedContentCache
 from codekavi.utils import run_sync as _run_sync
-
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,7 +44,11 @@ logger = logging.getLogger(__name__)
 # ── Routes ──
 
 @router.post("/analyze")
-async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
+async def analyze(
+    body: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    cache: AnalysisCache = Depends(get_cache),
+):
     """Clone a GitHub repo and return its file metadata."""
     github_url = body.github_url.strip()
 
@@ -50,25 +56,26 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
     try:
         parse_github_url(github_url)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Clone the repository (blocking I/O)
     try:
         clone_info = await _run_sync(clone_repo, github_url)
     except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     # Traverse and collect metadata
     try:
         repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
     except Exception as e:
         cleanup_repo(clone_info["clone_path"])
-        raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
 
-    # Analyze dependencies
+    # Analyze dependencies and classify roles using a shared BoundedContentCache
+    content_cache = BoundedContentCache(settings.max_content_cache_bytes)
     try:
         dep_data = await _run_sync(
-            analyze_dependencies, clone_info["clone_path"], repo_data["files"]
+            analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
         )
     except Exception as e:
         dep_data = {
@@ -76,9 +83,6 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
             "edges": [], "adjacency": {}, "reverse_adjacency": {},
             "entry_points": [], "central_files": [], "stats": {},
         }
-
-    # Extract content_cache (ephemeral — used by classifier, not persisted)
-    content_cache = dep_data.pop("content_cache", None)
 
     # Classify file roles
     try:
@@ -90,6 +94,9 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
     except Exception as e:
         file_profiles = []
         role_summary = {"error": f"Classification failed: {e}"}
+    finally:
+        content_cache.clear()
+        del content_cache
 
     # Build graph exports
     try:
@@ -126,7 +133,7 @@ async def analyze(body: AnalyzeRequest, background_tasks: BackgroundTasks):
         "module_graph": module_graph,
         "selected_files": selected_files,
     }
-    save_analysis(repo_id, clone_info["clone_path"], result_data)
+    save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
 
     # Index repository for RAG in the background (prevents proxy timeouts)
     if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
@@ -166,7 +173,7 @@ def _sse_event(stage: str, progress: int, message: str, data: dict | None = None
 
 
 @router.post("/analyze/stream")
-async def analyze_stream(body: AnalyzeRequest):
+async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(get_cache)):
     """
     SSE streaming version of /analyze.
     Yields progress events as each stage completes, then the final result.
@@ -176,7 +183,7 @@ async def analyze_stream(body: AnalyzeRequest):
     try:
         parse_github_url(github_url)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def event_generator():
         # Stage 1: Cloning
@@ -198,9 +205,10 @@ async def analyze_stream(body: AnalyzeRequest):
 
         # Stage 3: Analyzing dependencies
         yield _sse_event("analyzing", 40, "Analyzing dependencies…")
+        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
         try:
             dep_data = await _run_sync(
-                analyze_dependencies, clone_info["clone_path"], repo_data["files"]
+                analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
             )
         except Exception as e:
             dep_data = {
@@ -208,9 +216,6 @@ async def analyze_stream(body: AnalyzeRequest):
                 "edges": [], "adjacency": {}, "reverse_adjacency": {},
                 "entry_points": [], "central_files": [], "stats": {},
             }
-
-        # Extract content_cache (ephemeral — used by classifier, not persisted)
-        content_cache = dep_data.pop("content_cache", None)
 
         # Stage 4: Classifying files
         yield _sse_event("classifying", 55, "Classifying file roles…")
@@ -223,6 +228,9 @@ async def analyze_stream(body: AnalyzeRequest):
         except Exception as e:
             file_profiles = []
             role_summary = {"error": f"Classification failed: {e}"}
+        finally:
+            content_cache.clear()
+            del content_cache
 
         # Stage 5: Building graphs
         yield _sse_event("graphing", 70, "Building dependency graphs…")
@@ -261,7 +269,7 @@ async def analyze_stream(body: AnalyzeRequest):
             "module_graph": module_graph,
             "selected_files": selected_files,
         }
-        save_analysis(repo_id, clone_info["clone_path"], stream_result_data)
+        save_analysis(repo_id, clone_info["clone_path"], stream_result_data, cache)
 
         # Stage 7: Indexing (embedding) — done INLINE so chat is ready
         yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
@@ -312,13 +320,14 @@ async def get_graph(
     format: str = Query("json", description="Export format: json, dot, mermaid, module"),
     depth: int = Query(1, description="Directory depth for module grouping (1-3)", ge=1, le=3),
     max_nodes: int = Query(50, description="Max nodes for Mermaid diagrams", ge=10, le=200),
+    cache: AnalysisCache = Depends(get_cache),
 ):
     """
     Retrieve the dependency graph for a previously analyzed repo
     in a specific export format.
     """
     try:
-        result, _ = ensure_repo_loaded(repo_id)
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
 
@@ -349,10 +358,10 @@ async def get_graph(
 
 
 @router.get("/restore/{repo_id}")
-async def restore_repo(repo_id: str):
+async def restore_repo(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """Restore analysis results from cache chain for a previously analyzed repo."""
     try:
-        result, _ = ensure_repo_loaded(repo_id)
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore repo: {e}") from e
 
@@ -379,14 +388,12 @@ async def restore_repo(repo_id: str):
 
 
 @router.delete("/cleanup/{repo_id}")
-async def cleanup(repo_id: str):
+async def cleanup(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
     """Remove a previously cloned repo by its ID."""
-    from codekavi.cache import analysis_cache
-
-    clone_path = active_sessions.pop(repo_id, None)
-    active_results.pop(repo_id, None)
-    analysis_cache.delete(repo_id)
+    clone_path = await _run_sync(cache.get_session_path, repo_id)
+    await _run_sync(cache.delete, repo_id)
+    await _run_sync(cache.delete_session, repo_id)
     if clone_path:
-        cleanup_repo(clone_path)
+        await _run_sync(cleanup_repo, clone_path)
         return {"success": True, "message": f"Repo {repo_id} cleaned up."}
     raise HTTPException(status_code=404, detail="Session not found")

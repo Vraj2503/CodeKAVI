@@ -6,12 +6,12 @@ files/directories, and collects structured metadata for each file.
 import os
 
 from codekavi.config import (
+    EXTENSION_LANGUAGE_MAP,
+    FILENAME_LANGUAGE_MAP,
     IGNORED_DIRS,
     IGNORED_EXTENSIONS,
     IGNORED_FILES,
     MAX_FILE_SIZE_BYTES,
-    EXTENSION_LANGUAGE_MAP,
-    FILENAME_LANGUAGE_MAP,
 )
 
 
@@ -88,7 +88,7 @@ def traverse_repo(clone_path: str) -> dict:
           - files: list of dicts (flat list of file metadata)
     """
     all_files = []
-    languages = {}
+    languages: dict[str, int] = {}
     total_size = 0
 
     # Build a hierarchical tree structure
@@ -147,7 +147,8 @@ def _build_tree(current_path: str, root_path: str) -> list:
       - children: list (only for dirs)
       - size, size_formatted, language (only for files)
     """
-    entries = []
+    from typing import Any
+    entries: list[dict[str, Any]] = []
 
     try:
         items = sorted(os.listdir(current_path))

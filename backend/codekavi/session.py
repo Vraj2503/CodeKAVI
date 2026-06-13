@@ -2,24 +2,17 @@
 session.py — Session store for active repo analyses.
 
 Uses the 3-tier AnalysisCache (in-memory → Redis → Supabase) instead
-of raw in-memory dicts.  This module owns the global cache instance
-so there's exactly one source of truth and no circular imports.
+of raw in-memory dicts.
 """
 
-import os
 import logging
+import os
 
-from codekavi.config import CLONE_BASE_DIR
-from codekavi.cache import analysis_cache
+from codekavi.cache import AnalysisCache
+from codekavi.config import CLONE_BASE_DIR, settings
+from codekavi.utils import BoundedContentCache
 
 logger = logging.getLogger(__name__)
-
-# ── Backward-compatible aliases ──
-# These point into the L1 (in-memory) layer of the cache.
-# Existing code that writes to active_sessions/active_results
-# directly will still work, but prefer cache.set()/cache.get().
-active_sessions: dict[str, str] = analysis_cache._sessions
-active_results: dict[str, dict] = analysis_cache._memory
 
 
 def find_clone_path_by_repo_id(repo_id: str) -> str | None:
@@ -35,7 +28,7 @@ def find_clone_path_by_repo_id(repo_id: str) -> str | None:
     return None
 
 
-def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
+def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None, str | None]:
     """
     Ensure repo analysis is available for a repo_id.
 
@@ -44,8 +37,8 @@ def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
     Returns (result_dict, clone_path) or (None, None).
     """
     # Fast path: check L1 memory
-    clone_path = analysis_cache.get_session_path(repo_id)
-    result = analysis_cache.get(repo_id)
+    clone_path = cache.get_session_path(repo_id)
+    result = cache.get(repo_id)
     if result and clone_path:
         return result, clone_path
 
@@ -53,7 +46,7 @@ def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
     if result and not clone_path:
         clone_path = find_clone_path_by_repo_id(repo_id)
         if clone_path:
-            analysis_cache.set_session_path(repo_id, clone_path)
+            cache.set_session_path(repo_id, clone_path)
             return result, clone_path
         # We have cached results but no clone dir — still usable for
         # chat/visualize/explain (they only need the result dict).
@@ -69,27 +62,28 @@ def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
     try:
         logger.info(f"Re-analyzing repo {repo_id} from disk: {clone_path}")
 
-        from codekavi.traverser import traverse_repo
         from codekavi.analyzer import analyze_dependencies
         from codekavi.classifier import classify_files, summarize_roles
-        from codekavi.graph import export_graph_json, build_module_graph
         from codekavi.file_selector import SmartFileSelector
+        from codekavi.graph import build_module_graph, export_graph_json
+        from codekavi.traverser import traverse_repo
 
         repo_data = traverse_repo(clone_path)
-        dep_data = analyze_dependencies(clone_path, repo_data["files"])
-
-        # Extract content_cache before passing to classifier
-        content_cache = dep_data.pop("content_cache", None)
-
-        file_profiles = classify_files(
-            clone_path, repo_data["files"], dep_data,
-            content_cache=content_cache,
-        )
+        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+        try:
+            dep_data = analyze_dependencies(clone_path, repo_data["files"], content_cache)
+            file_profiles = classify_files(
+                clone_path, repo_data["files"], dep_data,
+                content_cache=content_cache,
+            )
+        finally:
+            content_cache.clear()
+            del content_cache
         role_summary = summarize_roles(file_profiles)
         graph_json = export_graph_json(dep_data, file_profiles)
         module_graph = build_module_graph(dep_data, file_profiles, depth=1)
 
-        # Smart file selection (was missing in the original re-analysis path)
+        # Smart file selection
         selector = SmartFileSelector()
         selected_files = selector.select_files(
             repo_data["files"], dep_data, file_profiles
@@ -111,8 +105,8 @@ def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
         }
 
         # Persist to all cache tiers
-        analysis_cache.set(repo_id, result)
-        analysis_cache.set_session_path(repo_id, clone_path)
+        cache.set(repo_id, result)
+        cache.set_session_path(repo_id, clone_path)
 
         return result, clone_path
 
@@ -121,10 +115,10 @@ def ensure_repo_loaded(repo_id: str) -> tuple[dict | None, str | None]:
         return None, None
 
 
-def save_analysis(repo_id: str, clone_path: str, result: dict) -> None:
+def save_analysis(repo_id: str, clone_path: str, result: dict, cache: AnalysisCache) -> None:
     """
     Persist analysis results to all cache tiers and register session path.
     Called by analyze routes after initial analysis.
     """
-    analysis_cache.set(repo_id, result)
-    analysis_cache.set_session_path(repo_id, clone_path)
+    cache.set(repo_id, result)
+    cache.set_session_path(repo_id, clone_path)

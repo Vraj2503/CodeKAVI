@@ -2,14 +2,15 @@
 cloner.py — Handles cloning GitHub repositories to a local directory.
 """
 
+import logging
 import os
 import re
 import shutil
 import time
 import uuid
-import logging
+from typing import Any, cast
 
-from git import Repo, GitCommandError
+from git import GitCommandError, Repo
 
 from codekavi.config import CLONE_BASE_DIR
 
@@ -80,13 +81,13 @@ def clone_repo(github_url: str) -> dict:
         Repo.clone_from(
             parsed["clone_url"],
             clone_path,
-            **clone_kwargs
+            **cast(Any, clone_kwargs)
         )
     except GitCommandError as e:
         # Clean up partial clone on failure
         if os.path.exists(clone_path):
             shutil.rmtree(clone_path, ignore_errors=True)
-        raise RuntimeError(f"Failed to clone repository: {e}")
+        raise RuntimeError(f"Failed to clone repository: {e}") from e
 
     return {
         "repo_id": repo_id,
