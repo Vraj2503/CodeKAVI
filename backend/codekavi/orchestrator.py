@@ -116,24 +116,29 @@ class ExplanationOrchestrator:
         pending = set(named_tasks.values())
         task_to_name = {v: k for k, v in named_tasks.items()}
 
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                name = task_to_name[task]
-                self.sections_completed += 1
-                done_count += 1
-                progress = p_start + int((done_count / total) * (p_end - p_start))
-                try:
-                    result = task.result()
-                    yield {"type": "section", "data": {"name": name, **result}}
-                    yield self._progress(
-                        progress,
-                        "generating",
-                        f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})",
-                    )
-                except Exception as e:
-                    logger.error(f"Section {name} failed: {e}")
-                    yield {"type": "warning", "data": {"section": name, "message": str(e)[:200]}}
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    name = task_to_name[task]
+                    self.sections_completed += 1
+                    done_count += 1
+                    progress = p_start + int((done_count / total) * (p_end - p_start))
+                    try:
+                        result = task.result()
+                        yield {"type": "section", "data": {"name": name, **result}}
+                        yield self._progress(
+                            progress,
+                            "generating",
+                            f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})",
+                        )
+                    except Exception as e:
+                        logger.error(f"Section {name} failed: {e}")
+                        yield {"type": "warning", "data": {"section": name, "message": str(e)[:200]}}
+        finally:
+            for task in pending:
+                if not task.done():
+                    task.cancel()
 
     # ─────────────────────────────────────────
     # Section generator

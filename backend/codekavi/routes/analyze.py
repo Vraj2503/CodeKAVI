@@ -10,6 +10,7 @@ Endpoints:
 
 import json
 import logging
+import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -29,6 +30,7 @@ from codekavi.graph import (
 )
 from codekavi.indexer import index_repository
 from codekavi.limiter import limiter
+from codekavi.logging_config import repo_id_ctx
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import AnalyzeRequest
 from codekavi.session import ensure_repo_loaded, save_analysis
@@ -63,107 +65,145 @@ async def analyze(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Clone the repository (blocking I/O)
+    start_time = time.perf_counter()
     try:
         clone_info = await _run_sync(clone_repo, github_url)
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-    # Traverse and collect metadata
-    try:
-        repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.info(f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration})
     except Exception as e:
-        cleanup_repo(clone_info["clone_path"])
-        raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
+        message = getattr(e, "message", str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to clone repository: {message}") from e
 
-    # Analyze dependencies and classify roles using a shared BoundedContentCache
-    content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-    try:
-        dep_data = await _run_sync(analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache)
-    except Exception as e:
-        dep_data = {
-            "error": f"Dependency analysis failed: {e}",
-            "edges": [],
-            "adjacency": {},
-            "reverse_adjacency": {},
-            "entry_points": [],
-            "central_files": [],
-            "stats": {},
-        }
-
-    # Classify file roles
-    try:
-        file_profiles = await _run_sync(
-            classify_files,
-            clone_info["clone_path"],
-            repo_data["files"],
-            dep_data,
-            content_cache=content_cache,
-        )
-        role_summary = summarize_roles(file_profiles)
-    except Exception as e:
-        file_profiles = []
-        role_summary = {"error": f"Classification failed: {e}"}
-    finally:
-        content_cache.clear()
-        del content_cache
-
-    # Build graph exports
-    try:
-        graph_json = export_graph_json(dep_data, file_profiles)
-        mermaid_file = export_mermaid(graph_json)
-        module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-        cycles = detect_cycles(dep_data)
-    except Exception as e:
-        graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-        mermaid_file = ""
-        module_graph = {"error": f"Module graph failed: {e}"}
-        cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-
-    # Smart file selection
-    selector = SmartFileSelector()
-    try:
-        selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
-    except Exception as e:
-        logger.warning(f"Smart file selection failed: {e}")
-        selected_files = []
-
-    # Store session and results in 3-tier cache (memory + Redis + Supabase)
     repo_id = clone_info["repo_id"]
-    result_data = {
-        "repo_name": clone_info["repo_name"],
-        "owner": clone_info["owner"],
-        "repo_data": repo_data,
-        "dep_data": dep_data,
-        "file_profiles": file_profiles,
-        "role_summary": role_summary,
-        "graph_json": graph_json,
-        "module_graph": module_graph,
-        "selected_files": selected_files,
-    }
-    save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
+    token = repo_id_ctx.set(repo_id)
 
-    # Index repository for RAG in the background (prevents proxy timeouts)
-    if settings.gemini_api_key and settings.zilliz_uri:
-        background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+    try:
+        # Traverse and collect metadata
+        start_time = time.perf_counter()
+        try:
+            repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage traversing completed in {duration:.2f}ms",
+                extra={"stage": "traversing", "duration_ms": duration},
+            )
+        except Exception as e:
+            cleanup_repo(clone_info["clone_path"])
+            raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
 
-    return {
-        "success": True,
-        "repo_id": repo_id,
-        "repo_name": clone_info["repo_name"],
-        "owner": clone_info["owner"],
-        "github_url": github_url,
-        **repo_data,
-        "dependencies": dep_data,
-        "file_profiles": file_profiles,
-        "role_summary": role_summary,
-        "graph": graph_json,
-        "module_graph": module_graph,
-        "cycles": cycles,
-        "mermaid": {
-            "file_level": mermaid_file,
-            "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
-        },
-    }
+        # Analyze dependencies and classify roles using a shared BoundedContentCache
+        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+        start_time = time.perf_counter()
+        try:
+            dep_data = await _run_sync(
+                analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+            )
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
+            )
+        except Exception as e:
+            dep_data = {
+                "error": f"Dependency analysis failed: {e}",
+                "edges": [],
+                "adjacency": {},
+                "reverse_adjacency": {},
+                "entry_points": [],
+                "central_files": [],
+                "stats": {},
+            }
+
+        # Classify file roles
+        start_time = time.perf_counter()
+        try:
+            file_profiles = await _run_sync(
+                classify_files,
+                clone_info["clone_path"],
+                repo_data["files"],
+                dep_data,
+                content_cache=content_cache,
+            )
+            role_summary = summarize_roles(file_profiles)
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage classifying completed in {duration:.2f}ms",
+                extra={"stage": "classifying", "duration_ms": duration},
+            )
+        except Exception as e:
+            file_profiles = []
+            role_summary = {"error": f"Classification failed: {e}"}
+        finally:
+            content_cache.clear()
+            del content_cache
+
+        # Build graph exports
+        start_time = time.perf_counter()
+        try:
+            graph_json = export_graph_json(dep_data, file_profiles)
+            mermaid_file = export_mermaid(graph_json)
+            module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+            cycles = detect_cycles(dep_data)
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
+            )
+        except Exception as e:
+            graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
+            mermaid_file = ""
+            module_graph = {"error": f"Module graph failed: {e}"}
+            cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+
+        # Smart file selection
+        selector = SmartFileSelector()
+        start_time = time.perf_counter()
+        try:
+            selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage selecting completed in {duration:.2f}ms", extra={"stage": "selecting", "duration_ms": duration}
+            )
+        except Exception as e:
+            logger.warning(f"Smart file selection failed: {e}")
+            selected_files = []
+
+        # Store session and results in 3-tier cache (memory + Redis + Supabase)
+        result_data = {
+            "repo_name": clone_info["repo_name"],
+            "owner": clone_info["owner"],
+            "repo_data": repo_data,
+            "dep_data": dep_data,
+            "file_profiles": file_profiles,
+            "role_summary": role_summary,
+            "graph_json": graph_json,
+            "module_graph": module_graph,
+            "selected_files": selected_files,
+        }
+        save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
+
+        # Index repository for RAG in the background (prevents proxy timeouts)
+        if settings.gemini_api_key and settings.zilliz_uri:
+            background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+
+        return {
+            "success": True,
+            "repo_id": repo_id,
+            "repo_name": clone_info["repo_name"],
+            "owner": clone_info["owner"],
+            "github_url": github_url,
+            **repo_data,
+            "dependencies": dep_data,
+            "file_profiles": file_profiles,
+            "role_summary": role_summary,
+            "graph": graph_json,
+            "module_graph": module_graph,
+            "cycles": cycles,
+            "mermaid": {
+                "file_level": mermaid_file,
+                "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
+            },
+        }
+    finally:
+        repo_id_ctx.reset(token)
 
 
 # ── SSE Streaming Analysis ──
@@ -197,124 +237,207 @@ async def analyze_stream(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def event_generator():
+
         # Stage 1: Cloning
+        if await request.is_disconnected():
+            logger.info("Client disconnected before cloning.")
+            return
+
         yield _sse_event("cloning", 10, "Cloning repository…")
+        start_time = time.perf_counter()
         try:
             clone_info = await _run_sync(clone_repo, github_url)
-        except RuntimeError as e:
-            yield _sse_event("error", 0, str(e))
-            return
-
-        # Stage 2: Traversing
-        yield _sse_event("traversing", 25, "Scanning file structure…")
-        try:
-            repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
-        except Exception as e:
-            cleanup_repo(clone_info["clone_path"])
-            yield _sse_event("error", 0, f"Failed to traverse repository: {e}")
-            return
-
-        # Stage 3: Analyzing dependencies
-        yield _sse_event("analyzing", 40, "Analyzing dependencies…")
-        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-        try:
-            dep_data = await _run_sync(
-                analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration}
             )
         except Exception as e:
-            dep_data = {
-                "error": f"Dependency analysis failed: {e}",
-                "edges": [],
-                "adjacency": {},
-                "reverse_adjacency": {},
-                "entry_points": [],
-                "central_files": [],
-                "stats": {},
-            }
+            message = getattr(e, "message", str(e))
+            yield _sse_event("error", 0, f"Failed to clone repository: {message}")
+            return
 
-        # Stage 4: Classifying files
-        yield _sse_event("classifying", 55, "Classifying file roles…")
-        try:
-            file_profiles = await _run_sync(
-                classify_files,
-                clone_info["clone_path"],
-                repo_data["files"],
-                dep_data,
-                content_cache=content_cache,
-            )
-            role_summary = summarize_roles(file_profiles)
-        except Exception as e:
-            file_profiles = []
-            role_summary = {"error": f"Classification failed: {e}"}
-        finally:
-            content_cache.clear()
-            del content_cache
-
-        # Stage 5: Building graphs
-        yield _sse_event("graphing", 70, "Building dependency graphs…")
-        try:
-            graph_json = export_graph_json(dep_data, file_profiles)
-            mermaid_file = export_mermaid(graph_json)
-            module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-            cycles = detect_cycles(dep_data)
-        except Exception as e:
-            graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-            mermaid_file = ""
-            module_graph = {"error": f"Module graph failed: {e}"}
-            cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-
-        # Stage 6: Smart file selection
-        yield _sse_event("selecting", 80, "Selecting key files…")
-        selector = SmartFileSelector()
-        try:
-            selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
-        except Exception as e:
-            logger.warning(f"Smart file selection failed: {e}")
-            selected_files = []
-
-        # Store session and results in 3-tier cache
         repo_id = clone_info["repo_id"]
-        stream_result_data = {
-            "repo_name": clone_info["repo_name"],
-            "owner": clone_info["owner"],
-            "repo_data": repo_data,
-            "dep_data": dep_data,
-            "file_profiles": file_profiles,
-            "role_summary": role_summary,
-            "graph_json": graph_json,
-            "module_graph": module_graph,
-            "selected_files": selected_files,
-        }
-        save_analysis(repo_id, clone_info["clone_path"], stream_result_data, cache)
+        token = repo_id_ctx.set(repo_id)
 
-        # Stage 7: Indexing (embedding) — done INLINE so chat is ready
-        yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
-        if settings.gemini_api_key and settings.zilliz_uri:
+        try:
+            # Stage 2: Traversing
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before traversing repo {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("traversing", 25, "Scanning file structure…")
+            start_time = time.perf_counter()
             try:
-                await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+                repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage traversing completed in {duration:.2f}ms",
+                    extra={"stage": "traversing", "duration_ms": duration},
+                )
             except Exception as e:
-                logger.warning(f"Indexing failed (non-fatal): {e}")
+                cleanup_repo(clone_info["clone_path"])
+                yield _sse_event("error", 0, f"Failed to traverse repository: {e}")
+                return
 
-        # Stage 8: Complete — include full result data
-        result = {
-            "success": True,
-            "repo_id": repo_id,
-            "repo_name": clone_info["repo_name"],
-            "owner": clone_info["owner"],
-            "github_url": github_url,
-            **repo_data,
-            "dependencies": dep_data,
-            "file_profiles": file_profiles,
-            "role_summary": role_summary,
-            "graph": graph_json,
-            "module_graph": module_graph,
-            "cycles": cycles,
-            "mermaid": {
-                "file_level": mermaid_file,
-                "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
-            },
-        }
-        yield _sse_event("complete", 100, "Analysis complete!", result)
+            # Stage 3: Analyzing dependencies
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before dependency analysis of {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("analyzing", 40, "Analyzing dependencies…")
+            content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+            start_time = time.perf_counter()
+            try:
+                dep_data = await _run_sync(
+                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+                )
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage analyzing completed in {duration:.2f}ms",
+                    extra={"stage": "analyzing", "duration_ms": duration},
+                )
+            except Exception as e:
+                dep_data = {
+                    "error": f"Dependency analysis failed: {e}",
+                    "edges": [],
+                    "adjacency": {},
+                    "reverse_adjacency": {},
+                    "entry_points": [],
+                    "central_files": [],
+                    "stats": {},
+                }
+
+            # Stage 4: Classifying files
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before role classification of {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("classifying", 55, "Classifying file roles…")
+            start_time = time.perf_counter()
+            try:
+                file_profiles = await _run_sync(
+                    classify_files,
+                    clone_info["clone_path"],
+                    repo_data["files"],
+                    dep_data,
+                    content_cache=content_cache,
+                )
+                role_summary = summarize_roles(file_profiles)
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage classifying completed in {duration:.2f}ms",
+                    extra={"stage": "classifying", "duration_ms": duration},
+                )
+            except Exception as e:
+                file_profiles = []
+                role_summary = {"error": f"Classification failed: {e}"}
+            finally:
+                content_cache.clear()
+                del content_cache
+
+            # Stage 5: Building graphs
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before graph export of {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("graphing", 70, "Building dependency graphs…")
+            start_time = time.perf_counter()
+            try:
+                graph_json = export_graph_json(dep_data, file_profiles)
+                mermaid_file = export_mermaid(graph_json)
+                module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+                cycles = detect_cycles(dep_data)
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage graphing completed in {duration:.2f}ms",
+                    extra={"stage": "graphing", "duration_ms": duration},
+                )
+            except Exception as e:
+                graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
+                mermaid_file = ""
+                module_graph = {"error": f"Module graph failed: {e}"}
+                cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+
+            # Stage 6: Smart file selection
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before file selection of {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("selecting", 80, "Selecting key files…")
+            selector = SmartFileSelector()
+            start_time = time.perf_counter()
+            try:
+                selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage selecting completed in {duration:.2f}ms",
+                    extra={"stage": "selecting", "duration_ms": duration},
+                )
+            except Exception as e:
+                logger.warning(f"Smart file selection failed: {e}")
+                selected_files = []
+
+            # Store session and results in 3-tier cache
+            stream_result_data = {
+                "repo_name": clone_info["repo_name"],
+                "owner": clone_info["owner"],
+                "repo_data": repo_data,
+                "dep_data": dep_data,
+                "file_profiles": file_profiles,
+                "role_summary": role_summary,
+                "graph_json": graph_json,
+                "module_graph": module_graph,
+                "selected_files": selected_files,
+            }
+            save_analysis(repo_id, clone_info["clone_path"], stream_result_data, cache)
+
+            # Stage 7: Indexing (embedding) — done INLINE so chat is ready
+            if await request.is_disconnected():
+                logger.info(f"Client disconnected before indexing repo {repo_id}.")
+                cleanup_repo(clone_info["clone_path"])
+                return
+
+            yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
+            if settings.gemini_api_key and settings.zilliz_uri:
+                start_time = time.perf_counter()
+                try:
+                    await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+                    duration = (time.perf_counter() - start_time) * 1000
+                    logger.info(
+                        f"Stage indexing completed in {duration:.2f}ms",
+                        extra={"stage": "indexing", "duration_ms": duration},
+                    )
+                except Exception as e:
+                    logger.warning(f"Indexing failed (non-fatal): {e}")
+
+            # Stage 8: Complete — include full result data
+            result = {
+                "success": True,
+                "repo_id": repo_id,
+                "repo_name": clone_info["repo_name"],
+                "owner": clone_info["owner"],
+                "github_url": github_url,
+                **repo_data,
+                "dependencies": dep_data,
+                "file_profiles": file_profiles,
+                "role_summary": role_summary,
+                "graph": graph_json,
+                "module_graph": module_graph,
+                "cycles": cycles,
+                "mermaid": {
+                    "file_level": mermaid_file,
+                    "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
+                },
+            }
+            yield _sse_event("complete", 100, "Analysis complete!", result)
+            yield "data: [DONE]\n\n"
+        finally:
+            repo_id_ctx.reset(token)
 
     return StreamingResponse(
         event_generator(),

@@ -114,7 +114,9 @@ class GroqProvider:
                 response = self._client.chat.completions.create(**kwargs)
                 break
             except Exception as e:
-                if "429" in str(e) and attempt < _MAX_RETRIES:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
+                if is_rate_limit and attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[attempt]
                     logger.warning(
                         f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s..."
@@ -124,7 +126,13 @@ class GroqProvider:
                     time_module.sleep(delay)
                     continue
                 logger.error(f"Groq API error: {e}")
-                raise
+                if is_rate_limit:
+                    from codekavi.exceptions import RateLimitError
+
+                    raise RateLimitError(f"Groq rate limit exceeded: {e}", detail=err_str) from e
+                from codekavi.exceptions import ProviderError
+
+                raise ProviderError(f"Groq API call failed: {e}", detail=err_str) from e
 
         choice = response.choices[0]
         content = choice.message.content or ""
@@ -190,7 +198,9 @@ class GroqProvider:
                 )
                 return response.choices[0].message.content or ""
             except Exception as e:
-                if "429" in str(e) and attempt < _MAX_RETRIES:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
+                if is_rate_limit and attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[attempt]
                     logger.warning(
                         f"Groq 429 rate limit hit in generate() "
@@ -200,7 +210,13 @@ class GroqProvider:
                     await asyncio.sleep(delay)
                     continue
                 logger.error(f"Groq API error in generate(): {e}")
-                raise
+                if is_rate_limit:
+                    from codekavi.exceptions import RateLimitError
+
+                    raise RateLimitError(f"Groq rate limit exceeded in generate(): {e}", detail=err_str) from e
+                from codekavi.exceptions import ProviderError
+
+                raise ProviderError(f"Groq API call failed in generate(): {e}", detail=err_str) from e
 
         return ""  # unreachable
 
@@ -324,7 +340,15 @@ class GeminiProvider:
             )
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
-            raise
+            err_str = str(e)
+            is_rate_limit = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "rate limit"])
+            if is_rate_limit:
+                from codekavi.exceptions import RateLimitError
+
+                raise RateLimitError(f"Gemini rate limit exceeded: {e}", detail=err_str) from e
+            from codekavi.exceptions import ProviderError
+
+            raise ProviderError(f"Gemini API call failed: {e}", detail=err_str) from e
 
         content = response.text or ""
 
@@ -388,8 +412,20 @@ class GeminiProvider:
             )
 
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(current_executor.get(None), _sync_call)
-        return response.text or ""
+        try:
+            response = await loop.run_in_executor(current_executor.get(None), _sync_call)
+            return response.text or ""
+        except Exception as e:
+            logger.error(f"Gemini API error in generate(): {e}")
+            err_str = str(e)
+            is_rate_limit = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "rate limit"])
+            if is_rate_limit:
+                from codekavi.exceptions import RateLimitError
+
+                raise RateLimitError(f"Gemini rate limit exceeded in generate(): {e}", detail=err_str) from e
+            from codekavi.exceptions import ProviderError
+
+            raise ProviderError(f"Gemini API call failed in generate(): {e}", detail=err_str) from e
 
     async def generate_stream(
         self,
@@ -462,3 +498,32 @@ def get_provider(task: str = "chat") -> GroqProvider:
     if "groq" not in _provider_cache:
         _provider_cache["groq"] = GroqProvider()
     return cast(GroqProvider, _provider_cache["groq"])
+
+
+def validate_providers() -> None:
+    """Verify configured models are reachable on startup."""
+    import os
+
+    # Skip during testing to avoid hitting live APIs
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
+    logger.info("Verifying LLM providers connectivity...")
+    try:
+        groq_provider = GroqProvider()
+        groq_provider.complete([Message(role="user", content="ping")], max_tokens=2)
+        logger.info("Groq connectivity verified.")
+    except Exception as e:
+        logger.error(f"Groq connectivity check failed: {e}")
+        raise RuntimeError(f"Groq connectivity check failed: {e}") from e
+
+    try:
+        gemini_provider = GeminiProvider()
+        gemini_provider._client.models.embed_content(  # type: ignore[attr-defined]
+            model=settings.embedding_model,
+            contents="ping",
+        )
+        logger.info("Gemini connectivity verified.")
+    except Exception as e:
+        logger.error(f"Gemini connectivity check failed: {e}")
+        raise RuntimeError(f"Gemini connectivity check failed: {e}") from e

@@ -193,6 +193,9 @@ async def explain_repo_stream(
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
 
     async def event_stream():
+        from codekavi.logging_config import repo_id_ctx
+
+        token = repo_id_ctx.set(repo_id)
         orchestrator = ExplanationOrchestrator(
             repo_path=clone_path,
             tree=result.get("repo_data", {}),
@@ -203,15 +206,24 @@ async def explain_repo_stream(
         )
         try:
             async for event in orchestrator.run():
+                if await request.is_disconnected():
+                    logger.info(f"Client disconnected from explain stream for {repo_id}. Aborting orchestrator run.")
+                    break
                 yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
         except Exception as e:
             logger.error(f"SSE stream error for {repo_id}: {e}")
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+            message = getattr(e, "message", str(e))
+            yield f"event: error\ndata: {json.dumps({'message': message})}\n\n"
         finally:
+            repo_id_ctx.reset(token)
             yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

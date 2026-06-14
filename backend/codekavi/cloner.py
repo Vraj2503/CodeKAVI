@@ -132,9 +132,9 @@ def clone_repo(github_url: str) -> dict:
         # Clean up partial clone on failure
         if os.path.exists(clone_path):
             shutil.rmtree(clone_path, ignore_errors=True)
-        if isinstance(e, ValueError):
-            raise
-        raise RuntimeError(f"Failed to clone repository: {e}") from e
+        from codekavi.exceptions import CloneError
+
+        raise CloneError(f"Failed to clone repository: {e}") from e
 
     return {
         "repo_id": repo_id,

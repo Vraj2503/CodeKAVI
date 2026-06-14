@@ -77,7 +77,9 @@ class ZillizClient:
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
         if not self.connect():
-            raise ValueError("Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY.")
+            from codekavi.exceptions import VectorStoreError
+
+            raise VectorStoreError("Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY.")
 
         if utility.has_collection(COLLECTION_NAME):
             self.collection = Collection(COLLECTION_NAME)
