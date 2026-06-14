@@ -35,89 +35,171 @@ from codekavi.utils import BoundedContentCache
 # ─────────────────────────────────────────────
 
 _ENTRY_POINT_BASENAMES = {
-    "main.py", "app.py", "manage.py", "wsgi.py", "asgi.py",
-    "server.py", "run.py", "cli.py", "__main__.py",
-    "index.js", "index.ts", "index.mjs", "main.js", "main.ts",
-    "app.js", "app.ts", "server.js", "server.ts",
-    "main.go", "cmd.go",
-    "Main.java", "App.java", "Application.java",
+    "main.py",
+    "app.py",
+    "manage.py",
+    "wsgi.py",
+    "asgi.py",
+    "server.py",
+    "run.py",
+    "cli.py",
+    "__main__.py",
+    "index.js",
+    "index.ts",
+    "index.mjs",
+    "main.js",
+    "main.ts",
+    "app.js",
+    "app.ts",
+    "server.js",
+    "server.ts",
+    "main.go",
+    "cmd.go",
+    "Main.java",
+    "App.java",
+    "Application.java",
     "main.rs",
-    "main.c", "main.cpp",
-    "app.rb", "config.ru",
-    "index.php", "artisan",
+    "main.c",
+    "main.cpp",
+    "app.rb",
+    "config.ru",
+    "index.php",
+    "artisan",
 }
 
 _CONFIG_BASENAMES = {
-    "settings.py", "config.py", "conf.py", "constants.py",
-    "config.js", "config.ts", "constants.js", "constants.ts",
-    ".env", ".env.example", ".env.local",
-    "next.config.js", "next.config.mjs", "nuxt.config.js", "nuxt.config.ts",
-    "vite.config.js", "vite.config.ts",
-    "webpack.config.js", "webpack.config.ts",
-    "tailwind.config.js", "tailwind.config.ts",
-    "tsconfig.json", "jsconfig.json",
-    "babel.config.js", ".babelrc",
-    "eslint.config.js", ".eslintrc.js", ".eslintrc.json",
-    "jest.config.js", "jest.config.ts",
-    ".prettierrc", ".prettierrc.js",
-    "pyproject.toml", "setup.py", "setup.cfg",
-    "Cargo.toml", "go.mod",
-    "pom.xml", "build.gradle", "build.gradle.kts",
+    "settings.py",
+    "config.py",
+    "conf.py",
+    "constants.py",
+    "config.js",
+    "config.ts",
+    "constants.js",
+    "constants.ts",
+    ".env",
+    ".env.example",
+    ".env.local",
+    "next.config.js",
+    "next.config.mjs",
+    "nuxt.config.js",
+    "nuxt.config.ts",
+    "vite.config.js",
+    "vite.config.ts",
+    "webpack.config.js",
+    "webpack.config.ts",
+    "tailwind.config.js",
+    "tailwind.config.ts",
+    "tsconfig.json",
+    "jsconfig.json",
+    "babel.config.js",
+    ".babelrc",
+    "eslint.config.js",
+    ".eslintrc.js",
+    ".eslintrc.json",
+    "jest.config.js",
+    "jest.config.ts",
+    ".prettierrc",
+    ".prettierrc.js",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
 }
 
 _BUILD_BASENAMES = {
-    "Dockerfile", "docker-compose.yml", "docker-compose.yaml",
-    "Makefile", "CMakeLists.txt", "Rakefile",
-    "Procfile", "Vagrantfile",
-    "Jenkinsfile", ".travis.yml", ".circleci",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "Makefile",
+    "CMakeLists.txt",
+    "Rakefile",
+    "Procfile",
+    "Vagrantfile",
+    "Jenkinsfile",
+    ".travis.yml",
+    ".circleci",
 }
 
 _DOC_BASENAMES = {
-    "README.md", "README.rst", "README.txt", "README",
-    "CHANGELOG.md", "CHANGELOG.rst", "HISTORY.md",
-    "CONTRIBUTING.md", "CONTRIBUTING.rst",
-    "LICENSE", "LICENSE.md", "LICENSE.txt",
+    "README.md",
+    "README.rst",
+    "README.txt",
+    "README",
+    "CHANGELOG.md",
+    "CHANGELOG.rst",
+    "HISTORY.md",
+    "CONTRIBUTING.md",
+    "CONTRIBUTING.rst",
+    "LICENSE",
+    "LICENSE.md",
+    "LICENSE.txt",
     "CODE_OF_CONDUCT.md",
-    "AUTHORS", "AUTHORS.md",
+    "AUTHORS",
+    "AUTHORS.md",
 }
 
 _TEST_PATTERNS = [
-    r"test[_s]?[\\/]",            #  test/ or tests/ directory
-    r"__tests__[\\/]",            #  __tests__/ (Jest convention)
-    r"spec[\\/]",                 #  spec/ directory (Ruby/JS)
-    r"_test\.py$",                #  module_test.py
-    r"_spec\.py$",                #  module_spec.py
-    r"^test_",                    #  test_module.py
-    r"\.test\.",                  #  module.test.js
-    r"\.spec\.",                  #  module.spec.ts
-    r"_test\.go$",                #  handler_test.go
-    r"Test\.java$",               #  HandlerTest.java
+    r"test[_s]?[\\/]",  #  test/ or tests/ directory
+    r"__tests__[\\/]",  #  __tests__/ (Jest convention)
+    r"spec[\\/]",  #  spec/ directory (Ruby/JS)
+    r"_test\.py$",  #  module_test.py
+    r"_spec\.py$",  #  module_spec.py
+    r"^test_",  #  test_module.py
+    r"\.test\.",  #  module.test.js
+    r"\.spec\.",  #  module.spec.ts
+    r"_test\.go$",  #  handler_test.go
+    r"Test\.java$",  #  HandlerTest.java
 ]
 
 _TYPE_DEF_PATTERNS = [
-    r"types?\.",                  #  types.ts, type.py
-    r"interfaces?\.",             #  interface.ts
-    r"models?\.",                 #  models.py, model.ts
-    r"schemas?\.",                #  schema.py, schemas.ts
-    r"entities?\.",               #  entity.py
-    r"dto\.",                     #  dto.ts
-    r"\.d\.ts$",                  #  global.d.ts (TS declaration)
+    r"types?\.",  #  types.ts, type.py
+    r"interfaces?\.",  #  interface.ts
+    r"models?\.",  #  models.py, model.ts
+    r"schemas?\.",  #  schema.py, schemas.ts
+    r"entities?\.",  #  entity.py
+    r"dto\.",  #  dto.ts
+    r"\.d\.ts$",  #  global.d.ts (TS declaration)
 ]
 
 _DATA_PATTERNS = [
-    r"migrations?[\\/]",          #  migrations/
-    r"seeds?[\\/]",               #  seeds/
-    r"fixtures?[\\/]",            #  fixtures/
-    r"data[\\/]",                 #  data/
-    r"\.sql$",                    #  schema.sql
+    r"migrations?[\\/]",  #  migrations/
+    r"seeds?[\\/]",  #  seeds/
+    r"fixtures?[\\/]",  #  fixtures/
+    r"data[\\/]",  #  data/
+    r"\.sql$",  #  schema.sql
 ]
 
 # Source code extensions (for content analysis)
 _SOURCE_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".java", ".kt", ".rs", ".rb", ".php",
-    ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
-    ".scala", ".dart", ".ex", ".exs", ".vue", ".svelte",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".go",
+    ".java",
+    ".kt",
+    ".rs",
+    ".rb",
+    ".php",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".swift",
+    ".scala",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".vue",
+    ".svelte",
 }
 
 
@@ -125,7 +207,13 @@ _SOURCE_EXTENSIONS = {
 # Content-based role signals
 # ─────────────────────────────────────────────
 
-def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | BoundedContentCache | None = None, rel_path: str | None = None) -> dict:
+
+def _content_signals(
+    abs_path: str,
+    ext: str,
+    content_cache: dict[str, str] | BoundedContentCache | None = None,
+    rel_path: str | None = None,
+) -> dict:
     """
     Read up to 4KB of a source file and detect structural signals.
     Returns a dict of boolean flags.
@@ -154,52 +242,56 @@ def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | Bo
             return signals
 
     # Python main guard
-    if 'if __name__' in content and '__main__' in content:
+    if "if __name__" in content and "__main__" in content:
         signals["has_main_guard"] = True
 
     # Main / entry functions
-    if re.search(r'def\s+main\s*\(', content):
+    if re.search(r"def\s+main\s*\(", content):
         signals["has_main_function"] = True
-    if re.search(r'func\s+main\s*\(', content):  # Go
+    if re.search(r"func\s+main\s*\(", content):  # Go
         signals["has_main_function"] = True
-    if re.search(r'public\s+static\s+void\s+main', content):  # Java
+    if re.search(r"public\s+static\s+void\s+main", content):  # Java
         signals["has_main_function"] = True
 
     # Server startup
-    if re.search(r'app\.listen\s*\(', content) or re.search(r'createServer\s*\(', content):
+    if re.search(r"app\.listen\s*\(", content) or re.search(r"createServer\s*\(", content):
         signals["starts_server"] = True
-    if re.search(r'\.run\s*\(', content) and any(kw in content for kw in ['Flask', 'FastAPI', 'uvicorn', 'Django']):
+    if re.search(r"\.run\s*\(", content) and any(kw in content for kw in ["Flask", "FastAPI", "uvicorn", "Django"]):
         signals["starts_server"] = True
-    if 'uvicorn.run' in content:
+    if "uvicorn.run" in content:
         signals["starts_server"] = True
 
     # Class definitions (model/type files often have many)
-    class_count = len(re.findall(r'(?:class|interface|struct|enum)\s+\w+', content))
+    class_count = len(re.findall(r"(?:class|interface|struct|enum)\s+\w+", content))
     if class_count >= 2:
         signals["has_class_defs"] = True
 
     # Route definitions (controller/router files)
     route_indicators = [
-        r'@app\.\w+\(',             # Flask/FastAPI decorators
-        r'@router\.\w+\(',          # FastAPI router
-        r'router\.\w+\(',           # Express router
-        r'@Get\(|@Post\(|@Put\(',   # NestJS/Spring
-        r'path\s*\(',               # Django URLs
-        r'urlpatterns',             # Django
+        r"@app\.\w+\(",  # Flask/FastAPI decorators
+        r"@router\.\w+\(",  # FastAPI router
+        r"router\.\w+\(",  # Express router
+        r"@Get\(|@Post\(|@Put\(",  # NestJS/Spring
+        r"path\s*\(",  # Django URLs
+        r"urlpatterns",  # Django
     ]
     route_count = sum(len(re.findall(p, content)) for p in route_indicators)
     if route_count >= 2:
         signals["has_route_defs"] = True
 
     # "Exports-only" file (like __init__.py or index.ts barrel)
-    code_lines = [ln.strip() for ln in content.split('\n') if ln.strip() and not ln.strip().startswith('#') and not ln.strip().startswith('//')]
+    code_lines = [
+        ln.strip()
+        for ln in content.split("\n")
+        if ln.strip() and not ln.strip().startswith("#") and not ln.strip().startswith("//")
+    ]
     if code_lines:
-        export_lines = sum(1 for ln in code_lines if ln.startswith(('from ', 'export ', 'module.exports', '__all__')))
+        export_lines = sum(1 for ln in code_lines if ln.startswith(("from ", "export ", "module.exports", "__all__")))
         if export_lines / len(code_lines) > 0.7:
             signals["exports_only"] = True
 
     # Mostly constants (UPPER_CASE assignments)
-    const_lines = sum(1 for ln in code_lines if re.match(r'^[A-Z][A-Z_0-9]+\s*=', ln))
+    const_lines = sum(1 for ln in code_lines if re.match(r"^[A-Z][A-Z_0-9]+\s*=", ln))
     if len(code_lines) > 3 and const_lines / len(code_lines) > 0.4:
         signals["mostly_constants"] = True
 
@@ -209,6 +301,7 @@ def _content_signals(abs_path: str, ext: str, content_cache: dict[str, str] | Bo
 # ─────────────────────────────────────────────
 # Core: classify every file
 # ─────────────────────────────────────────────
+
 
 def classify_files(
     repo_root: str,
@@ -296,22 +389,24 @@ def classify_files(
             depth=rel_path.count(os.sep),
         )
 
-        profiles.append({
-            "path": rel_path,
-            "name": basename,
-            "language": file_info.get("language", "Unknown"),
-            "size": file_info.get("size", 0),
-            "size_formatted": file_info.get("size_formatted", ""),
-            "role": role,
-            "role_label": role_label,
-            "role_confidence": round(confidence, 2),
-            "depends_on": list(depends_on) if isinstance(depends_on, (list, set)) else depends_on,
-            "used_by": list(used_by) if isinstance(used_by, (list, set)) else used_by,
-            "in_degree": in_degree,
-            "out_degree": out_degree,
-            "importance_score": round(importance, 2),
-            "tags": tags,
-        })
+        profiles.append(
+            {
+                "path": rel_path,
+                "name": basename,
+                "language": file_info.get("language", "Unknown"),
+                "size": file_info.get("size", 0),
+                "size_formatted": file_info.get("size_formatted", ""),
+                "role": role,
+                "role_label": role_label,
+                "role_confidence": round(confidence, 2),
+                "depends_on": list(depends_on) if isinstance(depends_on, (list, set)) else depends_on,
+                "used_by": list(used_by) if isinstance(used_by, (list, set)) else used_by,
+                "in_degree": in_degree,
+                "out_degree": out_degree,
+                "importance_score": round(importance, 2),
+                "tags": tags,
+            }
+        )
 
     # Sort by importance (highest first)
     profiles.sort(key=lambda x: x["importance_score"], reverse=True)
@@ -324,20 +419,20 @@ def classify_files(
 # ─────────────────────────────────────────────
 
 _ROLE_LABELS = {
-    "entry_point":      "Entry Point",
-    "orchestrator":     "Orchestrator / Controller",
-    "core_module":      "Core Module",
-    "shared_utility":   "Shared Utility",
-    "internal_helper":  "Internal Helper",
-    "router":           "Router / Routes",
-    "config":           "Configuration",
-    "test":             "Test",
-    "type_definition":  "Type / Model Definition",
-    "data":             "Data / Migration",
-    "documentation":    "Documentation",
-    "build":            "Build / DevOps",
-    "barrel":           "Barrel / Re-export",
-    "leaf":             "Standalone / Leaf",
+    "entry_point": "Entry Point",
+    "orchestrator": "Orchestrator / Controller",
+    "core_module": "Core Module",
+    "shared_utility": "Shared Utility",
+    "internal_helper": "Internal Helper",
+    "router": "Router / Routes",
+    "config": "Configuration",
+    "test": "Test",
+    "type_definition": "Type / Model Definition",
+    "data": "Data / Migration",
+    "documentation": "Documentation",
+    "build": "Build / DevOps",
+    "barrel": "Barrel / Re-export",
+    "leaf": "Standalone / Leaf",
 }
 
 
@@ -390,14 +485,18 @@ def _determine_role(
         candidates.append(("data", 0.85, ["data"]))
 
     # ── 6. Type / model definitions ──
-    if _matches_patterns(basename, _TYPE_DEF_PATTERNS) or (signals.get("has_class_defs") and in_degree > avg_in and out_degree <= 1):
+    if _matches_patterns(basename, _TYPE_DEF_PATTERNS) or (
+        signals.get("has_class_defs") and in_degree > avg_in and out_degree <= 1
+    ):
         tags = ["types"]
         if signals.get("has_class_defs"):
             tags.append("classes")
         candidates.append(("type_definition", 0.80, tags))
 
     # ── 7. Barrel / re-export files ──
-    if signals.get("exports_only") or (basename in {"__init__.py", "index.ts", "index.js"} and out_degree > 3 and in_degree <= 2):
+    if signals.get("exports_only") or (
+        basename in {"__init__.py", "index.ts", "index.js"} and out_degree > 3 and in_degree <= 2
+    ):
         candidates.append(("barrel", 0.82, ["barrel", "re-export"]))
 
     # ── 8. Entry point ──
@@ -461,6 +560,7 @@ def _determine_role(
 # Importance scoring
 # ─────────────────────────────────────────────
 
+
 def _compute_importance(
     in_degree: int,
     out_degree: int,
@@ -515,6 +615,7 @@ def _compute_importance(
 # Helpers
 # ─────────────────────────────────────────────
 
+
 def _matches_patterns(text: str, patterns: list[str]) -> bool:
     """Check if any regex pattern matches the text."""
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
@@ -529,16 +630,24 @@ def _is_doc_path(path: str) -> bool:
 def _is_ci_path(path: str) -> bool:
     """Check if the path is a CI/CD config."""
     lower = path.lower()
-    return any(ci in lower for ci in [
-        ".github/workflows", ".gitlab-ci", ".circleci",
-        "jenkins", ".travis", "azure-pipelines",
-        ".buildkite",
-    ])
+    return any(
+        ci in lower
+        for ci in [
+            ".github/workflows",
+            ".gitlab-ci",
+            ".circleci",
+            "jenkins",
+            ".travis",
+            "azure-pipelines",
+            ".buildkite",
+        ]
+    )
 
 
 # ─────────────────────────────────────────────
 # Summary statistics
 # ─────────────────────────────────────────────
+
 
 def summarize_roles(profiles: list[dict]) -> dict:
     """
@@ -565,10 +674,7 @@ def summarize_roles(profiles: list[dict]) -> dict:
         role_distribution[role] = round((count / total) * 100, 1) if total > 0 else 0
 
     # Top files by importance
-    top_files = [
-        {"file": p["path"], "role": p["role"], "importance": p["importance_score"]}
-        for p in profiles[:10]
-    ]
+    top_files = [{"file": p["path"], "role": p["role"], "importance": p["importance_score"]} for p in profiles[:10]]
 
     # Dependency hubs (most total connections)
     hubs = sorted(profiles, key=lambda x: x["in_degree"] + x["out_degree"], reverse=True)

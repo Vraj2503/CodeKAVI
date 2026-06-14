@@ -17,6 +17,7 @@ from typing import Any, cast
 # 1. Visualization-ready JSON export
 # ─────────────────────────────────────────────
 
+
 def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -> dict:
     """
     Convert dependency data into a { nodes, edges, metadata } structure
@@ -79,13 +80,15 @@ def export_graph_json(dep_data: dict, file_profiles: list[dict] | None = None) -
     # Build edges
     edges = []
     for e in edges_raw:
-        edges.append({
-            "source": e["source"],
-            "target": e["target"],
-            "raw": e.get("raw", ""),
-            "line": e.get("line"),
-            "type": e.get("type", "import"),
-        })
+        edges.append(
+            {
+                "source": e["source"],
+                "target": e["target"],
+                "raw": e.get("raw", ""),
+                "line": e.get("line"),
+                "type": e.get("type", "import"),
+            }
+        )
 
     # Deduplicate edges (same source→target may appear multiple times)
     seen_edges = set()
@@ -127,20 +130,20 @@ def _node_size(in_deg: int, out_deg: int) -> str:
 # ─────────────────────────────────────────────
 
 _ROLE_COLORS = {
-    "entry_point":     "#34d399",  # green
-    "orchestrator":    "#fbbf24",  # amber
-    "core_module":     "#a78bfa",  # violet
-    "shared_utility":  "#06b6d4",  # cyan
+    "entry_point": "#34d399",  # green
+    "orchestrator": "#fbbf24",  # amber
+    "core_module": "#a78bfa",  # violet
+    "shared_utility": "#06b6d4",  # cyan
     "internal_helper": "#8b95a5",  # gray
-    "router":          "#f472b6",  # pink
-    "config":          "#fb923c",  # orange
-    "test":            "#94a3b8",  # slate
+    "router": "#f472b6",  # pink
+    "config": "#fb923c",  # orange
+    "test": "#94a3b8",  # slate
     "type_definition": "#818cf8",  # indigo
-    "leaf":            "#64748b",  # dim gray
-    "documentation":   "#a1a1aa",  # zinc
-    "build":           "#78716c",  # stone
-    "barrel":          "#7dd3fc",  # light blue
-    "data":            "#d4d4d8",  # light gray
+    "leaf": "#64748b",  # dim gray
+    "documentation": "#a1a1aa",  # zinc
+    "build": "#78716c",  # stone
+    "barrel": "#7dd3fc",  # light blue
+    "data": "#d4d4d8",  # light gray
 }
 
 
@@ -157,11 +160,11 @@ def export_dot(graph_json: dict, title: str = "CodeKavi Dependency Graph") -> st
     """
     lines = [
         f'digraph "{_dot_escape(title)}" {{',
-        '    rankdir=LR;',
+        "    rankdir=LR;",
         '    bgcolor="transparent";',
         '    node [shape=box, style="rounded,filled", fontname="Inter", fontsize=10];',
         '    edge [color="#555555", arrowsize=0.7];',
-        '',
+        "",
     ]
 
     # Group nodes by directory using subgraphs
@@ -171,14 +174,14 @@ def export_dot(graph_json: dict, title: str = "CodeKavi Dependency Graph") -> st
 
     for group_name, group_nodes in sorted(groups.items()):
         cluster_name = _dot_escape(group_name).replace(".", "_").replace("/", "_")
-        lines.append(f'    subgraph cluster_{cluster_name} {{')
+        lines.append(f"    subgraph cluster_{cluster_name} {{")
         lines.append(f'        label="{_dot_escape(group_name)}";')
         lines.append('        style="rounded,dashed";')
         lines.append('        color="#444444";')
         lines.append('        fontname="Inter";')
-        lines.append('        fontsize=11;')
+        lines.append("        fontsize=11;")
         lines.append('        fontcolor="#888888";')
-        lines.append('')
+        lines.append("")
 
         for node in group_nodes:
             color = _ROLE_COLORS.get(node["role"], "#64748b")
@@ -188,22 +191,20 @@ def export_dot(graph_json: dict, title: str = "CodeKavi Dependency Graph") -> st
                 f'fillcolor="{color}", fontcolor="white", '
                 f'tooltip="{_dot_escape(node["role_label"])}"];'
             )
-        lines.append('    }')
-        lines.append('')
+        lines.append("    }")
+        lines.append("")
 
     # Edges
     for edge in graph_json["edges"]:
-        lines.append(
-            f'    "{_dot_escape(edge["source"])}" -> "{_dot_escape(edge["target"])}";'
-        )
+        lines.append(f'    "{_dot_escape(edge["source"])}" -> "{_dot_escape(edge["target"])}";')
 
-    lines.append('}')
-    return '\n'.join(lines)
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def _dot_escape(s: str) -> str:
     """Escape special characters for DOT format."""
-    return s.replace('"', '\\"').replace('\\', '\\\\')
+    return s.replace('"', '\\"').replace("\\", "\\\\")
 
 
 # ─────────────────────────────────────────────
@@ -211,16 +212,16 @@ def _dot_escape(s: str) -> str:
 # ─────────────────────────────────────────────
 
 _MERMAID_ROLE_STYLES = {
-    "entry_point":     "fill:#34d399,stroke:#059669,color:#000",
-    "orchestrator":    "fill:#fbbf24,stroke:#d97706,color:#000",
-    "core_module":     "fill:#a78bfa,stroke:#7c3aed,color:#fff",
-    "shared_utility":  "fill:#06b6d4,stroke:#0891b2,color:#fff",
+    "entry_point": "fill:#34d399,stroke:#059669,color:#000",
+    "orchestrator": "fill:#fbbf24,stroke:#d97706,color:#000",
+    "core_module": "fill:#a78bfa,stroke:#7c3aed,color:#fff",
+    "shared_utility": "fill:#06b6d4,stroke:#0891b2,color:#fff",
     "internal_helper": "fill:#8b95a5,stroke:#64748b,color:#fff",
-    "router":          "fill:#f472b6,stroke:#db2777,color:#000",
-    "config":          "fill:#fb923c,stroke:#ea580c,color:#000",
-    "test":            "fill:#94a3b8,stroke:#64748b,color:#000",
+    "router": "fill:#f472b6,stroke:#db2777,color:#000",
+    "config": "fill:#fb923c,stroke:#ea580c,color:#000",
+    "test": "fill:#94a3b8,stroke:#64748b,color:#000",
     "type_definition": "fill:#818cf8,stroke:#6366f1,color:#fff",
-    "leaf":            "fill:#64748b,stroke:#475569,color:#fff",
+    "leaf": "fill:#64748b,stroke:#475569,color:#fff",
 }
 
 
@@ -261,7 +262,7 @@ def export_mermaid(
 
     for group_name, group_nodes in sorted(groups.items()):
         safe_group = _mermaid_safe_id(group_name)
-        lines.append(f"    subgraph {safe_group}[\"{group_name}\"]")
+        lines.append(f'    subgraph {safe_group}["{group_name}"]')
 
         for node in group_nodes:
             alias = f"n{alias_counter}"
@@ -303,17 +304,18 @@ def export_mermaid(
             for alias in aliases:
                 lines.append(f"    style {alias} {style}")
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def _mermaid_safe_id(s: str) -> str:
     """Create a Mermaid-safe identifier."""
-    return ''.join(c if c.isalnum() or c == '_' else '_' for c in s)
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in s)
 
 
 # ─────────────────────────────────────────────
 # 4. Module/package-level grouping
 # ─────────────────────────────────────────────
+
 
 def build_module_graph(
     dep_data: dict,
@@ -377,10 +379,12 @@ def build_module_graph(
             internal_edges[src_mod] += 1
         else:
             key = (src_mod, tgt_mod)
-            cross_edges[key].append({
-                "source_file": edge["source"],
-                "target_file": edge["target"],
-            })
+            cross_edges[key].append(
+                {
+                    "source_file": edge["source"],
+                    "target_file": edge["target"],
+                }
+            )
 
     # Build module metadata
     modules: list[dict[str, Any]] = []
@@ -397,27 +401,31 @@ def build_module_graph(
             roles[role] += 1
             total_importance += profile.get("importance_score", 0)
 
-        modules.append({
-            "name": mod_name,
-            "file_count": len(files),
-            "files": sorted(files),
-            "languages": dict(sorted(languages.items(), key=lambda x: x[1], reverse=True)),
-            "roles": dict(sorted(roles.items(), key=lambda x: x[1], reverse=True)),
-            "importance": round(total_importance / len(files), 2) if files else 0,
-            "internal_edges": internal_edges.get(mod_name, 0),
-        })
+        modules.append(
+            {
+                "name": mod_name,
+                "file_count": len(files),
+                "files": sorted(files),
+                "languages": dict(sorted(languages.items(), key=lambda x: x[1], reverse=True)),
+                "roles": dict(sorted(roles.items(), key=lambda x: x[1], reverse=True)),
+                "importance": round(total_importance / len(files), 2) if files else 0,
+                "internal_edges": internal_edges.get(mod_name, 0),
+            }
+        )
 
     modules.sort(key=lambda m: cast(float, m["importance"]), reverse=True)  # type: ignore[arg-type]
 
     # Build connections list
     connections: list[dict[str, Any]] = []
     for (src_mod, tgt_mod), file_pairs in sorted(cross_edges.items()):
-        connections.append({
-            "source": src_mod,
-            "target": tgt_mod,
-            "weight": len(file_pairs),
-            "files": file_pairs,
-        })
+        connections.append(
+            {
+                "source": src_mod,
+                "target": tgt_mod,
+                "weight": len(file_pairs),
+                "files": file_pairs,
+            }
+        )
 
     connections.sort(key=lambda c: cast(int, c["weight"]), reverse=True)  # type: ignore[arg-type]
 
@@ -428,22 +436,21 @@ def build_module_graph(
         out_weight = sum(c["weight"] for c in connections if c["source"] == mod["name"])  # type: ignore[operator]
         languages_keys = list(mod.get("languages", {}).keys())
         primary_lang = languages_keys[0] if languages_keys else "Unknown"
-        mod_nodes.append({
-            "id": mod["name"],
-            "label": mod["name"],
-            "group": mod["name"],
-            "file_count": mod["file_count"],
-            "importance": mod["importance"],
-            "in_weight": in_weight,
-            "out_weight": out_weight,
-            "primary_language": primary_lang,
-            "size": _node_size(in_weight, out_weight),
-        })
+        mod_nodes.append(
+            {
+                "id": mod["name"],
+                "label": mod["name"],
+                "group": mod["name"],
+                "file_count": mod["file_count"],
+                "importance": mod["importance"],
+                "in_weight": in_weight,
+                "out_weight": out_weight,
+                "primary_language": primary_lang,
+                "size": _node_size(in_weight, out_weight),
+            }
+        )
 
-    mod_edges = [
-        {"source": c["source"], "target": c["target"], "weight": c["weight"]}
-        for c in connections
-    ]
+    mod_edges = [{"source": c["source"], "target": c["target"], "weight": c["weight"]} for c in connections]
 
     # Build Mermaid diagram for module view
     mermaid_lines = ["flowchart LR"]
@@ -472,7 +479,7 @@ def build_module_graph(
             "nodes": mod_nodes,
             "edges": mod_edges,
         },
-        "mermaid": '\n'.join(mermaid_lines),
+        "mermaid": "\n".join(mermaid_lines),
     }
 
 
@@ -495,6 +502,7 @@ def _get_module_name(filepath: str, depth: int) -> str:
 # ─────────────────────────────────────────────
 # 5. Circular dependency detection
 # ─────────────────────────────────────────────
+
 
 def detect_cycles(dep_data: dict) -> dict:
     """
@@ -546,9 +554,7 @@ def _find_all_cycles(adjacency: dict[str, list]) -> list[list[str]]:
 
         #  Iterative DFS with explicit stack
         #  Stack items: (node, path_set, path_list, neighbor_index)
-        stack: list[tuple[str, set, list, int]] = [
-            (start_node, {start_node}, [start_node], 0)
-        ]
+        stack: list[tuple[str, set, list, int]] = [(start_node, {start_node}, [start_node], 0)]
 
         while stack:
             node, path_set, path_list, idx = stack.pop()

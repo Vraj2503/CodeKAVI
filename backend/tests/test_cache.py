@@ -6,7 +6,6 @@ Phase 4: Full coverage (L1→L2→L3, degradation, serialization).
 """
 
 
-
 class TestAnalysisCacheL1:
     """Test the in-memory (L1) tier of AnalysisCache."""
 

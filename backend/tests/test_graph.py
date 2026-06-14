@@ -6,7 +6,6 @@ Phase 4: Full coverage (JSON/DOT/Mermaid, module graph, cycles).
 """
 
 
-
 class TestGraphJsonExport:
     """Test the JSON graph export."""
 

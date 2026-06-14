@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -22,6 +21,8 @@ import dotenv
 from google import genai as google_genai
 from google.genai import types as google_types
 from groq import Groq
+
+from codekavi.settings import settings
 
 dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
@@ -37,9 +38,11 @@ _RETRY_DELAYS = [5, 15, 30]  # seconds between retries
 # Data classes
 # ─────────────────────────────────────────────
 
+
 @dataclass
 class LLMResponse:
     """Standardized response from any LLM provider."""
+
     content: str
     model: str
     provider: str
@@ -51,7 +54,8 @@ class LLMResponse:
 @dataclass
 class Message:
     """A single message in a conversation."""
-    role: str       # "system", "user", "assistant"
+
+    role: str  # "system", "user", "assistant"
     content: str
 
 
@@ -69,14 +73,12 @@ class GroqProvider:
 
     name = "groq"
 
-    def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
-        self.model_name = model_name
-        api_key = os.environ.get("GROQ_API_KEY", "")
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or settings.groq_model
+        api_key = settings.groq_api_key
 
         if not api_key:
-            raise ValueError(
-                "GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable."
-            )
+            raise ValueError("GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable.")
 
         self._client = Groq(api_key=api_key)
         logger.info(f"GroqProvider initialized with model={self.model_name}")
@@ -115,10 +117,10 @@ class GroqProvider:
                 if "429" in str(e) and attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[attempt]
                     logger.warning(
-                        f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). "
-                        f"Retrying in {delay}s..."
+                        f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s..."
                     )
                     import time as time_module
+
                     time_module.sleep(delay)
                     continue
                 logger.error(f"Groq API error: {e}")
@@ -167,6 +169,7 @@ class GroqProvider:
         from typing import Any
 
         from codekavi.utils import current_executor
+
         messages: list[Any] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -213,6 +216,7 @@ class GroqProvider:
         Each chunk is yielded as it arrives from the sync stream.
         """
         from typing import Any
+
         messages: list[Any] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -228,15 +232,14 @@ class GroqProvider:
             )
 
         from codekavi.utils import current_executor
+
         executor = current_executor.get(None)
 
         loop = asyncio.get_running_loop()
         stream = await loop.run_in_executor(executor, _create_stream)
 
         while True:
-            chunk = await loop.run_in_executor(
-                executor, lambda: next(stream, None)
-            )
+            chunk = await loop.run_in_executor(executor, lambda: next(stream, None))
             if chunk is None:
                 break
             if chunk.choices and chunk.choices[0].delta.content:
@@ -262,14 +265,12 @@ class GeminiProvider:
 
     name = "gemini"
 
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
-        self.model_name = model_name
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or settings.gemini_model
+        api_key = settings.gemini_api_key
 
         if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY not found. Set the GEMINI_API_KEY environment variable."
-            )
+            raise ValueError("GEMINI_API_KEY not found. Set the GEMINI_API_KEY environment variable.")
 
         self._client = google_genai.Client(api_key=api_key)
         logger.info(f"GeminiProvider initialized with model={self.model_name}")
@@ -417,15 +418,14 @@ class GeminiProvider:
             )
 
         from codekavi.utils import current_executor
+
         executor = current_executor.get(None)
 
         loop = asyncio.get_running_loop()
         stream = await loop.run_in_executor(executor, _create_stream)
 
         while True:
-            chunk = await loop.run_in_executor(
-                executor, lambda: next(stream, None)
-            )
+            chunk = await loop.run_in_executor(executor, lambda: next(stream, None))
             if chunk is None:
                 break
             if chunk.text:
@@ -458,6 +458,7 @@ def get_provider(task: str = "chat") -> GroqProvider:
         they hold only the API client and model name, no per-request state.
     """
     from typing import cast
+
     if "groq" not in _provider_cache:
         _provider_cache["groq"] = GroqProvider()
     return cast(GroqProvider, _provider_cache["groq"])

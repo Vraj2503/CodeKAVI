@@ -9,7 +9,8 @@ import logging
 import os
 
 from codekavi.cache import AnalysisCache
-from codekavi.config import CLONE_BASE_DIR, settings
+from codekavi.config import CLONE_BASE_DIR
+from codekavi.settings import settings
 from codekavi.utils import BoundedContentCache
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 def find_clone_path_by_repo_id(repo_id: str) -> str | None:
     """Find an on-disk clone folder by repo_id suffix: <repo_name>_<repo_id>."""
+    # Prevent path traversal by strictly validating repo_id characters
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9_]+$", repo_id) or ".." in repo_id:
+        return None
+
     if not os.path.isdir(CLONE_BASE_DIR):
         return None
 
@@ -73,7 +80,9 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
         try:
             dep_data = analyze_dependencies(clone_path, repo_data["files"], content_cache)
             file_profiles = classify_files(
-                clone_path, repo_data["files"], dep_data,
+                clone_path,
+                repo_data["files"],
+                dep_data,
                 content_cache=content_cache,
             )
         finally:
@@ -85,9 +94,7 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
 
         # Smart file selection
         selector = SmartFileSelector()
-        selected_files = selector.select_files(
-            repo_data["files"], dep_data, file_profiles
-        )
+        selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
 
         repo_dir = os.path.basename(clone_path)
         repo_name, _, _ = repo_dir.rpartition("_")

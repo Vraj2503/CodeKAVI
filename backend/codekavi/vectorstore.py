@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 import time
 from typing import Any, ClassVar
@@ -13,7 +12,8 @@ from pymilvus import (
     utility,
 )
 
-from codekavi.config import EMBEDDING_DIMENSION, EMBEDDING_MODEL
+from codekavi.config import EMBEDDING_DIMENSION
+from codekavi.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ def _validate_repo_id(repo_id: str) -> str:
 
 class ZillizClient:
     def __init__(self):
-        self.uri = os.getenv("ZILLIZ_URI")
-        self.token = os.getenv("ZILLIZ_API_KEY")
+        self.uri = settings.zilliz_uri
+        self.token = settings.zilliz_api_key
         self.collection = None
 
     def connect(self) -> bool:
@@ -59,17 +59,25 @@ class ZillizClient:
             return False
 
     # Fields that MUST exist in the schema (added for metadata filtering)
-    _REQUIRED_FIELDS: ClassVar[frozenset[str]] = frozenset({
-        "id", "repo_id", "file_path", "role", "language",
-        "layer", "start_line", "end_line", "text", "vector",
-    })
+    _REQUIRED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "id",
+            "repo_id",
+            "file_path",
+            "role",
+            "language",
+            "layer",
+            "start_line",
+            "end_line",
+            "text",
+            "vector",
+        }
+    )
 
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
         if not self.connect():
-            raise ValueError(
-                "Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY."
-            )
+            raise ValueError("Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY.")
 
         if utility.has_collection(COLLECTION_NAME):
             self.collection = Collection(COLLECTION_NAME)
@@ -80,8 +88,7 @@ class ZillizClient:
                 existing_dim = self.collection.schema.fields[-1].params.get("dim")
                 if existing_dim != DIMENSION:
                     logger.warning(
-                        f"Dimension mismatch ({existing_dim} vs {DIMENSION}). "
-                        "Dropping and recreating collection."
+                        f"Dimension mismatch ({existing_dim} vs {DIMENSION}). Dropping and recreating collection."
                     )
                     utility.drop_collection(COLLECTION_NAME)
                     return self.setup_collection()
@@ -94,10 +101,7 @@ class ZillizClient:
                 existing_field_names = {f.name for f in self.collection.schema.fields}
                 if not self._REQUIRED_FIELDS.issubset(existing_field_names):
                     missing = self._REQUIRED_FIELDS - existing_field_names
-                    logger.warning(
-                        f"Collection missing fields {missing}. "
-                        "Dropping and recreating collection."
-                    )
+                    logger.warning(f"Collection missing fields {missing}. Dropping and recreating collection.")
                     utility.drop_collection(COLLECTION_NAME)
                     return self.setup_collection()
             except Exception:
@@ -183,10 +187,10 @@ class ZillizClient:
             try:
                 from google import genai
 
-                api_key = os.environ.get("GEMINI_API_KEY")
+                api_key = settings.gemini_api_key
                 client = genai.Client(api_key=api_key)
                 response = client.models.embed_content(
-                    model=EMBEDDING_MODEL,
+                    model=settings.embedding_model,
                     contents=[query],  # type: ignore[arg-type]
                 )
                 if not response.embeddings or len(response.embeddings) == 0:
@@ -209,8 +213,13 @@ class ZillizClient:
                     limit=limit,
                     expr=expr,
                     output_fields=[
-                        "file_path", "role", "language", "layer",
-                        "start_line", "end_line", "text",
+                        "file_path",
+                        "role",
+                        "language",
+                        "layer",
+                        "start_line",
+                        "end_line",
+                        "text",
                     ],
                 )
 
@@ -234,14 +243,12 @@ class ZillizClient:
             except Exception as e:
                 err_str = str(e)
                 is_transient = any(
-                    keyword in err_str
-                    for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
+                    keyword in err_str for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
                 )
 
                 if is_transient and attempt < MAX_RETRIES:
                     logger.warning(
-                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. "
-                        f"Retrying in {backoff}s…"
+                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. Retrying in {backoff}s…"
                     )
                     time.sleep(backoff)
                     backoff *= 2
@@ -250,6 +257,7 @@ class ZillizClient:
                     logger.error(f"Search failed: {e}")
                     return []
         return []
+
 
 # Global instance for app to use
 zilliz_client = ZillizClient()

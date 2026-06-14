@@ -30,6 +30,9 @@ async def lifespan(app: FastAPI):
     Shutdown: gracefully shut down the shared thread-pool executor.
     """
     # Startup
+    from codekavi.settings import validate_config
+    validate_config()
+
     executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="codekavi-")
     cache = AnalysisCache()
     
@@ -42,11 +45,18 @@ async def lifespan(app: FastAPI):
     executor.shutdown(wait=True)
 
 
+from codekavi.limiter import limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+
 app = FastAPI(
     title="CodeKavi API",
     version="2.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.middleware("http")
 async def set_current_executor_middleware(request: Request, call_next):
@@ -60,10 +70,10 @@ async def set_current_executor_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+from codekavi.settings import settings
+
 # CORS — configurable origins for production, defaults to localhost:3000 for dev
-ALLOWED_ORIGINS = os.environ.get(
-    "CORS_ORIGINS", "http://localhost:3000"
-).split(",")
+ALLOWED_ORIGINS = settings.cors_origins.split(",")
 
 app.add_middleware(
     CORSMiddleware,
@@ -81,7 +91,7 @@ os.makedirs("output/reports", exist_ok=True)
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    gemini_configured = bool(os.environ.get("GEMINI_API_KEY", ""))
+    gemini_configured = bool(settings.gemini_api_key)
     return {
         "status": "ok",
         "service": "CodeKavi API",

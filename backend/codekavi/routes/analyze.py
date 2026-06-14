@@ -10,16 +10,15 @@ Endpoints:
 
 import json
 import logging
-import os
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from codekavi.analyzer import analyze_dependencies
+from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_github_url
-from codekavi.config import settings
 from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
     build_module_graph,
@@ -29,9 +28,11 @@ from codekavi.graph import (
     export_mermaid,
 )
 from codekavi.indexer import index_repository
+from codekavi.limiter import limiter
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import AnalyzeRequest
 from codekavi.session import ensure_repo_loaded, save_analysis
+from codekavi.settings import settings
 from codekavi.traverser import traverse_repo
 from codekavi.utils import BoundedContentCache
 from codekavi.utils import run_sync as _run_sync
@@ -40,14 +41,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-
 # ── Routes ──
 
+
 @router.post("/analyze")
+@limiter.limit("5/minute")
 async def analyze(
+    request: Request,
     body: AnalyzeRequest,
     background_tasks: BackgroundTasks,
     cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
 ):
     """Clone a GitHub repo and return its file metadata."""
     github_url = body.github_url.strip()
@@ -74,20 +78,25 @@ async def analyze(
     # Analyze dependencies and classify roles using a shared BoundedContentCache
     content_cache = BoundedContentCache(settings.max_content_cache_bytes)
     try:
-        dep_data = await _run_sync(
-            analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
-        )
+        dep_data = await _run_sync(analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache)
     except Exception as e:
         dep_data = {
             "error": f"Dependency analysis failed: {e}",
-            "edges": [], "adjacency": {}, "reverse_adjacency": {},
-            "entry_points": [], "central_files": [], "stats": {},
+            "edges": [],
+            "adjacency": {},
+            "reverse_adjacency": {},
+            "entry_points": [],
+            "central_files": [],
+            "stats": {},
         }
 
     # Classify file roles
     try:
         file_profiles = await _run_sync(
-            classify_files, clone_info["clone_path"], repo_data["files"], dep_data,
+            classify_files,
+            clone_info["clone_path"],
+            repo_data["files"],
+            dep_data,
             content_cache=content_cache,
         )
         role_summary = summarize_roles(file_profiles)
@@ -113,9 +122,7 @@ async def analyze(
     # Smart file selection
     selector = SmartFileSelector()
     try:
-        selected_files = selector.select_files(
-            repo_data["files"], dep_data, file_profiles
-        )
+        selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
     except Exception as e:
         logger.warning(f"Smart file selection failed: {e}")
         selected_files = []
@@ -136,11 +143,8 @@ async def analyze(
     save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
 
     # Index repository for RAG in the background (prevents proxy timeouts)
-    if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
-        background_tasks.add_task(
-            index_repository,
-            repo_id, file_profiles, clone_info["clone_path"]
-        )
+    if settings.gemini_api_key and settings.zilliz_uri:
+        background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
 
     return {
         "success": True,
@@ -164,6 +168,7 @@ async def analyze(
 
 # ── SSE Streaming Analysis ──
 
+
 def _sse_event(stage: str, progress: int, message: str, data: dict | None = None) -> str:
     """Format a single SSE event."""
     payload = {"stage": stage, "progress": progress, "message": message}
@@ -173,7 +178,13 @@ def _sse_event(stage: str, progress: int, message: str, data: dict | None = None
 
 
 @router.post("/analyze/stream")
-async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("5/minute")
+async def analyze_stream(
+    request: Request,
+    body: AnalyzeRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     SSE streaming version of /analyze.
     Yields progress events as each stage completes, then the final result.
@@ -213,15 +224,22 @@ async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(ge
         except Exception as e:
             dep_data = {
                 "error": f"Dependency analysis failed: {e}",
-                "edges": [], "adjacency": {}, "reverse_adjacency": {},
-                "entry_points": [], "central_files": [], "stats": {},
+                "edges": [],
+                "adjacency": {},
+                "reverse_adjacency": {},
+                "entry_points": [],
+                "central_files": [],
+                "stats": {},
             }
 
         # Stage 4: Classifying files
         yield _sse_event("classifying", 55, "Classifying file roles…")
         try:
             file_profiles = await _run_sync(
-                classify_files, clone_info["clone_path"], repo_data["files"], dep_data,
+                classify_files,
+                clone_info["clone_path"],
+                repo_data["files"],
+                dep_data,
                 content_cache=content_cache,
             )
             role_summary = summarize_roles(file_profiles)
@@ -249,9 +267,7 @@ async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(ge
         yield _sse_event("selecting", 80, "Selecting key files…")
         selector = SmartFileSelector()
         try:
-            selected_files = selector.select_files(
-                repo_data["files"], dep_data, file_profiles
-            )
+            selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
         except Exception as e:
             logger.warning(f"Smart file selection failed: {e}")
             selected_files = []
@@ -273,12 +289,9 @@ async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(ge
 
         # Stage 7: Indexing (embedding) — done INLINE so chat is ready
         yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
-        if "GEMINI_API_KEY" in os.environ and "ZILLIZ_URI" in os.environ:
+        if settings.gemini_api_key and settings.zilliz_uri:
             try:
-                await _run_sync(
-                    index_repository,
-                    repo_id, file_profiles, clone_info["clone_path"]
-                )
+                await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
             except Exception as e:
                 logger.warning(f"Indexing failed (non-fatal): {e}")
 
@@ -315,12 +328,15 @@ async def analyze_stream(body: AnalyzeRequest, cache: AnalysisCache = Depends(ge
 
 
 @router.get("/graph/{repo_id}")
+@limiter.limit("30/minute")
 async def get_graph(
+    request: Request,
     repo_id: str,
     format: str = Query("json", description="Export format: json, dot, mermaid, module"),
     depth: int = Query(1, description="Directory depth for module grouping (1-3)", ge=1, le=3),
     max_nodes: int = Query(50, description="Max nodes for Mermaid diagrams", ge=10, le=200),
     cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
 ):
     """
     Retrieve the dependency graph for a previously analyzed repo
@@ -358,7 +374,13 @@ async def get_graph(
 
 
 @router.get("/restore/{repo_id}")
-async def restore_repo(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("30/minute")
+async def restore_repo(
+    request: Request,
+    repo_id: str,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """Restore analysis results from cache chain for a previously analyzed repo."""
     try:
         result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
@@ -388,7 +410,13 @@ async def restore_repo(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
 
 
 @router.delete("/cleanup/{repo_id}")
-async def cleanup(repo_id: str, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("30/minute")
+async def cleanup(
+    request: Request,
+    repo_id: str,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """Remove a previously cloned repo by its ID."""
     clone_path = await _run_sync(cache.get_session_path, repo_id)
     await _run_sync(cache.delete, repo_id)

@@ -36,7 +36,7 @@ from codekavi.config import MAX_FILES_FOR_LLM, MAX_TOTAL_INPUT_TOKENS
 class SmartFileSelector:
     """Score every file in the repo and return the top N within a token budget."""
 
-    MAX_FILES = MAX_FILES_FOR_LLM           # 30
+    MAX_FILES = MAX_FILES_FOR_LLM  # 30
     MAX_TOTAL_TOKENS = MAX_TOTAL_INPUT_TOKENS  # 80 000
 
     # ──────────────────────────────────────
@@ -83,11 +83,13 @@ class SmartFileSelector:
             size_bytes = finfo.get("size", 0)
             estimated_tokens = max(size_bytes // 4, 1)
 
-            scored.append({
-                "path": path,
-                "score": round(score, 2),
-                "estimated_tokens": estimated_tokens,
-            })
+            scored.append(
+                {
+                    "path": path,
+                    "score": round(score, 2),
+                    "estimated_tokens": estimated_tokens,
+                }
+            )
 
         # Sort by score descending
         scored.sort(key=lambda x: x["score"], reverse=True)
@@ -132,20 +134,20 @@ class SmartFileSelector:
 
         # ── Role-based boosts ──
         role_bonuses = {
-            "entry_point":     10,
-            "core_module":     9,
-            "orchestrator":    8,
-            "shared_utility":  7,
-            "router":          6,
-            "config":          7,
+            "entry_point": 10,
+            "core_module": 9,
+            "orchestrator": 8,
+            "shared_utility": 7,
+            "router": 6,
+            "config": 7,
             "type_definition": 4,
             "internal_helper": 3,
-            "barrel":          2,
-            "documentation":   2,
-            "build":           1,
-            "data":            1,
-            "leaf":            0,
-            "test":            0,
+            "barrel": 2,
+            "documentation": 2,
+            "build": 1,
+            "data": 1,
+            "leaf": 0,
+            "test": 0,
         }
         score += role_bonuses.get(role, 0)
 

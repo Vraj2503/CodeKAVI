@@ -22,10 +22,31 @@ logger = logging.getLogger(__name__)
 
 # Source code extensions we can meaningfully explain
 _EXPLAINABLE_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".java", ".kt", ".rs", ".rb", ".php",
-    ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
-    ".scala", ".dart", ".ex", ".exs", ".vue", ".svelte",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".go",
+    ".java",
+    ".kt",
+    ".rs",
+    ".rb",
+    ".php",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".swift",
+    ".scala",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".vue",
+    ".svelte",
 }
 
 # Max file size to send to the LLM (in characters)
@@ -35,6 +56,7 @@ MAX_EXPLAINABLE_CHARS = 50_000
 @dataclass
 class ExplanationResult:
     """Result of an explanation request."""
+
     file_path: str
     explanation: str
     model: str
@@ -47,6 +69,7 @@ class ExplanationResult:
 @dataclass
 class ArchitectureResult:
     """Result of an architecture overview request."""
+
     overview: str
     model: str
     provider: str
@@ -215,7 +238,7 @@ class Explainer:
 
         results = []
         for i, profile in enumerate(candidates):
-            logger.info(f"  [{i+1}/{len(candidates)}] Explaining {profile['path']}...")
+            logger.info(f"  [{i + 1}/{len(candidates)}] Explaining {profile['path']}...")
             result = await self.explain_file(profile, repo_root, repo_name)
             results.append(result)
             # Add small delay to avoid hitting rate limits

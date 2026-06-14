@@ -52,6 +52,7 @@ Be specific — reference actual file names, modules, and function names from th
 # File-level explanation prompts
 # ─────────────────────────────────────────────
 
+
 def build_file_explanation_prompt(
     file_path: str,
     file_content: str,
@@ -128,6 +129,7 @@ Keep the explanation focused and developer-oriented. Use Markdown formatting."""
 # Architecture summary prompt
 # ─────────────────────────────────────────────
 
+
 def build_architecture_prompt(
     repo_name: str,
     owner: str,
@@ -174,8 +176,7 @@ def build_architecture_prompt(
         for m in modules[:15]
     )
     connections_str = "\n".join(
-        f"  - {c['source']}/ → {c['target']}/ (weight: {c['weight']})"
-        for c in connections[:20]
+        f"  - {c['source']}/ → {c['target']}/ (weight: {c['weight']})" for c in connections[:20]
     )
 
     # Format top files with their roles
@@ -233,6 +234,7 @@ Use Markdown formatting with clear headings. Be specific — reference actual fi
 # ─────────────────────────────────────────────
 # Module summary prompt
 # ─────────────────────────────────────────────
+
 
 def build_module_summary_prompt(
     module_name: str,

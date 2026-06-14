@@ -31,8 +31,7 @@ SAMPLE_REPO_DIR = os.path.join(FIXTURES_DIR, "sample_repo")
 def sample_repo_path() -> str:
     """Absolute path to the committed sample multi-language repo."""
     assert os.path.isdir(SAMPLE_REPO_DIR), (
-        f"Fixture repo not found at {SAMPLE_REPO_DIR}. "
-        "Run the test setup or check tests/fixtures/sample_repo/."
+        f"Fixture repo not found at {SAMPLE_REPO_DIR}. Run the test setup or check tests/fixtures/sample_repo/."
     )
     return SAMPLE_REPO_DIR
 
@@ -40,6 +39,7 @@ def sample_repo_path() -> str:
 # ─────────────────────────────────────────
 # Fixture: pre-built file list (traverser format)
 # ─────────────────────────────────────────
+
 
 @pytest.fixture
 def sample_file_list(sample_repo_path: str) -> list[dict]:
@@ -56,6 +56,7 @@ def sample_file_list(sample_repo_path: str) -> list[dict]:
 # ─────────────────────────────────────────
 # Fixture: pre-built dependency data (analyzer format)
 # ─────────────────────────────────────────
+
 
 @pytest.fixture
 def sample_dep_data(sample_repo_path: str, sample_file_list: list[dict]) -> dict:
@@ -74,6 +75,7 @@ def sample_dep_data(sample_repo_path: str, sample_file_list: list[dict]) -> dict
 # Fixture: file profiles (classifier format)
 # ─────────────────────────────────────────
 
+
 @pytest.fixture
 def sample_file_profiles(
     sample_repo_path: str,
@@ -86,3 +88,15 @@ def sample_file_profiles(
     from codekavi.classifier import classify_files
 
     return classify_files(sample_repo_path, sample_file_list, sample_dep_data)
+
+
+@pytest.fixture(autouse=True)
+def override_auth():
+    """Bypass Supabase JWT auth verification during tests."""
+    from main import app
+
+    from codekavi.auth import verify_supabase_token
+
+    app.dependency_overrides[verify_supabase_token] = lambda: "test-user-123"
+    yield
+    app.dependency_overrides.pop(verify_supabase_token, None)

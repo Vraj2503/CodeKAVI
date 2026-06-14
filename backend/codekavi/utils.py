@@ -4,7 +4,6 @@ codekavi.utils — Shared utility functions for CodeKavi.
 
 import asyncio
 import logging
-import os
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -30,9 +29,7 @@ async def run_sync(func, *args, **kwargs):
         executor = current_executor.get()
     except LookupError:
         executor = None  # type: ignore[assignment]
-    return await loop.run_in_executor(
-        executor, partial(func, *args, **kwargs)
-    )
+    return await loop.run_in_executor(executor, partial(func, *args, **kwargs))
 
 
 class BoundedContentCache:
@@ -41,6 +38,7 @@ class BoundedContentCache:
     Prevents memory blow-up on large repositories by evicting least-recently used
     file contents when the total size in bytes exceeds max_bytes.
     """
+
     def __init__(self, max_bytes: int):
         self.max_bytes = max_bytes
         self.current_bytes = 0
@@ -95,13 +93,13 @@ def get_explainer(model: str | None = None):
     Raises HTTPException if GROQ_API_KEY is not set.
     """
     from codekavi.llm import Explainer, get_provider
+    from codekavi.settings import settings
 
-    api_key = os.environ.get("GROQ_API_KEY", "")
+    api_key = settings.groq_api_key
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="GROQ_API_KEY environment variable not set. "
-                   "Set it to your Groq API key to enable LLM explanations."
+            detail="GROQ_API_KEY environment variable not set. Set it to your Groq API key to enable LLM explanations.",
         )
 
     provider = get_provider()

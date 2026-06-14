@@ -6,7 +6,6 @@ Phase 4: Full coverage (import extraction, resolution, graph construction).
 """
 
 
-
 class TestPythonImportExtraction:
     """Test Python AST-based import extraction."""
 
@@ -100,6 +99,4 @@ class TestDependencyGraphStats:
 
         for src, targets in adjacency.items():
             for tgt in targets:
-                assert src in reverse.get(tgt, []), (
-                    f"{src}→{tgt} in adjacency but {src} not in reverse[{tgt}]"
-                )
+                assert src in reverse.get(tgt, []), f"{src}→{tgt} in adjacency but {src} not in reverse[{tgt}]"

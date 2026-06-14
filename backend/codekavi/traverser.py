@@ -113,15 +113,17 @@ def traverse_repo(clone_path: str) -> dict:
             languages[language] = languages.get(language, 0) + 1
             total_size += file_size
 
-            all_files.append({
-                "path": rel_path,
-                "name": filename,
-                "extension": os.path.splitext(filename)[1].lower(),
-                "language": language,
-                "size": file_size,
-                "size_formatted": _format_size(file_size),
-                "depth": rel_path.count(os.sep),
-            })
+            all_files.append(
+                {
+                    "path": rel_path,
+                    "name": filename,
+                    "extension": os.path.splitext(filename)[1].lower(),
+                    "language": language,
+                    "size": file_size,
+                    "size_formatted": _format_size(file_size),
+                    "depth": rel_path.count(os.sep),
+                }
+            )
 
     # Sort languages by count (descending)
     sorted_languages = dict(sorted(languages.items(), key=lambda x: x[1], reverse=True))
@@ -148,6 +150,7 @@ def _build_tree(current_path: str, root_path: str) -> list:
       - size, size_formatted, language (only for files)
     """
     from typing import Any
+
     entries: list[dict[str, Any]] = []
 
     try:
@@ -172,24 +175,28 @@ def _build_tree(current_path: str, root_path: str) -> list:
         dir_path = os.path.join(current_path, d)
         rel_path = os.path.relpath(dir_path, root_path)
         children = _build_tree(dir_path, root_path)
-        entries.append({
-            "name": d,
-            "type": "dir",
-            "path": rel_path,
-            "children": children,
-        })
+        entries.append(
+            {
+                "name": d,
+                "type": "dir",
+                "path": rel_path,
+                "children": children,
+            }
+        )
 
     for f in files:
         file_path = os.path.join(current_path, f)
         rel_path = os.path.relpath(file_path, root_path)
         file_size = os.path.getsize(file_path)
-        entries.append({
-            "name": f,
-            "type": "file",
-            "path": rel_path,
-            "size": file_size,
-            "size_formatted": _format_size(file_size),
-            "language": _detect_language(file_path),
-        })
+        entries.append(
+            {
+                "name": f,
+                "type": "file",
+                "path": rel_path,
+                "size": file_size,
+                "size_formatted": _format_size(file_size),
+                "language": _detect_language(file_path),
+            }
+        )
 
     return entries

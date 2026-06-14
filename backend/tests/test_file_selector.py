@@ -6,7 +6,6 @@ Phase 4: Full coverage (budget, ordering, penalties).
 """
 
 
-
 class TestSmartFileSelector:
     """Test the SmartFileSelector class."""
 
@@ -63,10 +62,7 @@ class TestSmartFileSelector:
 
         # If both main.py and test_helpers.py are selected, main.py should score higher
         if "main.py" in selected_paths:
-            test_items = [
-                item for path, item in selected_by_path.items()
-                if "test_" in path
-            ]
+            test_items = [item for path, item in selected_by_path.items() if "test_" in path]
             main_score = selected_by_path["main.py"]["score"]
             for test_item in test_items:
                 assert main_score > test_item["score"], (

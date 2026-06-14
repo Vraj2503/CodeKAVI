@@ -12,7 +12,6 @@ Event types:
   - "warning"  → {section, message} for failed sections
 """
 
-
 import asyncio
 import json
 import logging
@@ -50,15 +49,16 @@ class ExplanationOrchestrator:
         Yields event dicts: {"type": str, "data": dict}
         """
         # ── INSTANT EVENTS (no LLM, no cost, no latency) ──
-        yield {"type": "stats", "data": {
-            "total_files": len(self.tree.get("files", [])),
-            "languages": self._count_languages(),
-            "selected_files": len(self.selected_files),
-            "entry_points": self.analysis.get("entry_points", []),
-        }}
-        yield {"type": "tree", "data": {
-            "structure": self.tree.get("tree", self.tree)
-        }}
+        yield {
+            "type": "stats",
+            "data": {
+                "total_files": len(self.tree.get("files", [])),
+                "languages": self._count_languages(),
+                "selected_files": len(self.selected_files),
+                "entry_points": self.analysis.get("entry_points", []),
+            },
+        }
+        yield {"type": "tree", "data": {"structure": self.tree.get("tree", self.tree)}}
         yield self._progress(10, "generating", "AI is reading your codebase...")
 
         # Load file contents
@@ -67,12 +67,9 @@ class ExplanationOrchestrator:
 
         # ── BATCH 1 — 3 sections in parallel ──
         batch_1 = {
-            "overview": self._gen("overview", "overview",
-                self._prompt_overview(file_contents, graph_data)),
-            "dependencies": self._gen("dependencies", "viz_data",
-                self._prompt_dependencies(graph_data)),
-            "complexity": self._gen("complexity", "viz_data",
-                self._prompt_complexity()),
+            "overview": self._gen("overview", "overview", self._prompt_overview(file_contents, graph_data)),
+            "dependencies": self._gen("dependencies", "viz_data", self._prompt_dependencies(graph_data)),
+            "complexity": self._gen("complexity", "viz_data", self._prompt_complexity()),
         }
         async for ev in self._run_batch(batch_1, 15, 40):
             yield ev
@@ -82,12 +79,11 @@ class ExplanationOrchestrator:
 
         # ── BATCH 2 — 3 sections in parallel ──
         batch_2 = {
-            "architecture": self._gen("architecture", "architecture",
-                self._prompt_architecture(file_contents, graph_data)),
-            "components": self._gen("components", "components",
-                self._prompt_components(file_contents)),
-            "data_flow": self._gen("data_flow", "data_flow",
-                self._prompt_dataflow(file_contents, graph_data)),
+            "architecture": self._gen(
+                "architecture", "architecture", self._prompt_architecture(file_contents, graph_data)
+            ),
+            "components": self._gen("components", "components", self._prompt_components(file_contents)),
+            "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents, graph_data)),
         }
         async for ev in self._run_batch(batch_2, 40, 75):
             yield ev
@@ -97,11 +93,10 @@ class ExplanationOrchestrator:
 
         # ── BATCH 3 — 2 sections in parallel ──
         batch_3 = {
-            "patterns": self._gen("patterns", "patterns",
-                self._prompt_patterns(file_contents)),
-            "mindmap": self._gen("mindmap", "mindmap_data",
-                self._prompt_mindmap(file_contents, graph_data),
-                json_mode=True),
+            "patterns": self._gen("patterns", "patterns", self._prompt_patterns(file_contents)),
+            "mindmap": self._gen(
+                "mindmap", "mindmap_data", self._prompt_mindmap(file_contents, graph_data), json_mode=True
+            ),
         }
         async for ev in self._run_batch(batch_3, 75, 95):
             yield ev
@@ -114,10 +109,7 @@ class ExplanationOrchestrator:
 
     async def _run_batch(self, tasks: dict, p_start: int, p_end: int):
         """Run a dict of {name: coroutine} in parallel, yield events as each completes."""
-        named_tasks = {
-            name: asyncio.create_task(coro)
-            for name, coro in tasks.items()
-        }
+        named_tasks = {name: asyncio.create_task(coro) for name, coro in tasks.items()}
         done_count = 0
         total = len(named_tasks)
 
@@ -125,9 +117,7 @@ class ExplanationOrchestrator:
         task_to_name = {v: k for k, v in named_tasks.items()}
 
         while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 name = task_to_name[task]
                 self.sections_completed += 1
@@ -137,14 +127,13 @@ class ExplanationOrchestrator:
                     result = task.result()
                     yield {"type": "section", "data": {"name": name, **result}}
                     yield self._progress(
-                        progress, "generating",
-                        f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})"
+                        progress,
+                        "generating",
+                        f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})",
                     )
                 except Exception as e:
                     logger.error(f"Section {name} failed: {e}")
-                    yield {"type": "warning", "data": {
-                        "section": name, "message": str(e)[:200]
-                    }}
+                    yield {"type": "warning", "data": {"section": name, "message": str(e)[:200]}}
 
     # ─────────────────────────────────────────
     # Section generator
@@ -308,7 +297,9 @@ class ExplanationOrchestrator:
                 dep_lines.append(f"- `{src}` → `{t}`")
 
         central = graph_data.get("central_files", [])[:10]
-        central_lines = [f"- `{c.get('file', '')}` (in: {c.get('in_degree', 0)}, out: {c.get('out_degree', 0)})" for c in central]
+        central_lines = [
+            f"- `{c.get('file', '')}` (in: {c.get('in_degree', 0)}, out: {c.get('out_degree', 0)})" for c in central
+        ]
 
         entry_lines = [f"- `{e.get('file', '')}`" for e in graph_data.get("entry_points", [])[:5]]
 
@@ -395,13 +386,16 @@ class ExplanationOrchestrator:
     def _extract_snippets(self, response: str) -> list[dict]:
         """Extract code snippets referenced in the LLM response by matching backtick-wrapped file paths."""
         from typing import Any
+
         snippets: list[dict[str, Any]] = []
         # Match backtick-wrapped file paths like `src/auth.js`
-        matches = re.findall(r'`([^\s`]+\.[a-zA-Z]{1,5})`', response)
+        matches = re.findall(r"`([^\s`]+\.[a-zA-Z]{1,5})`", response)
 
-        selected_set = set(
-            (f["path"] if isinstance(f, dict) else f) for f in self.selected_files
-        ) if self.selected_files else set()
+        selected_set = (
+            set((f["path"] if isinstance(f, dict) else f) for f in self.selected_files)
+            if self.selected_files
+            else set()
+        )
         seen = set()
 
         for match in matches:
@@ -419,12 +413,14 @@ class ExplanationOrchestrator:
                 with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     code = f.read(2000)
                 lines = code.count("\n") + 1
-                snippets.append({
-                    "file_path": match,
-                    "code": code,
-                    "line_start": 1,
-                    "line_end": lines,
-                })
+                snippets.append(
+                    {
+                        "file_path": match,
+                        "code": code,
+                        "line_start": 1,
+                        "line_end": lines,
+                    }
+                )
             except OSError:
                 continue
 
@@ -448,6 +444,7 @@ class ExplanationOrchestrator:
     def _auto_viz_dependencies(self) -> dict:
         """Build dependency graph viz from analysis data."""
         from typing import Any
+
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         seen_nodes = set()
@@ -458,22 +455,26 @@ class ExplanationOrchestrator:
                 break
             if src not in seen_nodes:
                 seen_nodes.add(src)
-                nodes.append({
-                    "id": src,
-                    "label": os.path.basename(src),
-                    "type": self._detect_layer(src),
-                })
+                nodes.append(
+                    {
+                        "id": src,
+                        "label": os.path.basename(src),
+                        "type": self._detect_layer(src),
+                    }
+                )
             target_list = targets if isinstance(targets, list) else [targets]
             for t in target_list:
                 if len(edges) >= 100:
                     break
                 if t not in seen_nodes and len(nodes) < 60:
                     seen_nodes.add(t)
-                    nodes.append({
-                        "id": t,
-                        "label": os.path.basename(t),
-                        "type": self._detect_layer(t),
-                    })
+                    nodes.append(
+                        {
+                            "id": t,
+                            "label": os.path.basename(t),
+                            "type": self._detect_layer(t),
+                        }
+                    )
                 if t in seen_nodes:
                     edges.append({"source": src, "target": t})
 
@@ -482,10 +483,12 @@ class ExplanationOrchestrator:
     def _auto_viz_complexity(self) -> dict:
         children = []
         for fp in (self.classification or [])[:80]:
-            children.append({
-                "name": os.path.basename(fp.get("path", "")),
-                "value": fp.get("importance_score", 1),
-            })
+            children.append(
+                {
+                    "name": os.path.basename(fp.get("path", "")),
+                    "value": fp.get("importance_score", 1),
+                }
+            )
         return {"name": "Complexity", "children": children}
 
     def _auto_viz_dataflow(self) -> dict:
@@ -494,6 +497,7 @@ class ExplanationOrchestrator:
         entry_points = self.analysis.get("entry_points", [])
 
         from typing import Any
+
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         seen = set()
@@ -506,11 +510,13 @@ class ExplanationOrchestrator:
             if file_path in seen or depth > 3:
                 continue
             seen.add(file_path)
-            nodes.append({
-                "id": file_path,
-                "label": os.path.basename(file_path),
-                "type": "entry_point" if depth == 0 else self._detect_layer(file_path),
-            })
+            nodes.append(
+                {
+                    "id": file_path,
+                    "label": os.path.basename(file_path),
+                    "type": "entry_point" if depth == 0 else self._detect_layer(file_path),
+                }
+            )
             targets = adjacency.get(file_path, [])
             if not isinstance(targets, list):
                 targets = [targets]
@@ -525,7 +531,7 @@ class ExplanationOrchestrator:
         """Build module-level architecture graph from file classifications."""
         # Group files by top-level directory
         module_files: dict[str, list[str]] = {}
-        for fp in (self.classification or []):
+        for fp in self.classification or []:
             path = fp.get("path", "")
             parts = path.split("/")
             module = parts[0] if len(parts) > 1 else "root"
@@ -536,11 +542,13 @@ class ExplanationOrchestrator:
         # Create module nodes
         nodes = []
         for module_name in module_files:
-            nodes.append({
-                "id": module_name,
-                "label": module_name,
-                "type": "module",
-            })
+            nodes.append(
+                {
+                    "id": module_name,
+                    "label": module_name,
+                    "type": "module",
+                }
+            )
 
         # Compute inter-module edges from adjacency data
         adjacency = self.analysis.get("adjacency", {})
@@ -561,10 +569,7 @@ class ExplanationOrchestrator:
                     key = (src_mod, tgt_mod)
                     edge_weights[key] = edge_weights.get(key, 0) + 1
 
-        edges = [
-            {"source": src, "target": tgt}
-            for (src, tgt) in edge_weights
-        ]
+        edges = [{"source": src, "target": tgt} for (src, tgt) in edge_weights]
 
         return {"nodes": nodes, "edges": edges}
 
@@ -612,11 +617,14 @@ class ExplanationOrchestrator:
         }
 
     def _progress(self, pct: int, phase: str, msg: str) -> dict:
-        return {"type": "progress", "data": {
-            "phase": phase,
-            "progress": pct,
-            "message": msg,
-        }}
+        return {
+            "type": "progress",
+            "data": {
+                "phase": phase,
+                "progress": pct,
+                "message": msg,
+            },
+        }
 
     def _title(self, name: str) -> str:
         titles = {

@@ -11,12 +11,14 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 # pyrefly: ignore [missing-import]
 from fastapi.responses import StreamingResponse
 
+from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
+from codekavi.limiter import limiter
 from codekavi.orchestrator import ExplanationOrchestrator
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ExplainFileRequest, ExplainRequest
@@ -29,7 +31,14 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/explain/{repo_id}")
-async def explain_repo(repo_id: str, body: ExplainRequest, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("5/minute")
+async def explain_repo(
+    request: Request,
+    repo_id: str,
+    body: ExplainRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Generate LLM explanations for a previously analyzed repo.
     """
@@ -110,7 +119,14 @@ async def explain_repo(repo_id: str, body: ExplainRequest, cache: AnalysisCache 
 
 
 @router.post("/explain/file/{repo_id}")
-async def explain_single_file(repo_id: str, body: ExplainFileRequest, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("5/minute")
+async def explain_single_file(
+    request: Request,
+    repo_id: str,
+    body: ExplainFileRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Generate an LLM explanation for a single file in a previously analyzed repo.
     """
@@ -155,8 +171,16 @@ async def explain_single_file(repo_id: str, body: ExplainFileRequest, cache: Ana
 # SSE Streaming Endpoint (NEW)
 # ─────────────────────────────────────────
 
+
 @router.post("/explain/{repo_id}/stream")
-async def explain_repo_stream(repo_id: str, body: ExplainRequest, cache: AnalysisCache = Depends(get_cache)):
+@limiter.limit("5/minute")
+async def explain_repo_stream(
+    request: Request,
+    repo_id: str,
+    body: ExplainRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Stream explanation sections via Server-Sent Events (SSE).
     """
