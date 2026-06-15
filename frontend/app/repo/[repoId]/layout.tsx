@@ -2,6 +2,7 @@
 
 import { Sidebar } from "@/components/Sidebar";
 import { RepoProvider, useRepo } from "@/components/RepoProvider";
+import { TopNav } from "@/components/TopNav";
 import { Toaster } from "sonner";
 import { useParams, useRouter } from "next/navigation";
 
@@ -18,8 +19,9 @@ function RepoLayoutInner({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
-      <div className="flex w-full h-full p-4 gap-4 bg-background relative z-10">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background">
+      <TopNav />
+      <div className="flex w-full flex-1 p-4 gap-4 bg-background relative z-10 overflow-hidden">
         <Sidebar
           repoData={repoData}
           repoId={repoId}
