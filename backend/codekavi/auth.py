@@ -9,7 +9,7 @@ from fastapi import Header, HTTPException, status
 from codekavi.settings import settings
 
 
-def verify_supabase_token(authorization: str = Header(...)) -> str:
+def verify_supabase_token(authorization: str | None = Header(None)) -> str:
     """
     Verify Supabase JWT token in request headers.
     Returns user_id (the 'sub' claim) on success.
@@ -18,6 +18,12 @@ def verify_supabase_token(authorization: str = Header(...)) -> str:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="SUPABASE_JWT_SECRET is not configured on the server.",
+        )
+
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header.",
         )
 
     if not authorization.startswith("Bearer "):

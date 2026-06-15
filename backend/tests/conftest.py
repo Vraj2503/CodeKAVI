@@ -100,3 +100,33 @@ def override_auth():
     app.dependency_overrides[verify_supabase_token] = lambda: "test-user-123"
     yield
     app.dependency_overrides.pop(verify_supabase_token, None)
+
+
+@pytest.fixture(autouse=True)
+def setup_app_state():
+    """Ensure app.state.cache and app.state.executor are initialized for all tests."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from main import app
+
+    from codekavi.cache import AnalysisCache
+    from codekavi.settings import settings
+
+    settings.supabase_jwt_secret = "dummy_secret_for_testing_purposes_only_12345"
+
+    executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="test-global-")
+    cache = AnalysisCache()
+    app.state.executor = executor
+    app.state.cache = cache
+    yield
+    executor.shutdown(wait=True)
+
+
+@pytest.fixture(autouse=True)
+def disable_rate_limiting():
+    """Disable slowapi rate limiting for all tests by default."""
+    from codekavi.limiter import limiter
+
+    limiter.enabled = False
+    yield
+    limiter.enabled = True

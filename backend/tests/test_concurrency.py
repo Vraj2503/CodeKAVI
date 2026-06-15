@@ -6,14 +6,12 @@ ensure no cross-contamination occurs (e.g. due to global mutable state).
 """
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from main import app
 
-from codekavi.cache import AnalysisCache
 from tests.conftest import SAMPLE_REPO_DIR
 
 
@@ -22,12 +20,6 @@ async def test_concurrent_analyses():
     """Fire N concurrent /api/analyze requests and assert no cross-contamination."""
     num_concurrent = 5
     urls = [f"https://github.com/test-owner/repo-{i}" for i in range(num_concurrent)]
-
-    # Manually set app state to avoid dependency on ASGI lifespan execution in testing
-    executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="test-codekavi-")
-    cache = AnalysisCache()
-    app.state.executor = executor
-    app.state.cache = cache
 
     def mock_clone_repo(github_url):
         import uuid
@@ -72,9 +64,10 @@ async def test_concurrent_analyses():
                     assert data["repo_name"] == f"repo-{i}"
 
                 # Verify all analyses were saved separately in the state cache
+                cache = app.state.cache
                 for repo_id in repo_ids:
                     cached_result = cache.get(repo_id)
                     assert cached_result is not None
                     assert cached_result["repo_name"].startswith("repo-")
     finally:
-        executor.shutdown(wait=True)
+        pass

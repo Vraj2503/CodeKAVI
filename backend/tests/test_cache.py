@@ -76,3 +76,94 @@ class TestMakeSerializable:
         data = {"count": 42, "name": "test", "items": [1, 2, 3]}
         result = _make_serializable(data)
         assert result == data
+
+
+class TestAnalysisCacheTiers:
+    """Test L1 -> L2 -> L3 multi-tier cache logic, read-through, and graceful degradation."""
+
+    def test_write_to_all_tiers(self):
+        from unittest.mock import MagicMock, patch
+
+        from codekavi.cache import AnalysisCache
+
+        cache = AnalysisCache()
+        mock_redis = MagicMock()
+        mock_supabase = MagicMock()
+
+        with (
+            patch.object(cache, "_get_redis", return_value=mock_redis),
+            patch.object(cache, "_get_supabase", return_value=mock_supabase),
+        ):
+            cache.set("test_id", {"repo_name": "foo"})
+
+            # L1 check
+            assert cache._memory["test_id"] == {"repo_name": "foo"}
+            # L2 check (Redis set called)
+            mock_redis.set.assert_called_once()
+            # L3 check (Supabase upsert called)
+            mock_supabase.table.assert_called_once_with("analysis_cache")
+
+    def test_read_through_l2(self):
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from codekavi.cache import AnalysisCache
+
+        cache = AnalysisCache()
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps({"repo_name": "redis_data"})
+        mock_supabase = MagicMock()
+
+        with (
+            patch.object(cache, "_get_redis", return_value=mock_redis),
+            patch.object(cache, "_get_supabase", return_value=mock_supabase),
+        ):
+            result = cache.get("test_id")
+            assert result == {"repo_name": "redis_data"}
+            # L1 should have been populated
+            assert cache._memory["test_id"] == {"repo_name": "redis_data"}
+            # Supabase should not be called since L2 hit
+            mock_supabase.table.assert_not_called()
+
+    def test_read_through_l3(self):
+        from unittest.mock import MagicMock, patch
+
+        from codekavi.cache import AnalysisCache
+
+        cache = AnalysisCache()
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_supabase = MagicMock()
+
+        # Mock Supabase response
+        mock_response = MagicMock()
+        mock_response.data = {"result_json": {"repo_name": "supabase_data"}}
+        mock_supabase.table().select().eq().maybe_single().execute.return_value = mock_response
+
+        with (
+            patch.object(cache, "_get_redis", return_value=mock_redis),
+            patch.object(cache, "_get_supabase", return_value=mock_supabase),
+        ):
+            result = cache.get("test_id")
+            assert result == {"repo_name": "supabase_data"}
+            # L1 and L2 should be populated
+            assert cache._memory["test_id"] == {"repo_name": "supabase_data"}
+            mock_redis.set.assert_called_once()
+
+    def test_graceful_degradation_when_down(self):
+        from unittest.mock import patch
+
+        from codekavi.cache import AnalysisCache
+
+        cache = AnalysisCache()
+        # Mock connection methods to raise exception or return None
+        with (
+            patch.object(cache, "_get_redis", return_value=None),
+            patch.object(cache, "_get_supabase", return_value=None),
+        ):
+            # Getting missing or setting data should degrade gracefully and not crash
+            assert cache.get("test_id") is None
+            cache.set("test_id", {"data": 123})
+            assert cache._memory["test_id"] == {"data": 123}
+            cache.delete("test_id")
+            assert cache.get("test_id") is None
