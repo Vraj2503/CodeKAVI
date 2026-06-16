@@ -26,15 +26,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const backendUrl = "http://localhost:8000/api/analyze/stream";
+    const authHeader = request.headers.get("authorization");
+    
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    };
+    if (authHeader) {
+      headers["Authorization"] = authHeader;
+    }
+
     const response = await fetch(backendUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
+      headers,
       body: JSON.stringify({ github_url: githubUrl }),
     });
 

@@ -33,13 +33,35 @@ def verify_supabase_token(authorization: str | None = Header(None)) -> str:
 
     token = authorization.split("Bearer ")[1]
     try:
-        # Supabase JWTs are typically HS256 signed using the JWT secret
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
+        header = jwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
+
+        # Accept the token's algorithm dynamically if not 'none'
+        if alg.lower() == "none":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Algorithm 'none' is not allowed.",
+            )
+
+        if alg.startswith("HS"):
+            payload = jwt.decode(
+                token,
+                settings.supabase_jwt_secret,
+                algorithms=[alg],
+                options={"verify_aud": False},
+            )
+        else:
+            base_url = settings.supabase_url.rstrip("/")
+            jwks_url = f"{base_url}/auth/v1/.well-known/jwks.json"
+            jwk_client = jwt.PyJWKClient(jwks_url)
+            signing_key = jwk_client.get_signing_key_from_jwt(token)
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=[alg],
+                options={"verify_aud": False},
+            )
+
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(
@@ -56,4 +78,9 @@ def verify_supabase_token(authorization: str | None = Header(None)) -> str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {e}",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Token validation failed: {e}",
         ) from e

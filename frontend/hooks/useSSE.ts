@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface SSECallbacks {
   onStats?: (data: any) => void;
@@ -90,9 +91,17 @@ export function useSSE(callbacks: SSECallbacks) {
       setMessage("");
 
       try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const authHeader: Record<string, string> = session?.access_token
+          ? { Authorization: `Bearer ${session.access_token}` }
+          : {};
+
         const response = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeader,
+          },
           body: JSON.stringify(body),
           signal: controller.signal,
         });
