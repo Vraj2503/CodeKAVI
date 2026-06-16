@@ -5,16 +5,15 @@ cloner.py — Handles cloning GitHub repositories to a local directory.
 import contextlib
 import logging
 import os
-import re
 import shutil
 import time
 import uuid
 from typing import Any, cast
-from urllib.parse import urlparse
 
 from git import Repo
 
 from codekavi.config import CLONE_BASE_DIR
+from codekavi.repo_source import RepoSourceInfo
 from codekavi.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -27,66 +26,39 @@ CLONE_TIMEOUT_S = 120  # 2 minutes max
 MAX_REPO_AGE_HOURS = 24
 
 
-def parse_github_url(url: str) -> dict:
+def parse_github_url(url: str) -> RepoSourceInfo:
     """
     Parse a GitHub URL and extract owner and repo name.
     Only HTTPS github.com URLs are accepted for security.
     """
-    url = url.strip()
-    try:
-        parsed = urlparse(url)
-    except Exception as e:
-        raise ValueError(f"Invalid URL format: {e}") from e
+    from codekavi.repo_source import GitHubSource
 
-    # 1. Scheme must be HTTPS
-    if parsed.scheme != "https":
-        raise ValueError("Only HTTPS protocol is supported.")
+    return GitHubSource().parse(url)
 
-    # 2. Host must be exactly github.com
-    if not parsed.hostname or parsed.hostname.lower() != "github.com":
-        raise ValueError("Only github.com URLs are supported.")
 
-    # 3. Reject credentials
-    if parsed.username or parsed.password:
-        raise ValueError("URLs with embedded credentials are not allowed.")
+def parse_repo_url(url: str) -> RepoSourceInfo:
+    """
+    Parse a repository URL (GitHub, GitLab, or Bitbucket) and extract metadata.
+    Supports subgroups for GitLab.
+    """
+    from codekavi.repo_source import detect_source
 
-    # 4. Reject custom ports to prevent port scanning SSRF
-    if parsed.port and parsed.port not in (80, 443):
-        raise ValueError("Custom ports are not allowed.")
-
-    # 5. Path validation
-    path = parsed.path.strip("/")
-    if ".." in path or "\\" in path:
-        raise ValueError("Path traversal sequences are not allowed.")
-
-    parts = path.split("/")
-    if len(parts) < 2:
-        raise ValueError("URL must include owner and repository name.")
-
-    owner = parts[0]
-    repo = parts[1]
-    if repo.endswith(".git"):
-        repo = repo[:-4]
-
-    # Alphanumeric check to prevent shell command injection
-    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", owner) or not re.match(r"^[a-zA-Z0-9_\-\.]+$", repo):
-        raise ValueError("Invalid owner or repository name in URL.")
-
-    clone_url = f"https://github.com/{owner}/{repo}.git"
-    return {"owner": owner, "repo": repo, "clone_url": clone_url}
+    return detect_source(url).parse(url)
 
 
 def clone_repo(github_url: str) -> dict:
     """
-    Clone a GitHub repo into CLONE_BASE_DIR and return metadata.
+    Clone a repository (GitHub, GitLab, or Bitbucket) into CLONE_BASE_DIR and return metadata.
     Enforces repo size and file limits.
 
     Returns:
         dict with keys: repo_id, repo_name, owner, clone_path
     """
-    parsed = parse_github_url(github_url)
+    parsed = parse_repo_url(github_url)
     repo_id = uuid.uuid4().hex[:12]
-    clone_dir_name = f"{parsed['repo']}_{repo_id}"
+    # Replace directory separators in repo name to ensure safety (e.g. GitLab subgroups)
+    safe_repo_name = parsed["repo"].replace("/", "_")
+    clone_dir_name = f"{safe_repo_name}_{repo_id}"
     clone_path = os.path.join(CLONE_BASE_DIR, clone_dir_name)
 
     # Ensure base directory exists

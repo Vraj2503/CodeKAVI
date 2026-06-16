@@ -37,9 +37,9 @@ async def test_input_validation_rejections():
     """Verify that SSRF, traversal, or invalid host URLs are rejected with 400 Bad Request."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         # Invalid host name
-        response = await client.post("/api/analyze", json={"github_url": "https://gitlab.com/foo/bar"})
+        response = await client.post("/api/analyze", json={"github_url": "https://google.com/foo/bar"})
         assert response.status_code == 400
-        assert "Only github.com URLs are supported" in response.text
+        assert "Unsupported repository host" in response.text
 
         # SSRF / credentials check
         response = await client.post("/api/analyze", json={"github_url": "https://user:password@github.com/foo/bar"})

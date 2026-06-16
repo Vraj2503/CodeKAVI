@@ -1,6 +1,6 @@
 import pytest
 
-from codekavi.cloner import cleanup_repo, clone_repo, parse_github_url
+from codekavi.cloner import cleanup_repo, clone_repo, parse_github_url, parse_repo_url
 from codekavi.exceptions import CloneError
 
 
@@ -10,6 +10,7 @@ def test_parse_github_url_valid():
     assert info["owner"] == "vraj2503"
     assert info["repo"] == "CodeKAVI"
     assert info["clone_url"] == "https://github.com/vraj2503/CodeKAVI.git"
+    assert info["provider"] == "github"
 
 
 def test_parse_github_url_rejections():
@@ -54,3 +55,59 @@ def test_cleanup_repo_removes_dir(tmp_path):
 
     cleanup_repo(str(temp_dir))
     assert not temp_dir.exists()
+
+
+def test_parse_gitlab_url_valid():
+    """Verify that valid GitLab URLs (including subgroups) are correctly parsed."""
+    # Standard URL
+    info = parse_repo_url("https://gitlab.com/owner/repo")
+    assert info["owner"] == "owner"
+    assert info["repo"] == "repo"
+    assert info["clone_url"] == "https://gitlab.com/owner/repo.git"
+    assert info["provider"] == "gitlab"
+
+    # Subgroup URL
+    info = parse_repo_url("https://gitlab.com/owner/subgroup1/subgroup2/repo")
+    assert info["owner"] == "owner/subgroup1/subgroup2"
+    assert info["repo"] == "repo"
+    assert info["clone_url"] == "https://gitlab.com/owner/subgroup1/subgroup2/repo.git"
+    assert info["provider"] == "gitlab"
+
+    # With .git suffix
+    info = parse_repo_url("https://gitlab.com/owner/subgroup/repo.git")
+    assert info["owner"] == "owner/subgroup"
+    assert info["repo"] == "repo"
+    assert info["clone_url"] == "https://gitlab.com/owner/subgroup/repo.git"
+    assert info["provider"] == "gitlab"
+
+
+def test_parse_bitbucket_url_valid():
+    """Verify that valid Bitbucket URLs are correctly parsed."""
+    # Standard URL
+    info = parse_repo_url("https://bitbucket.org/owner/repo")
+    assert info["owner"] == "owner"
+    assert info["repo"] == "repo"
+    assert info["clone_url"] == "https://bitbucket.org/owner/repo.git"
+    assert info["provider"] == "bitbucket"
+
+    # With .git suffix
+    info = parse_repo_url("https://bitbucket.org/owner/repo.git")
+    assert info["owner"] == "owner"
+    assert info["repo"] == "repo"
+    assert info["clone_url"] == "https://bitbucket.org/owner/repo.git"
+    assert info["provider"] == "bitbucket"
+
+
+def test_parse_repo_url_factory():
+    """Verify factory-based detection and rejections for other providers."""
+    # Unsupported host
+    with pytest.raises(ValueError, match="Unsupported repository host"):
+        parse_repo_url("https://google.com/owner/repo")
+
+    # GitLab input validation check (SSRF / invalid chars)
+    with pytest.raises(ValueError, match="Invalid workspace or repository"):
+        parse_repo_url("https://gitlab.com/owner;rm/repo")
+
+    # Bitbucket input validation check (SSRF / invalid chars)
+    with pytest.raises(ValueError, match="Invalid owner or repository"):
+        parse_repo_url("https://bitbucket.org/owner;rm/repo")

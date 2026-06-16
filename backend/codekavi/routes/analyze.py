@@ -19,7 +19,7 @@ from codekavi.analyzer import analyze_dependencies
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
-from codekavi.cloner import cleanup_repo, clone_repo, parse_github_url
+from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
 from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
     build_module_graph,
@@ -60,7 +60,7 @@ async def analyze(
 
     # Validate URL format
     try:
-        parse_github_url(github_url)
+        parse_repo_url(github_url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -232,7 +232,7 @@ async def analyze_stream(
     github_url = body.github_url.strip()
 
     try:
-        parse_github_url(github_url)
+        parse_repo_url(github_url)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
