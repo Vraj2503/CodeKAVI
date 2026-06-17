@@ -8,8 +8,6 @@ import {
   AlertCircle,
   RefreshCw,
   Sparkles,
-  ChevronRight,
-  ChevronLeft,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -73,62 +71,80 @@ export function FocusedVisualization({
   toggleExplanation,
 }: FocusedVisualizationProps) {
   const vizContainerRef = useRef<HTMLDivElement>(null);
+  const insightsRef = useRef<HTMLDivElement>(null);
   const Icon = config.icon;
 
+  // Scroll to AI Insights section smoothly
+  const scrollToInsights = () => {
+    insightsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleInsightsClick = () => {
+    if (!isExplanationOpen) {
+      // First time: trigger generation + open
+      if (explanationState.status === "idle") onExplain();
+      else toggleExplanation();
+      // Give DOM a tick to render before scrolling
+      setTimeout(scrollToInsights, 80);
+    } else {
+      toggleExplanation();
+    }
+  };
+
   return (
-    <div className="flex w-full h-full relative overflow-hidden bg-background">
-      {/* Main Graph Area */}
-      <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 transition-all duration-300">
-        
-        {/* Top Action Bar */}
+    /**
+     * Outer wrapper: fills the bounded main panel but scrolls vertically.
+     * Graph section = 100% of the visible area.
+     * AI Insights section = naturally below — scroll down to reach it.
+     */
+    <div className="w-full h-full overflow-y-auto overflow-x-hidden">
+
+      {/* ── GRAPH SECTION — fills full visible height ───────────────────────── */}
+      <div className="relative w-full" style={{ height: "100%" }}>
+
+        {/* Floating Action Bar */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20 pointer-events-none">
+          {/* Left: title pill */}
           <div className="flex items-center gap-2 bg-background/90 backdrop-blur-md px-4 py-2.5 rounded-xl border border-border shadow-sm pointer-events-auto">
             <Icon size={20} className="text-primary" />
-            <div>
-              <h2 className="text-sm font-bold text-foreground">{config.label}</h2>
+            <h2 className="text-sm font-bold text-foreground">{config.label}</h2>
+          </div>
+
+          {/* Right: action buttons */}
+          {state.status === "success" && (
+            <div className="flex items-center gap-2 pointer-events-auto">
+              <button
+                onClick={onRefresh}
+                className="p-2.5 rounded-xl bg-background/90 backdrop-blur-md border border-border shadow-sm text-muted-foreground hover:text-foreground transition-colors"
+                title="Refresh Visualization"
+              >
+                <RefreshCw size={18} />
+              </button>
+
+              <DownloadMenu
+                containerRef={vizContainerRef}
+                data={state.data?.data}
+                filename={`${type}-visualization`}
+              />
+
+              {/* AI Insights — scrolls page down to insights section */}
+              <button
+                onClick={handleInsightsClick}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-sm transition-all duration-200 ${
+                  isExplanationOpen
+                    ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                    : "bg-background/90 border-border text-foreground hover:bg-muted"
+                }`}
+              >
+                <Sparkles size={18} />
+                <span className="text-sm font-semibold">AI Insights</span>
+              </button>
             </div>
-          </div>
-          
-          <div className="flex items-center gap-2 pointer-events-auto">
-            {state.status === "success" && (
-              <>
-                <button
-                  onClick={onRefresh}
-                  className="p-2.5 rounded-xl bg-background/90 backdrop-blur-md border border-border shadow-sm text-muted-foreground hover:text-foreground transition-colors"
-                  title="Refresh Visualization"
-                >
-                  <RefreshCw size={18} />
-                </button>
-                <DownloadMenu
-                  containerRef={vizContainerRef}
-                  data={state.data?.data}
-                  filename={`${type}-visualization`}
-                />
-                <button
-                  onClick={() => {
-                    if (!isExplanationOpen && explanationState.status === "idle") {
-                      onExplain();
-                    } else {
-                      toggleExplanation();
-                    }
-                  }}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-sm transition-all duration-200 ${
-                    isExplanationOpen 
-                      ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20" 
-                      : "bg-background/90 border-border text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <Sparkles size={18} />
-                  <span className="text-sm font-semibold">AI Insights</span>
-                  {isExplanationOpen ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-                </button>
-              </>
-            )}
-          </div>
+          )}
         </div>
 
-        {/* Visualization Content Container */}
-        <div className="flex-1 w-full h-full flex items-center justify-center bg-muted/10">
+        {/* Visualization canvas — fills the graph section, padded top so bars don't overlay nodes */}
+        <div className="w-full h-full flex items-center justify-center bg-muted/10 pt-16">
           <AnimatePresence mode="wait">
             {state.status === "idle" && (
               <motion.div
@@ -136,7 +152,7 @@ export function FocusedVisualization({
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="flex flex-col items-center max-w-md text-center p-10 bg-card rounded-3xl border border-border/50 shadow-2xl pointer-events-auto"
+                className="flex flex-col items-center max-w-md text-center p-10 bg-card rounded-3xl border border-border/50 shadow-2xl"
               >
                 <div className="w-24 h-24 rounded-3xl flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/5 text-primary mb-6 shadow-inner">
                   <Icon size={48} />
@@ -164,7 +180,9 @@ export function FocusedVisualization({
                 className="flex flex-col items-center gap-5"
               >
                 <Loader2 size={48} className="animate-spin text-primary" />
-                <p className="text-foreground font-medium animate-pulse text-lg">Analyzing Codebase & Generating {config.label}...</p>
+                <p className="text-foreground font-medium animate-pulse text-lg">
+                  Analyzing Codebase &amp; Generating {config.label}...
+                </p>
               </motion.div>
             )}
 
@@ -196,7 +214,7 @@ export function FocusedVisualization({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="w-full h-full relative"
+                className="w-full h-full"
                 ref={vizContainerRef}
               >
                 {renderVisualization(type, state.data.data)}
@@ -206,81 +224,98 @@ export function FocusedVisualization({
         </div>
       </div>
 
-      {/* Sliding Right Panel for AI Explanation */}
+      {/* ── AI INSIGHTS SECTION — lives below the graph, reachable by scrolling ── */}
       <AnimatePresence>
         {isExplanationOpen && (
           <motion.div
-            initial={{ width: 0, x: 50, opacity: 0 }}
-            animate={{ width: 450, x: 0, opacity: 1 }}
-            exit={{ width: 0, x: 50, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 400, damping: 40 }}
-            className="h-full border-l border-border/50 bg-card/95 backdrop-blur-xl shadow-[-10px_0_30px_rgba(0,0,0,0.1)] flex flex-col flex-shrink-0 z-30"
+            ref={insightsRef}
+            key="ai-insights"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="w-full border-t border-border/50 bg-card/95 backdrop-blur-xl"
           >
-            <div className="p-5 border-b border-border/50 flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            {/* Insights header */}
+            <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur-xl z-10">
+              <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                   <Sparkles size={16} className="text-primary" />
                 </div>
-                <h3 className="font-bold text-foreground text-lg">AI Insights</h3>
+                <h3 className="font-bold text-foreground text-base">AI Insights</h3>
               </div>
-              <button 
+              <button
                 onClick={toggleExplanation}
-                className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title="Close AI Insights"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-muted">
+
+            {/* Content */}
+            <div className="p-6">
               {explanationState.status === "idle" && (
-                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground p-6">
-                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-6">
-                    <Sparkles size={28} className="text-muted-foreground/50" />
+                <div className="flex flex-col items-center text-center text-muted-foreground py-10">
+                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-5">
+                    <Sparkles size={26} className="text-muted-foreground/50" />
                   </div>
-                  <h4 className="text-foreground font-semibold mb-2">Ready to Analyze</h4>
-                  <p className="text-sm mb-8">Generate AI-powered insights to understand the patterns and architecture hidden in this visualization.</p>
+                  <h4 className="text-foreground font-semibold text-lg mb-2">Ready to Analyze</h4>
+                  <p className="text-sm mb-8 max-w-sm leading-relaxed">
+                    Generate AI-powered insights to understand the patterns and architecture hidden in this visualization.
+                  </p>
                   <button
                     onClick={onExplain}
-                    className="px-6 py-3 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95"
+                    className="px-7 py-3 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95"
                   >
                     Generate Insights
                   </button>
                 </div>
               )}
-              
+
               {explanationState.status === "loading" && (
-                <div className="flex flex-col items-center justify-center h-full gap-6 text-muted-foreground">
+                <div className="flex flex-col items-center gap-5 text-muted-foreground py-10">
                   <div className="relative">
                     <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse" />
                     <Loader2 size={40} className="animate-spin text-primary relative z-10" />
                   </div>
-                  <p className="animate-pulse font-medium text-foreground">Analyzing graph patterns...</p>
+                  <p className="animate-pulse font-medium text-foreground text-base">
+                    Analyzing graph patterns...
+                  </p>
                 </div>
               )}
 
               {explanationState.status === "error" && (
-                <div className="flex flex-col items-center justify-center h-full text-center text-destructive p-6">
+                <div className="flex flex-col items-center text-center text-destructive py-10">
                   <AlertCircle size={40} className="mb-4 opacity-80" />
                   <p className="font-medium">{explanationState.error}</p>
                 </div>
               )}
 
               {explanationState.status === "success" && explanationState.explanation && (
-                <motion.div 
+                <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="text-sm text-foreground/90 leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-headings:text-foreground prose-h3:text-lg prose-h3:font-bold prose-h3:mt-6 prose-p:mb-4 prose-li:mb-1 prose-code:text-primary prose-code:bg-primary/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-[13px] prose-code:font-mono prose-code:before:content-none prose-code:after:content-none prose-strong:text-foreground prose-strong:font-bold"
+                  transition={{ delay: 0.1 }}
+                  className="text-sm text-foreground/90 leading-relaxed prose dark:prose-invert prose-sm max-w-none
+                    prose-headings:text-foreground
+                    prose-h3:text-base prose-h3:font-bold prose-h3:mt-6 prose-h3:mb-2
+                    prose-p:mb-4 prose-li:mb-1.5
+                    prose-code:text-primary prose-code:bg-primary/10 prose-code:px-1.5 prose-code:py-0.5
+                    prose-code:rounded-md prose-code:text-[13px] prose-code:font-mono
+                    prose-code:before:content-none prose-code:after:content-none
+                    prose-strong:text-foreground prose-strong:font-bold"
                 >
-                  <ReactMarkdown>
-                    {explanationState.explanation}
-                  </ReactMarkdown>
-                  
-                  <div className="mt-10 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
+                  <ReactMarkdown>{explanationState.explanation}</ReactMarkdown>
+
+                  <div className="mt-8 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
                     <div className="flex items-center gap-1.5">
                       <Sparkles size={12} className="text-primary" />
                       <span className="font-medium">CodeKavi AI</span>
                     </div>
-                    <span className="font-mono bg-background px-2 py-1 rounded border border-border">{explanationState.tokensUsed} tokens</span>
+                    <span className="font-mono bg-background px-2 py-1 rounded border border-border">
+                      {explanationState.tokensUsed} tokens
+                    </span>
                   </div>
                 </motion.div>
               )}

@@ -30,7 +30,7 @@ function RepoLayoutInner({ children }: { children: React.ReactNode }) {
           error={error}
           onBack={handleBack}
         />
-        <main className="flex-1 flex flex-col overflow-hidden bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl">
+        <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl">
           {children}
         </main>
       </div>

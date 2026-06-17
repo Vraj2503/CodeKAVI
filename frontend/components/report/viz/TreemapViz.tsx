@@ -17,16 +17,25 @@ export function TreemapViz({ data }: TreemapVizProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 800, height: 350 });
+  const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
 
-  // Measure container on mount
+  // Measure container on mount + track resizes
   useEffect(() => {
-    if (containerRef.current) {
-      setDimensions({
-        width: containerRef.current.clientWidth || 800,
-        height: 350,
-      });
-    }
+    if (!containerRef.current) return;
+    setDimensions({
+      width: containerRef.current.clientWidth || 800,
+      height: containerRef.current.clientHeight || 500,
+    });
+    let timer: NodeJS.Timeout;
+    const observer = new ResizeObserver((entries) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const rect = entries[0]?.contentRect;
+        if (rect) setDimensions({ width: rect.width, height: rect.height });
+      }, 100);
+    });
+    observer.observe(containerRef.current);
+    return () => { observer.disconnect(); clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -140,8 +149,8 @@ export function TreemapViz({ data }: TreemapVizProps) {
   }, [data, dimensions]);
 
   return (
-    <div ref={containerRef} className="w-full overflow-hidden relative">
-      <svg ref={svgRef} className="w-full" style={{ minHeight: 350 }} />
+    <div ref={containerRef} className="w-full h-full overflow-hidden relative">
+      <svg ref={svgRef} className="w-full h-full" />
       <div
         ref={tooltipRef}
         className="viz-tooltip"

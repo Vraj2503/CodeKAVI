@@ -49,9 +49,9 @@ export function VisualizationPanel({ repoId, repoName }: VisualizationPanelProps
   const activeExplanationState = getExplanation(activeViz);
 
   return (
-    <div className="flex h-full w-full bg-background overflow-hidden">
+    <div className="flex h-full w-full bg-background">
       {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden bg-background relative shadow-inner">
+      <div className="flex-1 flex bg-background relative shadow-inner">
         <FocusedVisualization
           type={activeViz}
           config={activeConfig}

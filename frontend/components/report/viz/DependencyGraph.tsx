@@ -59,21 +59,24 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
   function DependencyGraph({ nodes, edges }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [containerWidth, setContainerWidth] = useState(0);
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
     useImperativeHandle(ref, () => containerRef.current!);
 
-    // Track container width for re-rendering on sidebar toggle
+    // Track container dimensions for re-rendering on resize / sidebar toggle
     useEffect(() => {
       if (!containerRef.current) return;
-      setContainerWidth(containerRef.current.clientWidth);
+      setContainerSize({
+        width: containerRef.current.clientWidth,
+        height: containerRef.current.clientHeight,
+      });
       let resizeTimer: NodeJS.Timeout;
       const observer = new ResizeObserver((entries) => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
-          const w = entries[0]?.contentRect.width || 0;
-          setContainerWidth(w);
-        }, 200);
+          const rect = entries[0]?.contentRect;
+          if (rect) setContainerSize({ width: rect.width, height: rect.height });
+        }, 150);
       });
       observer.observe(containerRef.current);
       return () => { observer.disconnect(); clearTimeout(resizeTimer); };
@@ -83,7 +86,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
       if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
 
       const width = containerRef.current.clientWidth || 800;
-      const height = 350;
+      const height = containerRef.current.clientHeight || 500;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -237,11 +240,11 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         simulation.stop();
         svg.selectAll("*").remove();
       };
-    }, [nodes, edges, containerWidth]);
+    }, [nodes, edges, containerSize]);
 
     return (
-      <div ref={containerRef} className="w-full overflow-hidden">
-        <svg ref={svgRef} className="w-full" style={{ minHeight: 350 }} />
+      <div ref={containerRef} className="w-full h-full overflow-hidden">
+        <svg ref={svgRef} className="w-full h-full" />
       </div>
     );
   }
