@@ -5,14 +5,17 @@ Endpoints:
     POST /chat/{repo_id} — Ask a question about a previously analyzed repo.
 """
 
-import os
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from codekavi.schemas import ChatRequest
+from codekavi.auth import verify_supabase_token
+from codekavi.cache import AnalysisCache
+from codekavi.limiter import limiter
 from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
+from codekavi.routes.dependencies import get_cache
+from codekavi.schemas import ChatRequest
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
@@ -21,17 +24,45 @@ logger = logging.getLogger(__name__)
 
 # Keywords that signal a technical/architecture question
 _TECHNICAL_KEYWORDS = [
-    "architecture", "rag", "pipeline", "embedding", "vector",
-    "backend", "api", "database", "engineer", "technical",
-    "system design", "infrastructure", "deployment", "security",
-    "authentication", "middleware", "service", "model", "schema",
-    "algorithm", "indexer", "orchestrator", "provider", "llm",
-    "chunking", "retrieval", "prompt",
+    "architecture",
+    "rag",
+    "pipeline",
+    "embedding",
+    "vector",
+    "backend",
+    "api",
+    "database",
+    "engineer",
+    "technical",
+    "system design",
+    "infrastructure",
+    "deployment",
+    "security",
+    "authentication",
+    "middleware",
+    "service",
+    "model",
+    "schema",
+    "algorithm",
+    "indexer",
+    "orchestrator",
+    "provider",
+    "llm",
+    "chunking",
+    "retrieval",
+    "prompt",
 ]
 
 
 @router.post("/chat/{repo_id}")
-async def chat_repo(repo_id: str, body: ChatRequest):
+@limiter.limit("5/minute")
+async def chat_repo(
+    request: Request,
+    repo_id: str,
+    body: ChatRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     RAG endpoint that searches the Zilliz vector store for relevant code context
     and answers the user's question using the LLM.
@@ -41,10 +72,10 @@ async def chat_repo(repo_id: str, body: ChatRequest):
     """
     # Validate repo_id format early (must be 12-char hex from clone_repo)
     import re
-    if not re.match(r'^[a-f0-9]{12}$', repo_id):
+
+    if not re.match(r"^[a-f0-9]{12}$", repo_id):
         raise HTTPException(
-            status_code=400,
-            detail=f"Invalid repo_id format: {repo_id!r}. Must be a 12-character hex string."
+            status_code=400, detail=f"Invalid repo_id format: {repo_id!r}. Must be a 12-character hex string."
         )
 
     try:
@@ -54,16 +85,16 @@ async def chat_repo(repo_id: str, body: ChatRequest):
         if not zilliz_client.uri or not zilliz_client.token:
             raise HTTPException(
                 status_code=503,
-                detail="Vector store not configured. Set ZILLIZ_URI and ZILLIZ_API_KEY environment variables."
+                detail="Vector store not configured. Set ZILLIZ_URI and ZILLIZ_API_KEY environment variables.",
             )
 
         # Verify repo exists in our cache (ensures we can serve other endpoints too)
         from codekavi.session import ensure_repo_loaded
-        result, _ = ensure_repo_loaded(repo_id)
+
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
         if not result:
             raise HTTPException(
-                status_code=404,
-                detail="Repo not found. Run /api/analyze first, or the repo may have expired."
+                status_code=404, detail="Repo not found. Run /api/analyze first, or the repo may have expired."
             )
 
         # 1. Detect if the question is technical/architectural
@@ -73,36 +104,42 @@ async def chat_repo(repo_id: str, body: ChatRequest):
         # 2. Retrieve Context from Zilliz (blocking network I/O)
         if is_technical:
             results = await _run_sync(
-                zilliz_client.search, body.query, repo_id,
-                limit=8, layer_filter="exclude_frontend",
+                zilliz_client.search,
+                body.query,
+                repo_id,
+                limit=8,
+                layer_filter="exclude_frontend",
             )
         else:
             results = await _run_sync(
-                zilliz_client.search, body.query, repo_id, limit=5,
+                zilliz_client.search,
+                body.query,
+                repo_id,
+                limit=5,
             )
 
         if not results:
-            return {"success": False, "error": "No relevant code context found. Ensure the repository was fully indexed."}
+            return {
+                "success": False,
+                "error": "No relevant code context found. Ensure the repository was fully indexed.",
+            }
 
         context_blocks = []
         for i, res in enumerate(results):
-            chunk_text = res['text']
-            start_line = res.get('start_line', 0)
+            chunk_text = res["text"]
+            start_line = res.get("start_line", 0)
 
             # Prepend actual line numbers to each line of code so the LLM
             # sees them and naturally preserves them when picking subsets.
             if start_line > 0:
-                raw_lines = chunk_text.split('\n')
-                numbered_lines = [
-                    f"{start_line + j} | {line}"
-                    for j, line in enumerate(raw_lines)
-                ]
-                display_text = '\n'.join(numbered_lines)
+                raw_lines = chunk_text.split("\n")
+                numbered_lines = [f"{start_line + j} | {line}" for j, line in enumerate(raw_lines)]
+                display_text = "\n".join(numbered_lines)
             else:
                 display_text = chunk_text
 
             context_blocks.append(
-                f"--- Context {i+1} ---\n"
+                f"--- Context {i + 1} ---\n"
                 f"File: {res['file_path']}\n"
                 f"Role: {res['role']}\n"
                 f"Language: {res.get('language', 'Unknown')}\n"
@@ -136,7 +173,7 @@ async def chat_repo(repo_id: str, body: ChatRequest):
             "do NOT renumber them, do NOT add your own numbers. Example:\n"
             "   ```python:codekavi/indexer.py\n"
             "   54 | def index_repository(repo_id, file_profiles, clone_path):\n"
-            "   55 |     logger.info(f\"Starting indexing...\")\n"
+            '   55 |     logger.info(f"Starting indexing...")\n'
             "   56 |     collection = zilliz_client.setup_collection()\n"
             "   ```\n"
             "4. If the retrieved context doesn't contain relevant backend/AI "
@@ -151,10 +188,7 @@ async def chat_repo(repo_id: str, body: ChatRequest):
         # 4. Call LLM
         provider = get_provider("chat")
 
-        messages = [
-            Message(role="system", content=system_prompt),
-            Message(role="user", content=body.query)
-        ]
+        messages = [Message(role="system", content=system_prompt), Message(role="user", content=body.query)]
 
         response = await _run_sync(
             provider.complete,
@@ -167,11 +201,11 @@ async def chat_repo(repo_id: str, body: ChatRequest):
             "success": True,
             "repo_id": repo_id,
             "answer": response.content,
-            "sources": [{"file_path": r["file_path"], "score": r["score"]} for r in results]
+            "sources": [{"file_path": r["file_path"], "score": r["score"]} for r in results],
         }
 
     except HTTPException:
         raise  # Re-raise our own HTTP exceptions (400, 404, 503)
     except Exception as e:
         logger.error(f"Chat RAG error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

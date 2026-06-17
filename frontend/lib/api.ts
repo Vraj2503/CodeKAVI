@@ -1,5 +1,21 @@
+import { supabase } from "./supabase";
+
 const API_BASE = "/api";
 import { mockChatResponse, mockVizResponse, mockExplanationResponse } from "./mockData";
+
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      return {
+        "Authorization": `Bearer ${session.access_token}`,
+      };
+    }
+  } catch (e) {
+    console.error("Error getting auth session token:", e);
+  }
+  return {};
+}
 
 export interface AnalyzeResponse {
   success: boolean;
@@ -175,7 +191,10 @@ export async function restoreRepo(
   repoId: string
 ): Promise<AnalyzeResponse | null> {
   try {
-    const res = await fetch(`${API_BASE}/restore/${repoId}`);
+    const headers = await getAuthHeaders();
+    const res = await fetch(`${API_BASE}/restore/${repoId}`, {
+      headers,
+    });
     if (res.status === 404) {
       return null; // Repo expired — caller should show re-analyze prompt
     }
@@ -196,9 +215,13 @@ export async function restoreRepo(
 export async function analyzeRepo(
   githubUrl: string
 ): Promise<AnalyzeResponse> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ github_url: githubUrl }),
   });
   if (!res.ok) {
@@ -236,9 +259,13 @@ export async function analyzeRepoStream(
   githubUrl: string,
   onProgress: (event: AnalysisProgressEvent) => void
 ): Promise<AnalyzeResponse> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/analyze/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ github_url: githubUrl }),
   });
 
@@ -310,9 +337,13 @@ export async function chatWithRepo(
     }), 1000));
   }
 
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/chat/${repoId}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ query }),
   });
   if (!res.ok) {
@@ -343,13 +374,17 @@ export async function fetchVisualization(
     }), 500));
   }
 
+  const authHeaders = await getAuthHeaders();
   const isPost = type === "mindmap";
   const endpoint = `${API_BASE}/visualize/${type}/${repoId}`;
 
   const res = await fetch(endpoint, {
     method: isPost ? "POST" : "GET",
+    headers: {
+      ...authHeaders,
+      ...(isPost && { "Content-Type": "application/json" }),
+    },
     ...(isPost && {
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ use_llm: useLlm }),
     }),
   });
@@ -374,9 +409,13 @@ export async function fetchVisualizationExplanation(
     }), 1000));
   }
 
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/explain/visualization/${vizType}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders,
+    },
     body: JSON.stringify({ repo_id: repoId }),
   });
 

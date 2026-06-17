@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Middleware that refreshes the Supabase auth session on every request.
+ * Proxy that refreshes the Supabase auth session on every request.
  * This is required by @supabase/ssr to keep sessions alive and propagate
  * cookie updates (token refresh, etc.) to the browser.
  */

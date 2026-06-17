@@ -12,38 +12,41 @@ Gemini uses the google-genai SDK with the same import pattern as indexer.py.
 
 from __future__ import annotations
 
-import os
-import time
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
-from concurrent.futures import ThreadPoolExecutor
 
 import dotenv
+from google import genai as google_genai
+from google.genai import types as google_types
+from groq import Groq
+
+from codekavi.settings import settings
 
 dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Thread pool for wrapping sync SDK calls in async handlers
-_executor = ThreadPoolExecutor(max_workers=12)
-
 # Retry config for 429 rate-limit errors
 _MAX_RETRIES = 3
 _RETRY_DELAYS = [5, 15, 30]  # seconds between retries
+
+# Provider specific ThreadPoolExecutor removed. We use the global ContextVar-based executor.
 
 
 # ─────────────────────────────────────────────
 # Data classes
 # ─────────────────────────────────────────────
 
+
 @dataclass
 class LLMResponse:
     """Standardized response from any LLM provider."""
+
     content: str
     model: str
     provider: str
-    usage: dict = field(default_factory=dict)  # { prompt_tokens, completion_tokens, total_tokens }
+    usage: dict = field(default_factory=dict)
     finish_reason: str = ""
     raw: dict = field(default_factory=dict)
 
@@ -51,15 +54,14 @@ class LLMResponse:
 @dataclass
 class Message:
     """A single message in a conversation."""
-    role: str       # "system", "user", "assistant"
+
+    role: str  # "system", "user", "assistant"
     content: str
 
 
 # ─────────────────────────────────────────────
 # Groq provider (DEFAULT for generation)
 # ─────────────────────────────────────────────
-
-from groq import Groq
 
 
 class GroqProvider:
@@ -71,22 +73,19 @@ class GroqProvider:
 
     name = "groq"
 
-    def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
-        self.model_name = model_name
-        api_key = os.environ.get("GROQ_API_KEY", "")
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or settings.groq_model
+        api_key = settings.groq_api_key
 
         if not api_key:
-            raise ValueError(
-                "GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable."
-            )
+            raise ValueError("GROQ_API_KEY not found. Set the GROQ_API_KEY environment variable.")
 
-        self._client = Groq(
-            api_key=api_key,
-        )
+        self._client = Groq(api_key=api_key)
         logger.info(f"GroqProvider initialized with model={self.model_name}")
 
     # ─────────────────────────────────────────
     # Sync interface (backward-compatible with Explainer)
+    # Uses time.sleep in a background thread — OK, does not block event loop.
     # ─────────────────────────────────────────
 
     def complete(
@@ -97,18 +96,11 @@ class GroqProvider:
         max_tokens: int = 4096,
         json_mode: bool = False,
     ) -> LLMResponse:
-        """
-        SYNCHRONOUS method matching the original GroqProvider.complete() interface.
-
-        Converts Message list to chat format, calls Groq via native SDK.
-        Retries up to 3 times on 429 rate-limit errors with exponential backoff.
-        """
+        """SYNCHRONOUS method. Retries on 429 with blocking sleep in thread."""
         model_name = model or self.model_name
-
-        # Convert Message objects to chat format
         chat_messages = [{"role": m.role, "content": m.content} for m in messages]
 
-        kwargs = {
+        kwargs: dict = {
             "model": model_name,
             "messages": chat_messages,
             "temperature": temperature,
@@ -117,28 +109,34 @@ class GroqProvider:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
-        # Retry loop for 429 errors
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 response = self._client.chat.completions.create(**kwargs)
                 break
             except Exception as e:
-                if "429" in str(e) and attempt < _MAX_RETRIES:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
+                if is_rate_limit and attempt < _MAX_RETRIES:
                     delay = _RETRY_DELAYS[attempt]
                     logger.warning(
-                        f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). "
-                        f"Retrying in {delay}s..."
+                        f"Groq 429 rate limit hit (attempt {attempt + 1}/{_MAX_RETRIES}). Retrying in {delay}s..."
                     )
-                    time.sleep(delay)
+                    import time as time_module
+
+                    time_module.sleep(delay)
                     continue
                 logger.error(f"Groq API error: {e}")
-                raise
+                if is_rate_limit:
+                    from codekavi.exceptions import RateLimitError
 
-        # Extract response
+                    raise RateLimitError(f"Groq rate limit exceeded: {e}", detail=err_str) from e
+                from codekavi.exceptions import ProviderError
+
+                raise ProviderError(f"Groq API call failed: {e}", detail=err_str) from e
+
         choice = response.choices[0]
         content = choice.message.content or ""
 
-        # Extract usage
         usage = {}
         if response.usage:
             usage = {
@@ -159,6 +157,7 @@ class GroqProvider:
 
     # ─────────────────────────────────────────
     # Async interface (for orchestrator)
+    # Uses asyncio.sleep — non-blocking, proper async retry.
     # ─────────────────────────────────────────
 
     async def generate(
@@ -173,44 +172,53 @@ class GroqProvider:
         ASYNC method for the orchestrator. Non-blocking.
 
         Wraps the sync Groq SDK call in run_in_executor.
-        Retries up to 3 times on 429 rate-limit errors with exponential backoff.
+        Retries with asyncio.sleep — keeps the event loop responsive.
         """
+        from typing import Any
+
+        from codekavi.utils import current_executor
+
+        messages: list[Any] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
+
         loop = asyncio.get_running_loop()
 
-        def _sync_call():
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-            messages.append({"role": "user", "content": user_prompt})
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = await loop.run_in_executor(
+                    current_executor.get(None),
+                    lambda: self._client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                )
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
+                if is_rate_limit and attempt < _MAX_RETRIES:
+                    delay = _RETRY_DELAYS[attempt]
+                    logger.warning(
+                        f"Groq 429 rate limit hit in generate() "
+                        f"(attempt {attempt + 1}/{_MAX_RETRIES}). "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"Groq API error in generate(): {e}")
+                if is_rate_limit:
+                    from codekavi.exceptions import RateLimitError
 
-            kwargs = {
-                "model": self.model_name,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            if json_mode:
-                kwargs["response_format"] = {"type": "json_object"}
+                    raise RateLimitError(f"Groq rate limit exceeded in generate(): {e}", detail=err_str) from e
+                from codekavi.exceptions import ProviderError
 
-            # Retry loop for 429 errors
-            for attempt in range(_MAX_RETRIES + 1):
-                try:
-                    response = self._client.chat.completions.create(**kwargs)
-                    return response.choices[0].message.content or ""
-                except Exception as e:
-                    if "429" in str(e) and attempt < _MAX_RETRIES:
-                        delay = _RETRY_DELAYS[attempt]
-                        logger.warning(
-                            f"Groq 429 rate limit hit in generate() "
-                            f"(attempt {attempt + 1}/{_MAX_RETRIES}). "
-                            f"Retrying in {delay}s..."
-                        )
-                        time.sleep(delay)
-                        continue
-                    logger.error(f"Groq API error in generate(): {e}")
-                    raise
+                raise ProviderError(f"Groq API call failed in generate(): {e}", detail=err_str) from e
 
-        return await loop.run_in_executor(_executor, _sync_call)
+        return ""  # unreachable
 
     async def generate_stream(
         self,
@@ -221,17 +229,15 @@ class GroqProvider:
     ) -> AsyncIterator[str]:
         """
         ASYNC streaming for chat streaming.
-
-        Uses stream=True on the Groq SDK call, yields text chunks.
+        Each chunk is yielded as it arrives from the sync stream.
         """
-        loop = asyncio.get_running_loop()
+        from typing import Any
 
-        messages = []
+        messages: list[Any] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
 
-        # Run the initial stream creation in executor (blocking call)
         def _create_stream():
             return self._client.chat.completions.create(
                 model=self.model_name,
@@ -241,14 +247,15 @@ class GroqProvider:
                 stream=True,
             )
 
-        stream = await loop.run_in_executor(_executor, _create_stream)
+        from codekavi.utils import current_executor
 
-        # Iterate asynchronously — wrap each next() in executor to avoid
-        # blocking the event loop (the Groq stream is synchronous)
+        executor = current_executor.get(None)
+
+        loop = asyncio.get_running_loop()
+        stream = await loop.run_in_executor(executor, _create_stream)
+
         while True:
-            chunk = await loop.run_in_executor(
-                _executor, lambda: next(stream, None)
-            )
+            chunk = await loop.run_in_executor(executor, lambda: next(stream, None))
             if chunk is None:
                 break
             if chunk.choices and chunk.choices[0].delta.content:
@@ -263,9 +270,6 @@ class GroqProvider:
 # Gemini provider (kept for embeddings)
 # ─────────────────────────────────────────────
 
-from google import genai
-from google.genai import types
-
 
 class GeminiProvider:
     """
@@ -277,16 +281,14 @@ class GeminiProvider:
 
     name = "gemini"
 
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
-        self.model_name = model_name
-        api_key = os.environ.get("GEMINI_API_KEY", "")
+    def __init__(self, model_name: str | None = None):
+        self.model_name = model_name or settings.gemini_model
+        api_key = settings.gemini_api_key
 
         if not api_key:
-            raise ValueError(
-                "GEMINI_API_KEY not found. Set the GEMINI_API_KEY environment variable."
-            )
+            raise ValueError("GEMINI_API_KEY not found. Set the GEMINI_API_KEY environment variable.")
 
-        self._client = genai.Client(api_key=api_key)
+        self._client = google_genai.Client(api_key=api_key)
         logger.info(f"GeminiProvider initialized with model={self.model_name}")
 
     # ─────────────────────────────────────────
@@ -302,16 +304,12 @@ class GeminiProvider:
         json_mode: bool = False,
     ) -> LLMResponse:
         """
-        SYNCHRONOUS method matching the original GroqProvider.complete() interface.
+        SYNCHRONOUS method.
 
-        Converts the Message list (system + user roles) into Gemini's
-        system_instruction + contents format.
-
-        Keeps existing explainer.py working without any changes.
+        Converts the Message list into Gemini's system_instruction + contents format.
         """
         model_name = model or self.model_name
 
-        # Extract system and user messages from the Message list
         system_parts = []
         user_parts = []
         for msg in messages:
@@ -323,8 +321,7 @@ class GeminiProvider:
         system_instruction = "\n\n".join(system_parts) if system_parts else None
         user_content = "\n\n".join(user_parts) if user_parts else ""
 
-        # Build config
-        config_kwargs = {
+        config_kwargs: dict = {
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
@@ -333,7 +330,7 @@ class GeminiProvider:
         if json_mode:
             config_kwargs["response_mime_type"] = "application/json"
 
-        config = types.GenerateContentConfig(**config_kwargs)
+        config = google_types.GenerateContentConfig(**config_kwargs)
 
         try:
             response = self._client.models.generate_content(
@@ -343,12 +340,18 @@ class GeminiProvider:
             )
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
-            raise
+            err_str = str(e)
+            is_rate_limit = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "rate limit"])
+            if is_rate_limit:
+                from codekavi.exceptions import RateLimitError
 
-        # Extract response text
+                raise RateLimitError(f"Gemini rate limit exceeded: {e}", detail=err_str) from e
+            from codekavi.exceptions import ProviderError
+
+            raise ProviderError(f"Gemini API call failed: {e}", detail=err_str) from e
+
         content = response.text or ""
 
-        # Extract usage metadata
         usage = {}
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             um = response.usage_metadata
@@ -358,7 +361,6 @@ class GeminiProvider:
                 "total_tokens": getattr(um, "total_token_count", 0),
             }
 
-        # Extract finish reason
         finish_reason = ""
         if response.candidates:
             fr = response.candidates[0].finish_reason
@@ -385,32 +387,45 @@ class GeminiProvider:
         json_mode: bool = False,
     ) -> str:
         """
-        ASYNC method for the new orchestrator. Non-blocking.
+        ASYNC method for the orchestrator. Non-blocking.
 
         Wraps the sync SDK call in run_in_executor.
         """
-        loop = asyncio.get_running_loop()
+        from codekavi.utils import current_executor
+
+        config_kwargs: dict = {
+            "temperature": temperature,
+            "max_output_tokens": max_tokens,
+        }
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+        if json_mode:
+            config_kwargs["response_mime_type"] = "application/json"
+
+        config = google_types.GenerateContentConfig(**config_kwargs)
 
         def _sync_call():
-            config_kwargs = {
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
-            }
-            if system_prompt:
-                config_kwargs["system_instruction"] = system_prompt
-            if json_mode:
-                config_kwargs["response_mime_type"] = "application/json"
-
-            config = types.GenerateContentConfig(**config_kwargs)
-
-            response = self._client.models.generate_content(
+            return self._client.models.generate_content(
                 model=self.model_name,
                 contents=user_prompt,
                 config=config,
             )
-            return response.text or ""
 
-        return await loop.run_in_executor(_executor, _sync_call)
+        loop = asyncio.get_running_loop()
+        try:
+            response = await loop.run_in_executor(current_executor.get(None), _sync_call)
+            return response.text or ""
+        except Exception as e:
+            logger.error(f"Gemini API error in generate(): {e}")
+            err_str = str(e)
+            is_rate_limit = any(x in err_str for x in ["429", "RESOURCE_EXHAUSTED", "rate limit"])
+            if is_rate_limit:
+                from codekavi.exceptions import RateLimitError
+
+                raise RateLimitError(f"Gemini rate limit exceeded in generate(): {e}", detail=err_str) from e
+            from codekavi.exceptions import ProviderError
+
+            raise ProviderError(f"Gemini API call failed in generate(): {e}", detail=err_str) from e
 
     async def generate_stream(
         self,
@@ -421,21 +436,16 @@ class GeminiProvider:
     ) -> AsyncIterator[str]:
         """
         ASYNC streaming for future chat streaming.
-
-        Uses generate_content_stream, yields text chunks.
         """
-        loop = asyncio.get_running_loop()
-
-        config_kwargs = {
+        config_kwargs: dict = {
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
 
-        config = types.GenerateContentConfig(**config_kwargs)
+        config = google_types.GenerateContentConfig(**config_kwargs)
 
-        # Run the initial stream creation in executor (blocking call)
         def _create_stream():
             return self._client.models.generate_content_stream(
                 model=self.model_name,
@@ -443,14 +453,15 @@ class GeminiProvider:
                 config=config,
             )
 
-        stream = await loop.run_in_executor(_executor, _create_stream)
+        from codekavi.utils import current_executor
 
-        # Iterate asynchronously — wrap each next() in executor to avoid
-        # blocking the event loop (the Gemini stream is synchronous)
+        executor = current_executor.get(None)
+
+        loop = asyncio.get_running_loop()
+        stream = await loop.run_in_executor(executor, _create_stream)
+
         while True:
-            chunk = await loop.run_in_executor(
-                _executor, lambda: next(stream, None)
-            )
+            chunk = await loop.run_in_executor(executor, lambda: next(stream, None))
             if chunk is None:
                 break
             if chunk.text:
@@ -478,8 +489,41 @@ def get_provider(task: str = "chat") -> GroqProvider:
               Currently unused but reserved for future model routing.
 
     Returns:
-        A cached GroqProvider instance.
+        A cached GroqProvider instance (process-level singleton).
+        The GroqProvider and GeminiProvider classes are intentionally stateless —
+        they hold only the API client and model name, no per-request state.
     """
+    from typing import cast
+
     if "groq" not in _provider_cache:
         _provider_cache["groq"] = GroqProvider()
-    return _provider_cache["groq"]
+    return cast(GroqProvider, _provider_cache["groq"])
+
+
+def validate_providers() -> None:
+    """Verify configured models are reachable on startup."""
+    import os
+
+    # Skip during testing to avoid hitting live APIs
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
+    logger.info("Verifying LLM providers connectivity...")
+    try:
+        groq_provider = GroqProvider()
+        groq_provider.complete([Message(role="user", content="ping")], max_tokens=2)
+        logger.info("Groq connectivity verified.")
+    except Exception as e:
+        logger.error(f"Groq connectivity check failed: {e}")
+        raise RuntimeError(f"Groq connectivity check failed: {e}") from e
+
+    try:
+        gemini_provider = GeminiProvider()
+        gemini_provider._client.models.embed_content(  # type: ignore[attr-defined]
+            model=settings.embedding_model,
+            contents="ping",
+        )
+        logger.info("Gemini connectivity verified.")
+    except Exception as e:
+        logger.error(f"Gemini connectivity check failed: {e}")
+        raise RuntimeError(f"Gemini connectivity check failed: {e}") from e

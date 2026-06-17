@@ -9,14 +9,11 @@ On a cache hit at any tier, lower tiers are populated automatically
 so subsequent reads are faster.
 """
 
-import os
 import json
 import logging
 from typing import Any
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from codekavi.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +68,7 @@ class AnalysisCache:
         if self._redis is not None:
             return self._redis
 
-        redis_url = os.environ.get("REDIS_URL", "")
+        redis_url = settings.redis_url
         if not redis_url:
             logger.info("REDIS_URL not set — L2 cache disabled")
             self._redis_available = False
@@ -79,6 +76,7 @@ class AnalysisCache:
 
         try:
             import redis
+
             self._redis = redis.from_url(redis_url, decode_responses=True)
             self._redis.ping()
             self._redis_available = True
@@ -98,17 +96,16 @@ class AnalysisCache:
         if self._supabase is not None:
             return self._supabase
 
-        supabase_url = os.environ.get("SUPABASE_URL", "")
-        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        supabase_url = settings.supabase_url
+        supabase_key = settings.supabase_service_key
         if not supabase_url or not supabase_key:
-            logger.info(
-                "SUPABASE_URL or SUPABASE_SERVICE_KEY not set — L3 cache disabled"
-            )
+            logger.info("SUPABASE_URL or SUPABASE_SERVICE_KEY not set — L3 cache disabled")
             self._supabase_available = False
             return None
 
         try:
             from supabase import create_client
+
             self._supabase = create_client(supabase_url, supabase_key)
             self._supabase_available = True
             logger.info("Supabase L3 cache connected")
@@ -223,13 +220,15 @@ class AnalysisCache:
         try:
             repo_name = result.get("repo_name", "")
             owner = result.get("owner", "")
-            sb.table("analysis_cache").upsert({
-                "repo_id": repo_id,
-                "repo_name": repo_name,
-                "owner": owner,
-                "result_json": result,
-                "updated_at": "now()",
-            }).execute()
+            sb.table("analysis_cache").upsert(
+                {
+                    "repo_id": repo_id,
+                    "repo_name": repo_name,
+                    "owner": owner,
+                    "result_json": result,
+                    "updated_at": "now()",
+                }
+            ).execute()
         except Exception as e:
             logger.warning(f"Supabase SET failed for {repo_id}: {e}")
 
@@ -238,13 +237,7 @@ class AnalysisCache:
         if not sb:
             return None
         try:
-            response = (
-                sb.table("analysis_cache")
-                .select("result_json")
-                .eq("repo_id", repo_id)
-                .maybe_single()
-                .execute()
-            )
+            response = sb.table("analysis_cache").select("result_json").eq("repo_id", repo_id).maybe_single().execute()
             if response.data:
                 return response.data["result_json"]
         except Exception as e:
@@ -261,5 +254,4 @@ class AnalysisCache:
             logger.warning(f"Supabase DELETE failed for {repo_id}: {e}")
 
 
-# Global singleton — imported by session.py and route handlers
-analysis_cache = AnalysisCache()
+# AnalysisCache class is instantiated on startup and stored on app.state

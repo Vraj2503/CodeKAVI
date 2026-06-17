@@ -19,7 +19,8 @@ Thumbs.db
 *.swp
 *.swo
 
-test/
+# Old test directory (not the pytest test suite)
+/test/
 **/__pycache__/
 .env
 /Components
@@ -27,6 +28,14 @@ secrets/
 
 # Generated output
 backend/output/
+
+# Dev tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
 
 # Node modules (defense-in-depth for root-level git add)
 node_modules/

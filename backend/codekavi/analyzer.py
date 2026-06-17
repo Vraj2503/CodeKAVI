@@ -22,16 +22,34 @@ import json
 import os
 import re
 from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
 
 try:
-    from codekavi.config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP, MAX_FILE_SIZE_BYTES
+    from codekavi.config import (
+        EXTENSION_LANGUAGE_MAP,
+        FILENAME_LANGUAGE_MAP,
+        MAX_FILE_SIZE_BYTES,
+    )
+    from codekavi.settings import settings
 except ModuleNotFoundError:
-    from config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP, MAX_FILE_SIZE_BYTES
+    from config import (  # type: ignore[no-redef]
+        EXTENSION_LANGUAGE_MAP,
+        FILENAME_LANGUAGE_MAP,
+        MAX_FILE_SIZE_BYTES,
+    )
+    from settings import settings  # type: ignore[no-redef]
+
+try:
+    from codekavi.utils import BoundedContentCache
+except ModuleNotFoundError:
+    from utils import BoundedContentCache  # type: ignore[no-redef]
 
 
 # ─────────────────────────────────────────────
 # Language-specific import extractors
 # ─────────────────────────────────────────────
+
 
 def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """
@@ -42,7 +60,7 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
       - from .foo import bar  (relative)
       - from ..foo import bar (relative)
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
     try:
         tree = ast.parse(source, filename=filepath)
     except SyntaxError:
@@ -54,23 +72,27 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
         if isinstance(node, ast.Import):
             for alias in node.names:
                 resolved = _resolve_python_module(alias.name, repo_root, file_dir, level=0)
-                imports.append({
-                    "raw": alias.name,
-                    "resolved": resolved,
-                    "line": node.lineno,
-                    "type": "import",
-                })
+                imports.append(
+                    {
+                        "raw": alias.name,
+                        "resolved": resolved,
+                        "line": node.lineno,
+                        "type": "import",
+                    }
+                )
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             level = node.level or 0
             resolved = _resolve_python_module(module, repo_root, file_dir, level=level)
-            imports.append({
-                "raw": f"{'.' * level}{module}" if module else '.' * level,
-                "resolved": resolved,
-                "line": node.lineno,
-                "type": "from_import",
-            })
+            imports.append(
+                {
+                    "raw": f"{'.' * level}{module}" if module else "." * level,
+                    "resolved": resolved,
+                    "line": node.lineno,
+                    "type": "from_import",
+                }
+            )
 
     return imports
 
@@ -120,7 +142,7 @@ def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[d
       - import('path')
       - export ... from 'path'
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     patterns = [
@@ -135,15 +157,17 @@ def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[d
     for pattern in patterns:
         for match in re.finditer(pattern, source):
             raw_path = match.group(1)
-            line = source[:match.start()].count("\n") + 1
+            line = source[: match.start()].count("\n") + 1
 
             resolved = _resolve_js_path(raw_path, file_dir, repo_root)
-            imports.append({
-                "raw": raw_path,
-                "resolved": resolved,
-                "line": line,
-                "type": "import",
-            })
+            imports.append(
+                {
+                    "raw": raw_path,
+                    "resolved": resolved,
+                    "line": line,
+                    "type": "import",
+                }
+            )
 
     return imports
 
@@ -183,35 +207,37 @@ def _resolve_js_path(import_path: str, file_dir: str, repo_root: str) -> str | N
     return None
 
 
-def _extract_go_imports(source: str) -> list[dict]:
+def _extract_go_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Go imports."""
-    imports = []
+    imports: list[dict[str, Any]] = []
 
     # Single import: import "path"
     for match in re.finditer(r'import\s+"([^"]+)"', source):
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         imports.append({"raw": match.group(1), "resolved": None, "line": line, "type": "import"})
 
     # Grouped import: import ( "path1" \n "path2" )
-    for block in re.finditer(r'import\s*\(([\s\S]*?)\)', source):
-        block_start = source[:block.start()].count("\n") + 1
+    for block in re.finditer(r"import\s*\(([\s\S]*?)\)", source):
+        block_start = source[: block.start()].count("\n") + 1
         for i, line_match in enumerate(re.finditer(r'"([^"]+)"', block.group(1))):
-            imports.append({
-                "raw": line_match.group(1),
-                "resolved": None,
-                "line": block_start + i,
-                "type": "import",
-            })
+            imports.append(
+                {
+                    "raw": line_match.group(1),
+                    "resolved": None,
+                    "line": block_start + i,
+                    "type": "import",
+                }
+            )
 
     return imports
 
 
 def _extract_java_imports(source: str, repo_root: str) -> list[dict]:
     """Extract Java/Kotlin imports."""
-    imports = []
-    for match in re.finditer(r'import\s+([\w.]+(?:\.\*)?)\s*;', source):
+    imports: list[dict[str, Any]] = []
+    for match in re.finditer(r"import\s+([\w.]+(?:\.\*)?)\s*;", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         # Try to resolve to a file
         parts = raw.replace(".*", "").split(".")
         candidate = os.path.join(repo_root, *parts) + ".java"
@@ -222,12 +248,12 @@ def _extract_java_imports(source: str, repo_root: str) -> list[dict]:
 
 def _extract_c_cpp_includes(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract C/C++ #include directives."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     for match in re.finditer(r'#\s*include\s*[<"]([^>"]+)[>"]', source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         # Only resolve local includes (quoted), not system includes (angled)
         full_match = match.group(0)
         if '"' in full_match:
@@ -241,52 +267,59 @@ def _extract_c_cpp_includes(filepath: str, source: str, repo_root: str) -> list[
 
 def _extract_ruby_requires(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Ruby require/require_relative."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
     for match in re.finditer(r"""require_relative\s+['"]([^'"]+)['"]""", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         candidate = os.path.normpath(os.path.join(file_dir, raw))
         for ext in ["", ".rb"]:
             if os.path.isfile(candidate + ext):
-                imports.append({"raw": raw, "resolved": os.path.relpath(candidate + ext, repo_root), "line": line, "type": "require_relative"})
+                imports.append(
+                    {
+                        "raw": raw,
+                        "resolved": os.path.relpath(candidate + ext, repo_root),
+                        "line": line,
+                        "type": "require_relative",
+                    }
+                )
                 break
         else:
             imports.append({"raw": raw, "resolved": None, "line": line, "type": "require_relative"})
 
     for match in re.finditer(r"""(?<!_)require\s+['"]([^'"]+)['"]""", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         imports.append({"raw": raw, "resolved": None, "line": line, "type": "require"})
 
     return imports
 
 
-def _extract_rust_uses(source: str) -> list[dict]:
+def _extract_rust_uses(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Rust use/mod declarations."""
-    imports = []
-    for match in re.finditer(r'(?:use|mod)\s+([\w:]+)', source):
+    imports: list[dict[str, Any]] = []
+    for match in re.finditer(r"(?:use|mod)\s+([\w:]+)", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         imports.append({"raw": raw, "resolved": None, "line": line, "type": "use"})
     return imports
 
 
 def _extract_php_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract PHP use/include/require statements."""
-    imports = []
+    imports: list[dict[str, Any]] = []
     for match in re.finditer(r"""(?:include|include_once|require|require_once)\s+['"]([^'"]+)['"]""", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         file_dir = os.path.dirname(filepath)
         candidate = os.path.normpath(os.path.join(file_dir, raw))
         resolved = os.path.relpath(candidate, repo_root) if os.path.isfile(candidate) else None
         imports.append({"raw": raw, "resolved": resolved, "line": line, "type": "include"})
 
-    for match in re.finditer(r'use\s+([\w\\]+)', source):
+    for match in re.finditer(r"use\s+([\w\\]+)", source):
         raw = match.group(1)
-        line = source[:match.start()].count("\n") + 1
+        line = source[: match.start()].count("\n") + 1
         imports.append({"raw": raw, "resolved": None, "line": line, "type": "use"})
     return imports
 
@@ -299,7 +332,7 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
     Python AST-based import extraction on each cell's source.
     Tracks cell index in the 'line' field (cell_1, cell_2, ...).
     """
-    imports = []
+    imports: list[dict[str, Any]] = []
 
     try:
         notebook = json.loads(source)
@@ -309,12 +342,7 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
     cells = notebook.get("cells", [])
 
     # Detect notebook language (default to Python)
-    kernel_lang = (
-        notebook.get("metadata", {})
-        .get("kernelspec", {})
-        .get("language", "python")
-        .lower()
-    )
+    kernel_lang = notebook.get("metadata", {}).get("kernelspec", {}).get("language", "python").lower()
 
     if kernel_lang != "python":
         return imports  # Only Python notebooks supported for now
@@ -348,25 +376,25 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
 # ─────────────────────────────────────────────
 
 # Map language names to extractor functions
-_EXTRACTORS: dict[str, callable] = {
-    "Python":               _extract_python_imports,
-    "JavaScript":           _extract_js_ts_imports,
-    "JavaScript (React)":   _extract_js_ts_imports,
-    "TypeScript":           _extract_js_ts_imports,
-    "TypeScript (React)":   _extract_js_ts_imports,
-    "Vue":                  _extract_js_ts_imports,
-    "Svelte":               _extract_js_ts_imports,
-    "Go":                   _extract_go_imports,
-    "Java":                 _extract_java_imports,
-    "Kotlin":               _extract_java_imports,
-    "C":                    _extract_c_cpp_includes,
-    "C++":                  _extract_c_cpp_includes,
-    "C/C++ Header":         _extract_c_cpp_includes,
-    "C++ Header":           _extract_c_cpp_includes,
-    "Ruby":                 _extract_ruby_requires,
-    "Rust":                 _extract_rust_uses,
-    "PHP":                  _extract_php_imports,
-    "Jupyter Notebook":     _extract_ipynb_imports,
+_EXTRACTORS: dict[str, Callable[..., Any]] = {
+    "Python": _extract_python_imports,
+    "JavaScript": _extract_js_ts_imports,
+    "JavaScript (React)": _extract_js_ts_imports,
+    "TypeScript": _extract_js_ts_imports,
+    "TypeScript (React)": _extract_js_ts_imports,
+    "Vue": _extract_js_ts_imports,
+    "Svelte": _extract_js_ts_imports,
+    "Go": _extract_go_imports,
+    "Java": _extract_java_imports,
+    "Kotlin": _extract_java_imports,
+    "C": _extract_c_cpp_includes,
+    "C++": _extract_c_cpp_includes,
+    "C/C++ Header": _extract_c_cpp_includes,
+    "C++ Header": _extract_c_cpp_includes,
+    "Ruby": _extract_ruby_requires,
+    "Rust": _extract_rust_uses,
+    "PHP": _extract_php_imports,
+    "Jupyter Notebook": _extract_ipynb_imports,
 }
 
 
@@ -383,7 +411,12 @@ def _detect_language(filepath: str) -> str:
 # Core: Build dependency graph
 # ─────────────────────────────────────────────
 
-def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
+
+def analyze_dependencies(
+    repo_root: str,
+    file_list: list[dict],
+    content_cache: BoundedContentCache | None = None,
+) -> dict:
     """
     Analyze all files in the repo and build a full dependency graph.
 
@@ -404,13 +437,16 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
     # All file paths in the repo (relative)
     known_files = {f["path"] for f in file_list}
 
-    edges = []                                   # { source, target, ... }
-    adjacency: dict[str, set] = defaultdict(set)           # file -> imports
-    reverse_adjacency: dict[str, set] = defaultdict(set)   # file -> imported_by
-    file_imports: dict[str, list] = defaultdict(list)       # file -> raw import list
+    edges: list[dict[str, Any]] = []  # { source, target, ... }
+    adjacency: dict[str, set] = defaultdict(set)  # file -> imports
+    reverse_adjacency: dict[str, set] = defaultdict(set)  # file -> imported_by
+    file_imports: dict[str, list] = defaultdict(list)  # file -> raw import list
 
     # Content cache: read each file ONCE, reuse in classifier + entry point detection
-    content_cache: dict[str, str] = {}
+    local_cache = False
+    if content_cache is None:
+        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+        local_cache = True
 
     resolved_count = 0
     unresolved_count = 0
@@ -429,9 +465,9 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             file_size = os.path.getsize(abs_path)
             if file_size > MAX_FILE_SIZE_BYTES:
                 continue
-            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 source = f.read()
-            content_cache[rel_path] = source
+            content_cache[rel_path] = source[:4096]
         except (OSError, UnicodeDecodeError):
             continue
 
@@ -442,13 +478,15 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
         for imp in imports:
             target = imp["resolved"]
             if target and target in known_files and target != rel_path:
-                edges.append({
-                    "source": rel_path,
-                    "target": target,
-                    "raw": imp["raw"],
-                    "line": imp["line"],
-                    "type": imp["type"],
-                })
+                edges.append(
+                    {
+                        "source": rel_path,
+                        "target": target,
+                        "raw": imp["raw"],
+                        "line": imp["line"],
+                        "type": imp["type"],
+                    }
+                )
                 adjacency[rel_path].add(target)
                 reverse_adjacency[target].add(rel_path)
                 resolved_count += 1
@@ -460,6 +498,10 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
 
     # ── Find central/important files ──
     central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
+
+    if local_cache:
+        content_cache.clear()
+        del content_cache
 
     return {
         "edges": edges,
@@ -473,7 +515,6 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
             "resolved_edges": resolved_count,
             "unresolved_edges": unresolved_count,
         },
-        "content_cache": content_cache,
     }
 
 
@@ -484,30 +525,60 @@ def analyze_dependencies(repo_root: str, file_list: list[dict]) -> dict:
 # Common entry point filenames (basename patterns)
 _ENTRY_POINT_NAMES = {
     # Python
-    "main.py", "app.py", "manage.py", "wsgi.py", "asgi.py",
-    "server.py", "run.py", "cli.py", "__main__.py",
+    "main.py",
+    "app.py",
+    "manage.py",
+    "wsgi.py",
+    "asgi.py",
+    "server.py",
+    "run.py",
+    "cli.py",
+    "__main__.py",
     # JavaScript / TypeScript
-    "index.js", "index.ts", "index.mjs", "main.js", "main.ts",
-    "app.js", "app.ts", "server.js", "server.ts",
+    "index.js",
+    "index.ts",
+    "index.mjs",
+    "main.js",
+    "main.ts",
+    "app.js",
+    "app.ts",
+    "server.js",
+    "server.ts",
     # Go
-    "main.go", "cmd.go",
+    "main.go",
+    "cmd.go",
     # Java
-    "Main.java", "App.java", "Application.java",
+    "Main.java",
+    "App.java",
+    "Application.java",
     # Rust
-    "main.rs", "lib.rs",
+    "main.rs",
+    "lib.rs",
     # Ruby
-    "app.rb", "config.ru", "Rakefile",
+    "app.rb",
+    "config.ru",
+    "Rakefile",
     # PHP
-    "index.php", "artisan",
+    "index.php",
+    "artisan",
     # C/C++
-    "main.c", "main.cpp",
+    "main.c",
+    "main.cpp",
 }
 
 # Config/build files that signal project structure
 _CONFIG_ENTRY_NAMES = {
-    "package.json", "setup.py", "pyproject.toml", "Cargo.toml",
-    "go.mod", "pom.xml", "build.gradle", "Makefile", "Dockerfile",
-    "docker-compose.yml", "docker-compose.yaml",
+    "package.json",
+    "setup.py",
+    "pyproject.toml",
+    "Cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "Makefile",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
 }
 
 
@@ -516,7 +587,7 @@ def _detect_entry_points(
     known_files: set[str],
     adjacency: dict[str, set],
     reverse_adjacency: dict[str, set],
-    content_cache: dict[str, str] | None = None,
+    content_cache: dict[str, str] | BoundedContentCache | None = None,
 ) -> list[dict]:
     """
     Detect likely entry point files using heuristics:
@@ -528,17 +599,38 @@ def _detect_entry_points(
     scored: dict[str, dict] = {}
 
     # Extensions that are actual source code (not docs/config)
-    _SOURCE_EXTENSIONS = {
-        ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-        ".go", ".java", ".kt", ".rs", ".rb", ".php",
-        ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
-        ".scala", ".dart", ".ex", ".exs", ".vue", ".svelte",
+    source_extensions = {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".go",
+        ".java",
+        ".kt",
+        ".rs",
+        ".rb",
+        ".php",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".swift",
+        ".scala",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".vue",
+        ".svelte",
     }
 
     for fpath in known_files:
         basename = os.path.basename(fpath)
         _, ext = os.path.splitext(basename)
-        is_source = ext.lower() in _SOURCE_EXTENSIONS
+        is_source = ext.lower() in source_extensions
         score = 0
         reasons = []
 
@@ -559,27 +651,29 @@ def _detect_entry_points(
             else:
                 abs_path = os.path.join(repo_root, fpath)
                 try:
-                    with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                    with open(abs_path, encoding="utf-8", errors="ignore") as f:
                         content = f.read(4096)
                 except OSError:
                     content = ""
 
-            if 'if __name__' in content and '__main__' in content:
+            if "if __name__" in content and "__main__" in content:
                 score += 4
                 reasons.append("has_main_guard")
-            if re.search(r'def\s+main\s*\(', content):
+            if re.search(r"def\s+main\s*\(", content):
                 score += 2
                 reasons.append("has_main_function")
-            if re.search(r'func\s+main\s*\(', content):  # Go
+            if re.search(r"func\s+main\s*\(", content):  # Go
                 score += 4
                 reasons.append("has_main_function")
-            if re.search(r'public\s+static\s+void\s+main', content):  # Java
+            if re.search(r"public\s+static\s+void\s+main", content):  # Java
                 score += 4
                 reasons.append("has_main_method")
-            if re.search(r'app\.listen\s*\(', content) or re.search(r'createServer\s*\(', content):  # Node.js
+            if re.search(r"app\.listen\s*\(", content) or re.search(r"createServer\s*\(", content):  # Node.js
                 score += 3
                 reasons.append("starts_server")
-            if re.search(r'\.run\s*\(', content) and ('Flask' in content or 'FastAPI' in content or 'uvicorn' in content):
+            if re.search(r"\.run\s*\(", content) and (
+                "Flask" in content or "FastAPI" in content or "uvicorn" in content
+            ):
                 score += 3
                 reasons.append("starts_server")
 
@@ -614,6 +708,7 @@ def _detect_entry_points(
 # Intelligence: find central / important files
 # ─────────────────────────────────────────────
 
+
 def _find_central_files(
     known_files: set[str],
     adjacency: dict[str, set],
@@ -627,7 +722,7 @@ def _find_central_files(
 
     Returns top files sorted by score.
     """
-    file_scores = []
+    file_scores: list[dict[str, Any]] = []
 
     for fpath in known_files:
         in_deg = len(reverse_adjacency.get(fpath, set()))
@@ -640,13 +735,15 @@ def _find_central_files(
         # Weighted score:  in_degree matters more (being depended on = important)
         score = (in_deg * 3) + (out_deg * 1)
 
-        file_scores.append({
-            "file": fpath,
-            "in_degree": in_deg,
-            "out_degree": out_deg,
-            "score": score,
-            "role": _classify_role(in_deg, out_deg),
-        })
+        file_scores.append(
+            {
+                "file": fpath,
+                "in_degree": in_deg,
+                "out_degree": out_deg,
+                "score": score,
+                "role": _classify_role(in_deg, out_deg),
+            }
+        )
 
     # Sort by score, return top results
     file_scores.sort(key=lambda x: x["score"], reverse=True)
@@ -656,23 +753,23 @@ def _find_central_files(
 def _classify_role(in_deg: int, out_deg: int) -> str:
     """Classify a file's role based on its dependency graph position."""
     if in_deg == 0 and out_deg > 0:
-        return "entry_point"        # Imports others, not imported itself
+        return "entry_point"  # Imports others, not imported itself
     elif in_deg > 0 and out_deg == 0:
-        return "leaf_utility"       # Imported by others, imports nothing
+        return "leaf_utility"  # Imported by others, imports nothing
     elif in_deg >= 3 and out_deg >= 1:
-        return "core_module"        # Heavily depended on, also imports
+        return "core_module"  # Heavily depended on, also imports
     elif in_deg > out_deg:
-        return "utility"            # More imported than importing
+        return "utility"  # More imported than importing
     elif out_deg > in_deg:
-        return "orchestrator"       # Imports more than it's imported
+        return "orchestrator"  # Imports more than it's imported
     else:
-        return "connector"          # Equal in/out — bridges modules
+        return "connector"  # Equal in/out — bridges modules
 
 
-#Testing
+# Testing
 if __name__ == "__main__":
     notebook_path = "/Applications/Projects/CodeKavi/test/test.ipynb"
-    with open(notebook_path, "r") as f:
+    with open(notebook_path) as f:
         notebook_content = f.read()
     imports = _extract_ipynb_imports(notebook_path, notebook_content, "/Applications/Projects/CodeKavi")
     print(imports)

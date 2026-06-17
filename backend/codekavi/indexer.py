@@ -1,28 +1,30 @@
-import os
-import time
 import hashlib
 import logging
-from typing import List, Dict, Any
+import os
+import time
+from typing import Any
 
 from dotenv import load_dotenv
-load_dotenv()
-
 from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from codekavi.config import EXTENSION_LANGUAGE_MAP
+from codekavi.config import detect_layer as _detect_layer
+from codekavi.settings import settings
 from codekavi.vectorstore import zilliz_client
-from codekavi.config import EXTENSION_LANGUAGE_MAP, EMBEDDING_MODEL, detect_layer as _detect_layer
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 # ── Configuration ──
-BATCH_SIZE = 20          # Gemini batch-embed accepts up to ~100 items/call; 20 is safe
-MAX_RETRIES = 6          # Retry attempts on transient / rate-limit errors
-INITIAL_BACKOFF_S = 20   # Start at 20s; doubles each attempt on 429
+BATCH_SIZE = 20  # Gemini batch-embed accepts up to ~100 items/call; 20 is safe
+MAX_RETRIES = 6  # Retry attempts on transient / rate-limit errors
+INITIAL_BACKOFF_S = 20  # Start at 20s; doubles each attempt on 429
 
 
-def get_genai_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
+def create_genai_client():
+    api_key = settings.gemini_api_key
     if not api_key:
         return None
     try:
@@ -41,7 +43,7 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = client.models.embed_content(
-                model=EMBEDDING_MODEL,
+                model=settings.embedding_model,
                 contents=text,
             )
             return response.embeddings[0].values
@@ -51,18 +53,16 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
             is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
 
             if is_rate_limit and attempt < MAX_RETRIES:
-                logger.warning(
-                    f"Rate-limited (attempt {attempt}/{MAX_RETRIES}). "
-                    f"Waiting {backoff:.0f}s before retry…"
-                )
+                logger.warning(f"Rate-limited (attempt {attempt}/{MAX_RETRIES}). Waiting {backoff:.0f}s before retry…")
                 time.sleep(backoff)
                 backoff *= 2  # exponential backoff
                 continue
             else:
                 raise  # non-retryable or exhausted retries
+    return []  # safety return for type checker (unreachable)
 
 
-def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
+def _embed_with_retry(client, texts: list[str]) -> list[list[float]]:
     """
     Generate embeddings for a batch of texts in a SINGLE API call.
     Gemini's embed_content accepts a list of strings, so we send all
@@ -75,7 +75,7 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
         try:
             # Single API call for the entire batch
             response = client.models.embed_content(
-                model=EMBEDDING_MODEL,
+                model=settings.embedding_model,
                 contents=texts,
             )
             return [e.values for e in response.embeddings]
@@ -97,6 +97,8 @@ def _embed_with_retry(client, texts: List[str]) -> List[List[float]]:
                 logger.warning(f"Batch embed failed, falling back to sequential: {e}")
                 return [_embed_single_with_retry(client, text) for text in texts]
 
+    return []  # safety return for type checker (unreachable)
+
 
 def _detect_language(file_path: str) -> str:
     """Detect language from file extension using the shared config map."""
@@ -104,10 +106,9 @@ def _detect_language(file_path: str) -> str:
     return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")
 
 
-
 def index_repository(
     repo_id: str,
-    file_profiles: List[Dict[str, Any]],
+    file_profiles: list[dict[str, Any]],
     clone_path: str,
 ) -> bool:
     """
@@ -115,7 +116,6 @@ def index_repository(
     then inserts into Zilliz database.
     """
     logger.info(f"Starting vector indexing for repo {repo_id}…")
-    print(f"Starting vector indexing for repo {repo_id}...")
 
     # 1. Setup Collection & Client
     try:
@@ -124,7 +124,7 @@ def index_repository(
         logger.error(f"Failed to setup Zilliz collection: {e}")
         return False
 
-    client = get_genai_client()
+    client = create_genai_client()
     if not client:
         logger.warning("GenAI client not available. Skipping indexing.")
         return False
@@ -132,7 +132,7 @@ def index_repository(
     # Clear old data for this repo
     zilliz_client.clear_repo(repo_id)
 
-    # 2. Text Splitter – optimized for code
+    # 2. Text Splitter - optimized for code
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1500,
         chunk_overlap=200,
@@ -141,8 +141,8 @@ def index_repository(
     )
 
     # Batch accumulators
-    current_batch_texts: List[str] = []
-    current_batch_metadata: List[Dict[str, Any]] = []
+    current_batch_texts: list[str] = []
+    current_batch_metadata: list[dict[str, Any]] = []
     total_chunks_attempted = 0
     total_chunks_inserted = 0
 
@@ -184,16 +184,11 @@ def index_repository(
 
             collection.insert(insert_data)
             total_chunks_inserted += batch_len
-            print(
-                f"  ✓ Inserted {batch_len} chunks "
-                f"(Total: {total_chunks_inserted}/{total_chunks_attempted})"
-            )
+            logger.info(f"  Inserted {batch_len} chunks (Total: {total_chunks_inserted}/{total_chunks_attempted})")
 
         except Exception as e:
-            logger.error(
-                f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}"
-            )
-            print(f"  ✗ Lost {batch_len} chunks: {e}")
+            logger.error(f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}")
+            logger.warning(f"Lost {batch_len} chunks: {e}")
 
         # Reset batch regardless of success/failure
         current_batch_texts.clear()
@@ -209,7 +204,7 @@ def index_repository(
             continue
 
         try:
-            with open(abs_path, "r", encoding="utf-8") as f:
+            with open(abs_path, encoding="utf-8") as f:
                 content = f.read()
         except Exception:
             continue
@@ -235,8 +230,8 @@ def index_repository(
                 start_line = 0
                 end_line = 0
             else:
-                start_line = content[:char_offset].count('\n') + 1
-                end_line = start_line + chunk.count('\n')
+                start_line = content[:char_offset].count("\n") + 1
+                end_line = start_line + chunk.count("\n")
                 # Advance search_start past this chunk's start to handle
                 # overlapping chunks correctly
                 search_start = char_offset + 1
@@ -267,15 +262,11 @@ def index_repository(
     flush_batch()
 
     lost = total_chunks_attempted - total_chunks_inserted
-    summary = (
-        f"Finished indexing for {repo_id}: "
-        f"{total_chunks_inserted}/{total_chunks_attempted} chunks inserted"
-    )
+    summary = f"Finished indexing for {repo_id}: {total_chunks_inserted}/{total_chunks_attempted} chunks inserted"
     if lost > 0:
         summary += f" ({lost} lost due to errors)"
         logger.warning(summary)
     else:
         logger.info(summary)
-    print(summary)
 
     return total_chunks_inserted > 0

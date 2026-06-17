@@ -1,24 +1,21 @@
-import os
+import logging
 import re
 import time
-import logging
-from typing import List, Dict, Any
-
-from dotenv import load_dotenv
-load_dotenv()
+from typing import Any, ClassVar
 
 from pymilvus import (
-    connections,
-    utility,
-    FieldSchema,
+    Collection,
     CollectionSchema,
     DataType,
-    Collection,
+    FieldSchema,
+    connections,
+    utility,
 )
 
-logger = logging.getLogger(__name__)
+from codekavi.config import EMBEDDING_DIMENSION
+from codekavi.settings import settings
 
-from codekavi.config import EMBEDDING_MODEL, EMBEDDING_DIMENSION
+logger = logging.getLogger(__name__)
 
 # Constants for schema
 DIMENSION = EMBEDDING_DIMENSION
@@ -41,8 +38,8 @@ def _validate_repo_id(repo_id: str) -> str:
 
 class ZillizClient:
     def __init__(self):
-        self.uri = os.getenv("ZILLIZ_URI")
-        self.token = os.getenv("ZILLIZ_API_KEY")
+        self.uri = settings.zilliz_uri
+        self.token = settings.zilliz_api_key
         self.collection = None
 
     def connect(self) -> bool:
@@ -62,14 +59,27 @@ class ZillizClient:
             return False
 
     # Fields that MUST exist in the schema (added for metadata filtering)
-    _REQUIRED_FIELDS = {"id", "repo_id", "file_path", "role", "language", "layer", "start_line", "end_line", "text", "vector"}
+    _REQUIRED_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "id",
+            "repo_id",
+            "file_path",
+            "role",
+            "language",
+            "layer",
+            "start_line",
+            "end_line",
+            "text",
+            "vector",
+        }
+    )
 
     def setup_collection(self) -> Collection:
         """Sets up the Milvus collection and returns it."""
         if not self.connect():
-            raise ValueError(
-                "Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY."
-            )
+            from codekavi.exceptions import VectorStoreError
+
+            raise VectorStoreError("Could not connect to Zilliz. Check ZILLIZ_URI and ZILLIZ_API_KEY.")
 
         if utility.has_collection(COLLECTION_NAME):
             self.collection = Collection(COLLECTION_NAME)
@@ -80,8 +90,7 @@ class ZillizClient:
                 existing_dim = self.collection.schema.fields[-1].params.get("dim")
                 if existing_dim != DIMENSION:
                     logger.warning(
-                        f"Dimension mismatch ({existing_dim} vs {DIMENSION}). "
-                        "Dropping and recreating collection."
+                        f"Dimension mismatch ({existing_dim} vs {DIMENSION}). Dropping and recreating collection."
                     )
                     utility.drop_collection(COLLECTION_NAME)
                     return self.setup_collection()
@@ -94,10 +103,7 @@ class ZillizClient:
                 existing_field_names = {f.name for f in self.collection.schema.fields}
                 if not self._REQUIRED_FIELDS.issubset(existing_field_names):
                     missing = self._REQUIRED_FIELDS - existing_field_names
-                    logger.warning(
-                        f"Collection missing fields {missing}. "
-                        "Dropping and recreating collection."
-                    )
+                    logger.warning(f"Collection missing fields {missing}. Dropping and recreating collection.")
                     utility.drop_collection(COLLECTION_NAME)
                     return self.setup_collection()
             except Exception:
@@ -141,12 +147,12 @@ class ZillizClient:
         except Exception:
             return False
 
-    def clear_repo(self, repo_id: str):
+    def clear_repo(self, repo_id: str) -> None:
         """Removes all chunks associated with a specific repo_id."""
         repo_id = _validate_repo_id(repo_id)
         if not self.collection:
             self.setup_collection()
-
+        assert self.collection is not None
         try:
             self.collection.delete(f"repo_id == '{repo_id}'")
         except Exception as e:
@@ -158,7 +164,7 @@ class ZillizClient:
         repo_id: str,
         limit: int = 5,
         layer_filter: str | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Embeds the query using Gemini and searches Zilliz.
         Returns the top 'limit' matching code chunks.
@@ -174,20 +180,23 @@ class ZillizClient:
             layer_filter: If "exclude_frontend", excludes frontend and test chunks.
         """
         if not self.collection:
-            self.setup_collection()
+            self.collection = self.setup_collection()
 
+        assert self.collection is not None
         backoff = INITIAL_BACKOFF_S
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 from google import genai
 
-                api_key = os.environ.get("GEMINI_API_KEY")
+                api_key = settings.gemini_api_key
                 client = genai.Client(api_key=api_key)
                 response = client.models.embed_content(
-                    model=EMBEDDING_MODEL,
-                    contents=[query],
+                    model=settings.embedding_model,
+                    contents=[query],  # type: ignore[arg-type]
                 )
+                if not response.embeddings or len(response.embeddings) == 0:
+                    raise ValueError("No embeddings returned from Gemini")
                 query_vector = response.embeddings[0].values
 
                 search_params = {"metric_type": "COSINE", "params": {}}
@@ -205,7 +214,15 @@ class ZillizClient:
                     param=search_params,
                     limit=limit,
                     expr=expr,
-                    output_fields=["file_path", "role", "language", "layer", "start_line", "end_line", "text"],
+                    output_fields=[
+                        "file_path",
+                        "role",
+                        "language",
+                        "layer",
+                        "start_line",
+                        "end_line",
+                        "text",
+                    ],
                 )
 
                 formatted_results = []
@@ -228,14 +245,12 @@ class ZillizClient:
             except Exception as e:
                 err_str = str(e)
                 is_transient = any(
-                    keyword in err_str
-                    for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
+                    keyword in err_str for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
                 )
 
                 if is_transient and attempt < MAX_RETRIES:
                     logger.warning(
-                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. "
-                        f"Retrying in {backoff}s…"
+                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. Retrying in {backoff}s…"
                     )
                     time.sleep(backoff)
                     backoff *= 2
@@ -243,6 +258,7 @@ class ZillizClient:
                 else:
                     logger.error(f"Search failed: {e}")
                     return []
+        return []
 
 
 # Global instance for app to use

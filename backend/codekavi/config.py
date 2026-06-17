@@ -44,8 +44,8 @@ IGNORED_DIRS = {
     "*.egg-info",
     ".gradle",
     ".cargo",
-    "target",       # Rust / Java build output
-    "Pods",         # iOS CocoaPods
+    "target",  # Rust / Java build output
+    "Pods",  # iOS CocoaPods
     ".terraform",
 }
 
@@ -184,7 +184,7 @@ EXTENSION_LANGUAGE_MAP = {
     ".pl": "Perl",
     ".pm": "Perl Module",
     ".clj": "Clojure",
-    ".ipynb": "Jupyter Notebook"
+    ".ipynb": "Jupyter Notebook",
 }
 
 # Special filenames → language mapping
@@ -243,6 +243,7 @@ EMBEDDING_DIMENSION = 3072
 # Used by indexer.py, orchestrator.py, and visualize.py.
 # Change this list to update layer detection across the whole app.
 
+
 def detect_layer(file_path: str) -> str:
     """
     Detect architectural layer from file path keywords.
@@ -263,3 +264,7 @@ def detect_layer(file_path: str) -> str:
         if any(kw in path_lower for kw in keywords):
             return layer
     return "other"
+
+
+# ─────────────────────────────────────────────
+# Configuration Settings are now imported from codekavi.settings

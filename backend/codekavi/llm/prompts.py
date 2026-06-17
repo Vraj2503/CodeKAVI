@@ -12,8 +12,8 @@ Prompt design principles:
 """
 
 from __future__ import annotations
-from codekavi.llm.providers import Message
 
+from codekavi.llm.providers import Message
 
 # ─────────────────────────────────────────────
 # System prompts
@@ -51,6 +51,7 @@ Be specific — reference actual file names, modules, and function names from th
 # ─────────────────────────────────────────────
 # File-level explanation prompts
 # ─────────────────────────────────────────────
+
 
 def build_file_explanation_prompt(
     file_path: str,
@@ -128,6 +129,7 @@ Keep the explanation focused and developer-oriented. Use Markdown formatting."""
 # Architecture summary prompt
 # ─────────────────────────────────────────────
 
+
 def build_architecture_prompt(
     repo_name: str,
     owner: str,
@@ -174,8 +176,7 @@ def build_architecture_prompt(
         for m in modules[:15]
     )
     connections_str = "\n".join(
-        f"  - {c['source']}/ → {c['target']}/ (weight: {c['weight']})"
-        for c in connections[:20]
+        f"  - {c['source']}/ → {c['target']}/ (weight: {c['weight']})" for c in connections[:20]
     )
 
     # Format top files with their roles
@@ -234,6 +235,7 @@ Use Markdown formatting with clear headings. Be specific — reference actual fi
 # Module summary prompt
 # ─────────────────────────────────────────────
 
+
 def build_module_summary_prompt(
     module_name: str,
     file_count: int,
@@ -249,7 +251,7 @@ def build_module_summary_prompt(
     Build a prompt for explaining what a single module/directory does.
     """
     files_str = "\n".join(f"  - `{f}`" for f in files[:30])
-    lang_str = ", ".join(f"{l} ({c})" for l, c in languages.items())
+    lang_str = ", ".join(f"{lang} ({count})" for lang, count in languages.items())
     role_str = ", ".join(f"{r} ({c})" for r, c in roles.items())
 
     in_str = ", ".join(f"`{c['source']}/`" for c in connections_in[:10]) if connections_in else "None"

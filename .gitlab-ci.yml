@@ -1,0 +1,55 @@
+stages:
+  - lint
+  - test
+  - build
+
+# Cache backend dependencies
+.backend-cache: &backend-cache
+  cache:
+    key: backend-deps
+    paths:
+      - .cache/pip
+  before_script:
+    - pip install --upgrade pip
+    - pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+# Cache frontend dependencies
+.frontend-cache: &frontend-cache
+  cache:
+    key: frontend-deps
+    paths:
+      - frontend/node_modules/
+  before_script:
+    - cd frontend
+    - npm ci
+
+backend-lint:
+  stage: lint
+  image: python:3.12-slim
+  <<: *backend-cache
+  script:
+    - cd backend
+    - ruff check .
+    - mypy .
+
+backend-test:
+  stage: test
+  image: python:3.12-slim
+  <<: *backend-cache
+  script:
+    - cd backend
+    - pytest
+
+frontend-lint:
+  stage: lint
+  image: node:22-alpine
+  <<: *frontend-cache
+  script:
+    - npm run lint
+
+frontend-build:
+  stage: build
+  image: node:22-alpine
+  <<: *frontend-cache
+  script:
+    - npm run build

@@ -1,39 +1,52 @@
 """
 explainer.py — Main explanation pipeline.
-
-Orchestrates the LLM provider and prompt templates to generate
-explanations at different levels (file, module, architecture).
-
-Handles:
-  - File prioritization (explain important files first)
-  - Token budget management (truncate large files, skip binary)
-  - Batch processing with rate limiting
-  - Result caching within a session
 """
 
 from __future__ import annotations
 
-import os
+import asyncio
 import logging
-from dataclasses import dataclass, field
+import os
 import time
+from dataclasses import dataclass
 
-from codekavi.llm.providers import GeminiProvider, GroqProvider, Message
 from codekavi.llm.prompts import (
-    build_file_explanation_prompt,
     build_architecture_prompt,
+    build_file_explanation_prompt,
     build_module_summary_prompt,
 )
+from codekavi.llm.providers import GeminiProvider, GroqProvider
+from codekavi.utils import run_sync
 
 logger = logging.getLogger(__name__)
 
-
 # Source code extensions we can meaningfully explain
 _EXPLAINABLE_EXTENSIONS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".go", ".java", ".kt", ".rs", ".rb", ".php",
-    ".c", ".cpp", ".h", ".hpp", ".cs", ".swift",
-    ".scala", ".dart", ".ex", ".exs", ".vue", ".svelte",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".go",
+    ".java",
+    ".kt",
+    ".rs",
+    ".rb",
+    ".php",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".swift",
+    ".scala",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".vue",
+    ".svelte",
 }
 
 # Max file size to send to the LLM (in characters)
@@ -43,6 +56,7 @@ MAX_EXPLAINABLE_CHARS = 50_000
 @dataclass
 class ExplanationResult:
     """Result of an explanation request."""
+
     file_path: str
     explanation: str
     model: str
@@ -55,6 +69,7 @@ class ExplanationResult:
 @dataclass
 class ArchitectureResult:
     """Result of an architecture overview request."""
+
     overview: str
     model: str
     provider: str
@@ -65,20 +80,7 @@ class ArchitectureResult:
 
 class Explainer:
     """
-    Main explanation engine.
-
-    Usage:
-        provider = get_provider()
-        explainer = Explainer(provider)
-
-        # Explain a single file
-        result = explainer.explain_file(file_profile, repo_root, repo_name)
-
-        # Generate architecture overview
-        overview = explainer.explain_architecture(repo_data, dep_data, ...)
-
-        # Explain the top N most important files
-        results = explainer.explain_top_files(file_profiles, repo_root, repo_name, top_n=10)
+    Main explanation engine (Asynchronous version).
     """
 
     def __init__(
@@ -103,22 +105,14 @@ class Explainer:
     # File-level explanation
     # ─────────────────────────────────────────
 
-    def explain_file(
+    async def explain_file(
         self,
         file_profile: dict,
         repo_root: str,
         repo_name: str,
     ) -> ExplanationResult:
         """
-        Generate an LLM explanation for a single file.
-
-        Args:
-            file_profile:  Dict from classify_files() with path, role, depends_on, etc.
-            repo_root:     Absolute path to the cloned repo.
-            repo_name:     Repository name for context.
-
-        Returns:
-            ExplanationResult with the explanation text.
+        Generate an LLM explanation for a single file (async/non-blocking).
         """
         file_path = file_profile["path"]
 
@@ -143,9 +137,9 @@ class Explainer:
         # Read the source file
         abs_path = os.path.join(repo_root, file_path)
         try:
-            with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read(MAX_EXPLAINABLE_CHARS)
-        except (OSError, IOError) as e:
+        except OSError as e:
             result = ExplanationResult(
                 file_path=file_path,
                 explanation="",
@@ -179,10 +173,11 @@ class Explainer:
             repo_name=repo_name,
         )
 
-        # Call LLM
+        # Call LLM off-loop
         start = time.time()
         try:
-            response = self.provider.complete(
+            response = await run_sync(
+                self.provider.complete,
                 messages=messages,
                 model=self.model,
                 temperature=self.temperature,
@@ -218,7 +213,7 @@ class Explainer:
     # Batch: explain top N files
     # ─────────────────────────────────────────
 
-    def explain_top_files(
+    async def explain_top_files(
         self,
         file_profiles: list[dict],
         repo_root: str,
@@ -227,22 +222,8 @@ class Explainer:
         min_importance: float = 10.0,
     ) -> list[ExplanationResult]:
         """
-        Explain the top N most important files in the repo.
-
-        Files are filtered to source code only and sorted by importance.
-        A small delay is added between requests for rate limiting.
-
-        Args:
-            file_profiles:   List of file profiles from classify_files().
-            repo_root:       Absolute path to the cloned repo.
-            repo_name:       Repository name.
-            top_n:           Max number of files to explain.
-            min_importance:  Minimum importance score to explain.
-
-        Returns:
-            List of ExplanationResult objects.
+        Explain the top N most important files in the repo (async/non-blocking).
         """
-        # Filter to explainable source files above importance threshold
         candidates = []
         for p in file_profiles:
             _, ext = os.path.splitext(p["path"])
@@ -257,9 +238,12 @@ class Explainer:
 
         results = []
         for i, profile in enumerate(candidates):
-            logger.info(f"  [{i+1}/{len(candidates)}] Explaining {profile['path']}...")
-            result = self.explain_file(profile, repo_root, repo_name)
+            logger.info(f"  [{i + 1}/{len(candidates)}] Explaining {profile['path']}...")
+            result = await self.explain_file(profile, repo_root, repo_name)
             results.append(result)
+            # Add small delay to avoid hitting rate limits
+            if i < len(candidates) - 1:
+                await asyncio.sleep(self.rate_limit_delay)
 
         return results
 
@@ -267,7 +251,7 @@ class Explainer:
     # Architecture overview
     # ─────────────────────────────────────────
 
-    def explain_architecture(
+    async def explain_architecture(
         self,
         repo_name: str,
         owner: str,
@@ -281,13 +265,7 @@ class Explainer:
         file_profiles: list[dict],
     ) -> ArchitectureResult:
         """
-        Generate a high-level architecture overview of the entire codebase.
-
-        Uses metadata only (no source code) — roles, dependencies,
-        module structure, and entry points.
-
-        Returns:
-            ArchitectureResult with the overview text.
+        Generate a high-level architecture overview of the entire codebase (async).
         """
         if self._architecture_cache:
             return self._architecture_cache
@@ -307,11 +285,12 @@ class Explainer:
 
         start = time.time()
         try:
-            response = self.provider.complete(
+            response = await run_sync(
+                self.provider.complete,
                 messages=messages,
                 model=self.model,
                 temperature=self.temperature,
-                max_tokens=6000,  # Architecture overviews need more space
+                max_tokens=6000,
             )
             duration_ms = int((time.time() - start) * 1000)
 
@@ -337,33 +316,20 @@ class Explainer:
         self._architecture_cache = result
         return result
 
-    # ─────────────────────────────────────────
-    # Module-level summaries
-    # ─────────────────────────────────────────
-
-    def explain_modules(
+    async def explain_modules(
         self,
         module_graph: dict,
         repo_name: str,
     ) -> dict[str, str]:
         """
-        Generate short summaries for each module/directory.
-
-        Args:
-            module_graph:  Output from build_module_graph().
-            repo_name:     Repository name.
-
-        Returns:
-            Dict mapping module name → summary string.
+        Generate short summaries for each module/directory (async/parallel).
         """
         modules = module_graph.get("modules", [])
         connections = module_graph.get("connections", [])
         summaries = {}
 
-        for mod in modules:
+        async def summarize_one(mod: dict) -> tuple[str, str]:
             mod_name = mod["name"]
-
-            # Find incoming/outgoing connections for this module
             conn_in = [c for c in connections if c["target"] == mod_name]
             conn_out = [c for c in connections if c["source"] == mod_name]
 
@@ -380,25 +346,26 @@ class Explainer:
             )
 
             try:
-                response = self.provider.complete(
+                response = await run_sync(
+                    self.provider.complete,
                     messages=messages,
                     model=self.model,
                     temperature=self.temperature,
-                    max_tokens=1024,  # Short summaries
+                    max_tokens=1024,
                 )
-                summaries[mod_name] = response.content
-
+                return mod_name, response.content
             except Exception as e:
                 logger.error(f"Error summarizing module {mod_name}: {e}")
-                summaries[mod_name] = f"*Error generating summary: {e}*"
+                return mod_name, f"*Error generating summary: {e}*"
 
+        # Generate all module summaries in parallel!
+        tasks = [summarize_one(m) for m in modules]
+        results = await asyncio.gather(*tasks)
 
+        for mod_name, content in results:
+            summaries[mod_name] = content
 
         return summaries
-
-    # ─────────────────────────────────────────
-    # Utilities
-    # ─────────────────────────────────────────
 
     def clear_cache(self):
         """Clear all cached explanations."""

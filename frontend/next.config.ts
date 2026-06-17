@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
       {
         // Catch-all for everything else
         source: "/api/:path*",
-        destination: "http://localhost:8000/api/:path*",
+        destination: `${process.env.BACKEND_URL || "http://localhost:8000"}/api/:path*`,
       },
     ];
   },

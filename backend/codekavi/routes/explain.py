@@ -7,37 +7,43 @@ Endpoints:
     POST /explain/{repo_id}/stream — SSE streaming parallel explanation.
 """
 
-import os
 import json
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+
 # pyrefly: ignore [missing-import]
 from fastapi.responses import StreamingResponse
 
-from codekavi.schemas import ExplainRequest, ExplainFileRequest
-from codekavi.session import active_sessions, active_results, ensure_repo_loaded
-from codekavi.llm import get_provider, Explainer
+from codekavi.auth import verify_supabase_token
+from codekavi.cache import AnalysisCache
+from codekavi.limiter import limiter
 from codekavi.orchestrator import ExplanationOrchestrator
+from codekavi.routes.dependencies import get_cache
+from codekavi.schemas import ExplainFileRequest, ExplainRequest
+from codekavi.session import ensure_repo_loaded
 from codekavi.utils import get_explainer as _get_explainer
+from codekavi.utils import run_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
 @router.post("/explain/{repo_id}")
-async def explain_repo(repo_id: str, body: ExplainRequest):
+@limiter.limit("5/minute")
+async def explain_repo(
+    request: Request,
+    repo_id: str,
+    body: ExplainRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Generate LLM explanations for a previously analyzed repo.
-
-    Returns:
-      - architecture_overview: full architecture narrative
-      - file_explanations: list of top-N file explanations
-      - module_summaries: short summaries per module
-      - stats: token usage, timing, etc.
     """
     try:
-        result, clone_path = ensure_repo_loaded(repo_id)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
 
@@ -56,7 +62,7 @@ async def explain_repo(repo_id: str, body: ExplainRequest):
 
     # 1. Architecture overview
     logger.info(f"Generating architecture overview for {repo_id}...")
-    arch_result = explainer.explain_architecture(
+    arch_result = await explainer.explain_architecture(
         repo_name=repo_name,
         owner=owner,
         total_files=repo_data.get("total_files", len(file_profiles)),
@@ -71,7 +77,7 @@ async def explain_repo(repo_id: str, body: ExplainRequest):
 
     # 2. Top file explanations
     logger.info(f"Explaining top {body.top_n} files for {repo_id}...")
-    file_results = explainer.explain_top_files(
+    file_results = await explainer.explain_top_files(
         file_profiles=file_profiles,
         repo_root=clone_path,
         repo_name=repo_name,
@@ -82,7 +88,7 @@ async def explain_repo(repo_id: str, body: ExplainRequest):
     # 3. Module summaries
     logger.info(f"Generating module summaries for {repo_id}...")
     if isinstance(module_graph, dict) and "modules" in module_graph:
-        module_summaries = explainer.explain_modules(module_graph, repo_name)
+        module_summaries = await explainer.explain_modules(module_graph, repo_name)
     else:
         module_summaries = {}
 
@@ -113,12 +119,19 @@ async def explain_repo(repo_id: str, body: ExplainRequest):
 
 
 @router.post("/explain/file/{repo_id}")
-async def explain_single_file(repo_id: str, body: ExplainFileRequest):
+@limiter.limit("5/minute")
+async def explain_single_file(
+    request: Request,
+    repo_id: str,
+    body: ExplainFileRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Generate an LLM explanation for a single file in a previously analyzed repo.
     """
     try:
-        result, clone_path = ensure_repo_loaded(repo_id)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
 
@@ -140,7 +153,7 @@ async def explain_single_file(repo_id: str, body: ExplainFileRequest):
     explainer = _get_explainer(model=body.model)
     repo_name = os.path.basename(clone_path).rsplit("_", 1)[0]
 
-    file_result = explainer.explain_file(profile, clone_path, repo_name)
+    file_result = await explainer.explain_file(profile, clone_path, repo_name)
 
     return {
         "success": True,
@@ -158,22 +171,21 @@ async def explain_single_file(repo_id: str, body: ExplainFileRequest):
 # SSE Streaming Endpoint (NEW)
 # ─────────────────────────────────────────
 
+
 @router.post("/explain/{repo_id}/stream")
-async def explain_repo_stream(repo_id: str, body: ExplainRequest):
+@limiter.limit("5/minute")
+async def explain_repo_stream(
+    request: Request,
+    repo_id: str,
+    body: ExplainRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
     """
     Stream explanation sections via Server-Sent Events (SSE).
-
-    Each event has a type and JSON data payload:
-      - stats    → instant repo statistics
-      - tree     → directory structure
-      - progress → generation progress
-      - section  → completed explanation section
-      - warning  → failed section
-      - error    → fatal error
-      - done     → stream complete
     """
     try:
-        result, clone_path = ensure_repo_loaded(repo_id)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
 
@@ -181,6 +193,9 @@ async def explain_repo_stream(repo_id: str, body: ExplainRequest):
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
 
     async def event_stream():
+        from codekavi.logging_config import repo_id_ctx
+
+        token = repo_id_ctx.set(repo_id)
         orchestrator = ExplanationOrchestrator(
             repo_path=clone_path,
             tree=result.get("repo_data", {}),
@@ -191,15 +206,24 @@ async def explain_repo_stream(repo_id: str, body: ExplainRequest):
         )
         try:
             async for event in orchestrator.run():
+                if await request.is_disconnected():
+                    logger.info(f"Client disconnected from explain stream for {repo_id}. Aborting orchestrator run.")
+                    break
                 yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
         except Exception as e:
             logger.error(f"SSE stream error for {repo_id}: {e}")
-            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+            message = getattr(e, "message", str(e))
+            yield f"event: error\ndata: {json.dumps({'message': message})}\n\n"
         finally:
+            repo_id_ctx.reset(token)
             yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
