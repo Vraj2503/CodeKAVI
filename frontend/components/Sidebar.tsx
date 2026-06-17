@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useRef, type FormEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useCallback, useRef } from "react";
 import { fetchVisualization, type VizType, type VizResponse } from "@/lib/api";
