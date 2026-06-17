@@ -67,30 +67,34 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
         const storedSessionId = sessionStorage.getItem(`codekavi-session-${repoId}`);
 
         // Try to restore full analysis data from backend cache
-        setIsRestoring(true);
-        restoreRepo(session.repo_id).then((restored) => {
-          if (restored) {
-            // Cache hit — use full analysis data
-            setRepoData(restored);
-            setNeedsReanalysis(false);
-          } else {
-            // Cache miss — use session metadata but flag for re-analysis
+        const restore = async () => {
+          setIsRestoring(true);
+          try {
+            const restored = await restoreRepo(session.repo_id);
+            if (restored) {
+              // Cache hit — use full analysis data
+              setRepoData(restored);
+              setNeedsReanalysis(false);
+            } else {
+              // Cache miss — use session metadata but flag for re-analysis
+              setRepoData(_buildMinimalRepoData(session));
+              setNeedsReanalysis(true);
+              toast.info(
+                "Analysis data has expired. Some features may be limited until you re-analyze.",
+                { duration: 6000 }
+              );
+            }
+            if (storedSessionId) setSessionId(storedSessionId);
+            setIsRestoring(false);
+          } catch {
+            // Network error — degrade gracefully
             setRepoData(_buildMinimalRepoData(session));
             setNeedsReanalysis(true);
-            toast.info(
-              "Analysis data has expired. Some features may be limited until you re-analyze.",
-              { duration: 6000 }
-            );
+            if (storedSessionId) setSessionId(storedSessionId);
+            setIsRestoring(false);
           }
-          if (storedSessionId) setSessionId(storedSessionId);
-          setIsRestoring(false);
-        }).catch(() => {
-          // Network error — degrade gracefully
-          setRepoData(_buildMinimalRepoData(session));
-          setNeedsReanalysis(true);
-          if (storedSessionId) setSessionId(storedSessionId);
-          setIsRestoring(false);
-        });
+        };
+        restore();
 
         return;
       } catch {
@@ -103,6 +107,7 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
       const params = new URLSearchParams(window.location.search);
       if (params.get("dev") === "true") {
         console.log("🚀 Dev mode: loading mock data to bypass analysis");
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setRepoData({
           success: true,
           repo_id: repoId || "dev-mock-repo",
@@ -164,9 +169,10 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
       if (session) {
         setSessionId(session.id);
       }
-    } catch (err: any) {
-      setError(err.message || "Analysis failed");
-      toast.error(err.message || "Analysis failed");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Analysis failed";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsAnalyzing(false);
     }

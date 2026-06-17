@@ -71,8 +71,8 @@ export async function POST(request: NextRequest) {
         "Transfer-Encoding": "chunked",
       },
     });
-  } catch (err: any) {
-    return new Response(JSON.stringify({ detail: err.message || "Analysis failed" }), {
+  } catch (err: unknown) {
+    return new Response(JSON.stringify({ detail: err instanceof Error ? err.message : "Analysis failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });

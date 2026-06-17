@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { DependencyGraph } from "@/components/report/viz/DependencyGraph";
@@ -8,7 +9,7 @@ import { TreemapViz } from "@/components/report/viz/TreemapViz";
 
 interface VizContainerProps {
   visualizationType: string;
-  visualizationData: any;
+  visualizationData: unknown;
 }
 
 const vizTitleMap: Record<string, string> = {

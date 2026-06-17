@@ -23,7 +23,6 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { analyzeRepoStream, type AnalysisProgressEvent, type AnalyzeResponse } from "@/lib/api";
-import { createSession } from "@/lib/sessions";
 
 interface AnalysisProgressProps {
   repoUrl: string;
@@ -55,7 +54,7 @@ export function AnalysisProgress({
   const [message, setMessage] = useState("Preparing analysis…");
   const [error, setError] = useState<string | null>(null);
   const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
-  const [startTime] = useState(Date.now());
+  const [startTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
   // Elapsed timer
@@ -107,9 +106,9 @@ export function AnalysisProgress({
         setTimeout(() => {
           if (!cancelled) onComplete(data);
         }, 800);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (cancelled) return;
-        const msg = err.message || "Analysis failed";
+        const msg = err instanceof Error ? err.message : "Analysis failed";
         setError(msg);
         onError(msg);
       }
@@ -210,7 +209,6 @@ export function AnalysisProgress({
             {STAGES.map((stage, i) => {
               const isCompleted = completedStages.has(stage.key);
               const isCurrent = currentStage === stage.key && !error;
-              const isPending = !isCompleted && !isCurrent;
               const Icon = stage.icon;
 
               return (

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useState, useCallback, useRef } from "react";
@@ -52,14 +53,14 @@ export function useExplanation(repoId: string) {
           });
           return next;
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         setCache((prev) => {
           const next = new Map(prev);
           next.set(vizType, {
             status: "error",
             explanation: null,
             tokensUsed: 0,
-            error: err.message || "Failed to generate explanation",
+            error: (err as any).message || "Failed to generate explanation",
           });
           return next;
         });

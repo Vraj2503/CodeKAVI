@@ -17,7 +17,6 @@ export default function VisualizePage() {
   return (
     <VisualizationPanel
       repoId={repoData.repo_id}
-      repoName={`${repoData.owner}/${repoData.repo_name}`}
     />
   );
 }

@@ -1,14 +1,16 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 /**
- * RadialMindmap — Interactive collapsible radial tree.
+ * RadialMindmap — Horizontal tree mind map (left-to-right).
  *
- * Redesigned for interactivity:
- * - Starts with only root + first-level children visible
- * - Click a node to expand/collapse its children with smooth animation
- * - Visual indicators for collapsed nodes (+ badge with child count)
- * - Generous spacing to prevent label overlap
- * - Tooltip on hover with full label and child count
+ * Redesigned to match a classic mind map layout:
+ * - Root node on the left, branches flow to the right
+ * - Rounded rectangle nodes with depth-based coloring
+ * - Smooth curved Bézier connectors
+ * - Small chevron indicators on expandable nodes
+ * - Click to expand/collapse subtrees
+ * - Auto-fit to fill the viewport
  */
 
 import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback } from "react";
@@ -25,10 +27,18 @@ interface RadialMindmapProps {
   root: MindmapNode;
 }
 
-const depthColors = ["#58a6ff", "#4ecdc4", "#a78bfa", "#f0883e", "#ec4899"];
+// Depth-based color palette — muted, professional
+const depthStyles = [
+  { bg: "#1e293b", border: "#64748b", text: "#e2e8f0" },   // root — slate
+  { bg: "#1a2332", border: "#4ecdc4", text: "#a8e6cf" },   // depth 1 — teal
+  { bg: "#1f1a2e", border: "#a78bfa", text: "#c4b5fd" },   // depth 2 — purple
+  { bg: "#1a2a1e", border: "#4ade80", text: "#86efac" },   // depth 3 — green
+  { bg: "#2a1f1a", border: "#f0883e", text: "#fdba74" },   // depth 4 — orange
+  { bg: "#2a1a2a", border: "#ec4899", text: "#f9a8d4" },   // depth 5 — pink
+];
 
-function getDepthColor(depth: number): string {
-  return depthColors[Math.min(depth, depthColors.length - 1)];
+function getStyle(depth: number) {
+  return depthStyles[Math.min(depth, depthStyles.length - 1)];
 }
 
 function getLabel(d: MindmapNode): string {
@@ -49,38 +59,51 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
     useImperativeHandle(ref, () => containerRef.current!);
 
-    // Memoize the update function so it's stable across renders
     const renderTree = useCallback(() => {
       if (!svgRef.current || !containerRef.current || !root) return;
 
-      const containerWidth = containerRef.current.clientWidth || 700;
-      const size = Math.max(containerWidth, 500);
+      const width = containerRef.current.clientWidth || 900;
+      const height = containerRef.current.clientHeight || 500;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
-      svg.attr("width", size).attr("height", size);
+      svg.attr("width", width).attr("height", height);
 
       const tooltip = d3.select(tooltipRef.current);
 
-      // Build hierarchy FIRST so we can use its depth for radius
+      // Build hierarchy
       const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
-
-      // Scale radius based on hierarchy depth — smaller data = smaller radius
       const treeDepth = hierarchy.height || 1;
-      const baseRadius = size / 2 - 120;
-      const radius = Math.max(baseRadius, treeDepth * 100);
 
-      // The main group starts centered; zoom will manage transforms
-      const g = svg
-        .append("g")
-        .attr("transform", `translate(${size / 2},${size / 2})`);
+      // Node sizing
+      const nodeH = 30;
+      const nodeVGap = 8;
+      const rowH = nodeH + nodeVGap;
 
-      // Collapse all children beyond depth 1 initially (user can expand)
+      // Calculate horizontal spacing based on tree depth and width
+      const marginLeft = 40;
+      const marginRight = 80;
+      const availableWidth = width - marginLeft - marginRight;
+      const colSpacing = Math.max(180, availableWidth / Math.max(treeDepth, 1));
+
+      const g = svg.append("g");
+
+      // Separate groups for links and nodes to control z-index (nodes on top)
+      let linksG = g.select<SVGGElement>("g.links-group");
+      if (linksG.empty()) {
+        linksG = g.append("g").attr("class", "links-group");
+      }
+      let nodesG = g.select<SVGGElement>("g.nodes-group");
+      if (nodesG.empty()) {
+        nodesG = g.append("g").attr("class", "nodes-group");
+      }
+
+      // Collapse all children beyond depth 1 initially
       function collapse(node: TreeNode) {
         if (node.children) {
           if (node.depth >= 1) {
             node._children = node.children as TreeNode[];
-            node.children = null as any;
+            node.children = undefined;
           } else {
             node.children.forEach((child) => collapse(child as TreeNode));
           }
@@ -88,206 +111,213 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       }
       collapse(hierarchy);
 
-      // Store initial position at center
-      hierarchy.x0 = 0;
+      // Store initial position
+      hierarchy.x0 = height / 2;
       hierarchy.y0 = 0;
 
-      // Tree layout — generous separation to avoid overlaps
+      // Tree layout — horizontal (swap x/y: d3 tree uses x=vertical, y=horizontal)
       const treeLayout = d3
         .tree<MindmapNode>()
-        .size([2 * Math.PI, radius])
-        .separation((a, b) => (a.parent === b.parent ? 2 : 3) / Math.max(a.depth, 1));
+        .nodeSize([rowH, colSpacing])
+        .separation((a, b) => (a.parent === b.parent ? 1 : 1.3));
 
-      // Radial link generator
-      const linkGen = d3
-        .linkRadial<any, any>()
-        .angle((d: any) => d.x)
-        .radius((d: any) => d.y);
+      // Horizontal link generator — smooth cubic Bézier flowing left-to-right
+      function linkPath(d: unknown): string {
+        const sy = (d as any).source.x;
+        const sx = (d as any).source.y;
+        const ty = (d as any).target.x;
+        const tx = (d as any).target.y;
+        // cubic Bézier with control points at midpoint X
+        const midX = (sx + tx) / 2;
+        return `M${sx},${sy} C${midX},${sy} ${midX},${ty} ${tx},${ty}`;
+      }
 
-      // ── The core update function ──
+      // Measure text width helper
+      function measureText(text: string, fontSize: number): number {
+        return text.length * fontSize * 0.55 + 24; // approximate
+      }
+
+      // ── Core update function ──
       function update(source: TreeNode) {
         const treeData = treeLayout(hierarchy);
         const nodesData = treeData.descendants() as TreeNode[];
         const linksData = treeData.links();
 
-        const duration = 500;
+        const duration = 400;
+
+        // Assign y (horizontal position) based on depth for consistent spacing
+        nodesData.forEach((d) => {
+          d.y = d.depth * colSpacing;
+        });
 
         // ── Links ──
-        const linkSel = g
-          .selectAll<SVGPathElement, d3.HierarchyPointLink<MindmapNode>>("path.mindmap-link")
-          .data(linksData, (d: any) => d.target.data.id || d.target.data.name || d.target.data.label || "");
+        const linkSel = linksG
+          .selectAll<SVGPathElement, d3.HierarchyPointLink<MindmapNode>>("path.mm-link")
+          .data(linksData, (d: any) =>
+            d.target.data.id || d.target.data.name || d.target.data.label || ""
+          );
 
-        // Enter
         const linkEnter = linkSel
           .enter()
           .append("path")
-          .attr("class", "mindmap-link")
+          .attr("class", "mm-link")
           .attr("fill", "none")
           .attr("stroke", "#30363d")
           .attr("stroke-width", 1.5)
-          .attr("stroke-opacity", 0.6)
+          .attr("stroke-opacity", 0.5)
           .attr("d", () => {
             const o = { x: source.x0 || 0, y: source.y0 || 0 };
-            return linkGen({ source: o, target: o });
+            return linkPath({ source: o, target: o });
           });
 
-        // Update + merge
         linkEnter
           .merge(linkSel)
           .transition()
           .duration(duration)
-          .attr("d", (d: any) => linkGen(d))
-          .attr("stroke-opacity", 0.6);
+          .attr("d", (d: any) => linkPath(d))
+          .attr("stroke-opacity", 0.5);
 
-        // Exit
         linkSel
           .exit()
           .transition()
           .duration(duration)
           .attr("d", () => {
             const o = { x: source.x || 0, y: source.y || 0 };
-            return linkGen({ source: o, target: o });
+            return linkPath({ source: o, target: o });
           })
           .attr("stroke-opacity", 0)
           .remove();
 
         // ── Nodes ──
-        const nodeSel = g
-          .selectAll<SVGGElement, TreeNode>("g.mindmap-node")
-          .data(nodesData, (d: any) => d.data.id || d.data.name || d.data.label || "");
+        const nodeSel = nodesG
+          .selectAll<SVGGElement, TreeNode>("g.mm-node")
+          .data(nodesData, (d: any) =>
+            d.data.id || d.data.name || d.data.label || ""
+          );
 
-        // Enter
         const nodeEnter = nodeSel
           .enter()
           .append("g")
-          .attr("class", "mindmap-node")
-          .attr("transform", () => {
-            const angle = ((source.x0 || 0) * 180) / Math.PI - 90;
-            return `rotate(${angle}) translate(${source.y0 || 0},0)`;
-          })
+          .attr("class", "mm-node")
+          .attr("transform", () =>
+            `translate(${source.y0 || 0},${source.x0 || 0})`
+          )
           .style("cursor", "pointer")
           .style("opacity", 0);
 
-        // Node circle
+        // Rounded rectangle background
         nodeEnter
-          .append("circle")
-          .attr("r", 0)
-          .attr("fill", (d) => getDepthColor(d.depth))
-          .attr("stroke", "#0d1117")
-          .attr("stroke-width", 2);
+          .append("rect")
+          .attr("class", "node-rect")
+          .attr("height", nodeH)
+          .attr("rx", 8)
+          .attr("ry", 8)
+          .attr("y", -nodeH / 2);
 
-        // Collapse indicator badge (child count)
-        nodeEnter
-          .append("circle")
-          .attr("class", "collapse-badge")
-          .attr("r", 0)
-          .attr("cx", 0)
-          .attr("cy", -14)
-          .attr("fill", "#1f2937")
-          .attr("stroke", "#4b5563")
-          .attr("stroke-width", 1);
-
-        nodeEnter
-          .append("text")
-          .attr("class", "collapse-text")
-          .attr("x", 0)
-          .attr("y", -14)
-          .attr("text-anchor", "middle")
-          .attr("dy", "0.35em")
-          .attr("fill", "#9ca3af")
-          .attr("font-size", 8)
-          .attr("font-weight", 600)
-          .attr("pointer-events", "none");
-
-        // Node label
+        // Label text
         nodeEnter
           .append("text")
           .attr("class", "node-label")
-          .attr("dy", "0.31em")
-          .attr("fill", "#c9d1d9")
+          .attr("dy", "0.35em")
           .attr("font-size", 12)
           .attr("pointer-events", "none");
 
-        // Merge enter + update
+        // Chevron indicator for expandable nodes (▸)
+        nodeEnter
+          .append("text")
+          .attr("class", "node-chevron")
+          .attr("dy", "0.35em")
+          .attr("font-size", 10)
+          .attr("fill", "#6b7280")
+          .attr("pointer-events", "none");
+
+        // Merge
         const nodeUpdate = nodeEnter.merge(nodeSel);
 
-        // Transition position
+        // Transition to new position (d.y = horizontal, d.x = vertical)
         nodeUpdate
           .transition()
           .duration(duration)
-          .attr("transform", (d) => {
-            const angle = (d.x * 180) / Math.PI - 90;
-            return `rotate(${angle}) translate(${d.y},0)`;
-          })
+          .attr("transform", (d) => `translate(${d.y},${d.x})`)
           .style("opacity", 1);
 
-        // Update circles
-        nodeUpdate
-          .select<SVGCircleElement>("circle:first-of-type")
-          .transition()
-          .duration(duration)
-          .attr("r", (d) => {
-            if (d.depth === 0) return 10;
-            if ((d as TreeNode)._children) return 7;
-            return 5;
-          })
-          .attr("fill", (d) => getDepthColor(d.depth));
-
-        // Update collapse badge
+        // Update rectangles
         nodeUpdate.each(function (d) {
-          const g = d3.select(this);
-          const hasCollapsed = !!(d as TreeNode)._children;
-          const collapsedCount = hasCollapsed ? (d as TreeNode)._children!.length : 0;
+          const style = getStyle(d.depth);
+          const label = getLabel(d.data);
+          const truncLabel = label.length > 28 ? label.slice(0, 28) + "…" : label;
+          const textW = measureText(truncLabel, 12);
+          const rectW = Math.max(textW, 60);
+          const hasChildren = !!(d.children || (d as TreeNode)._children);
 
-          g.select(".collapse-badge")
-            .transition()
-            .duration(duration)
-            .attr("r", hasCollapsed ? 7 : 0);
+          const sel = d3.select(this);
 
-          g.select(".collapse-text")
-            .text(hasCollapsed ? `+${collapsedCount}` : "");
+          // Rectangle
+          sel
+            .select<SVGRectElement>(".node-rect")
+            .attr("width", rectW)
+            .attr("x", -10)
+            .attr("fill", style.bg)
+            .attr("stroke", style.border)
+            .attr("stroke-width", d.depth === 0 ? 2 : 1.5)
+            .attr("fill-opacity", 0.9);
+
+          // Label
+          sel
+            .select<SVGTextElement>(".node-label")
+            .attr("x", rectW / 2 - 10 + (hasChildren ? -6 : 0))
+            .attr("text-anchor", "middle")
+            .attr("fill", style.text)
+            .attr("font-weight", d.depth === 0 ? 600 : 400)
+            .text(truncLabel);
+
+          // Chevron (▸ if collapsed, ▾ if expanded, nothing if leaf)
+          sel
+            .select<SVGTextElement>(".node-chevron")
+            .attr("x", rectW - 16)
+            .attr("text-anchor", "middle")
+            .text(() => {
+              if (!hasChildren) return "";
+              return (d as TreeNode)._children ? "▸" : "▾";
+            })
+            .attr("fill", style.border);
         });
-
-        // Update labels
-        nodeUpdate.select<SVGTextElement>(".node-label")
-          .attr("x", (d) => (d.x < Math.PI === !d.children && !(d as TreeNode)._children ? 14 : -14))
-          .attr("text-anchor", (d) =>
-            d.x < Math.PI === !d.children && !(d as TreeNode)._children ? "start" : "end"
-          )
-          .attr("transform", (d) => (d.x >= Math.PI ? "rotate(180)" : null))
-          .text((d) => {
-            const label = getLabel(d.data);
-            return label.length > 22 ? label.slice(0, 22) + "…" : label;
-          });
 
         // Click handler — toggle expand/collapse
         nodeUpdate.on("click", function (event, d) {
           event.stopPropagation();
           const node = d as TreeNode;
           if (node.children) {
-            // Collapse
             node._children = node.children as TreeNode[];
-            node.children = null as any;
+            node.children = undefined;
           } else if (node._children) {
-            // Expand
-            node.children = node._children as any;
-            node._children = null;
+            node.children = node._children as TreeNode[];
+            node._children = undefined;
           }
           update(node);
         });
 
-        // Hover tooltip
+        // Hover
         nodeUpdate
           .on("mouseenter", function (event, d) {
             const label = getLabel(d.data);
-            const childCount = d.children?.length || (d as TreeNode)._children?.length || 0;
+            const childCount =
+              d.children?.length || (d as TreeNode)._children?.length || 0;
+            d3.select(this)
+              .select(".node-rect")
+              .transition()
+              .duration(100)
+              .attr("stroke-width", 2.5)
+              .attr("fill-opacity", 1);
             tooltip
               .style("display", "block")
               .style("left", `${event.offsetX + 15}px`)
               .style("top", `${event.offsetY - 10}px`)
               .html(
                 `<strong>${label}</strong>` +
-                (childCount > 0 ? `<br/><span style="color:#9ca3af">${childCount} children</span>` : "")
+                  (childCount > 0
+                    ? `<br/><span style="color:#9ca3af">${childCount} children</span>`
+                    : "")
               );
           })
           .on("mousemove", function (event) {
@@ -295,7 +325,14 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
               .style("left", `${event.offsetX + 15}px`)
               .style("top", `${event.offsetY - 10}px`);
           })
-          .on("mouseleave", function () {
+          .on("mouseleave", function (d) {
+            const depth = (d as any).depth ?? 0;
+            d3.select(this)
+              .select(".node-rect")
+              .transition()
+              .duration(100)
+              .attr("stroke-width", depth === 0 ? 2 : 1.5)
+              .attr("fill-opacity", 0.9);
             tooltip.style("display", "none");
           });
 
@@ -304,10 +341,9 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           .exit()
           .transition()
           .duration(duration)
-          .attr("transform", () => {
-            const angle = ((source.x || 0) * 180) / Math.PI - 90;
-            return `rotate(${angle}) translate(${source.y || 0},0)`;
-          })
+          .attr("transform", () =>
+            `translate(${source.y || 0},${source.x || 0})`
+          )
           .style("opacity", 0)
           .remove();
 
@@ -316,63 +352,74 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           (d as TreeNode).x0 = d.x;
           (d as TreeNode).y0 = d.y;
         });
+
+        // Auto-fit to viewport after a short delay to allow transition to start
+        setTimeout(() => {
+          fitToScreen(hierarchy);
+        }, 50);
       }
 
-      // Initial render
-      update(hierarchy);
-
-      // Zoom + pan — use raw d3 transform (initial centering via zoomIdentity)
+      // Zoom + pan
       const zoom = d3
         .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.3, 3])
+        .scaleExtent([0.2, 3])
         .on("zoom", (event) => {
           g.attr("transform", event.transform.toString());
         });
       svg.call(zoom);
 
-      // Set initial transform to center the tree, then auto-fit
-      const initialTransform = d3.zoomIdentity.translate(size / 2, size / 2);
-      svg.call(zoom.transform as any, initialTransform);
+      // Function to auto-fit the mind map to the container
+      function fitToScreen(rootNode: TreeNode) {
+        const allNodes = rootNode.descendants();
+        if (allNodes.length <= 1) {
+          // Single node — just center it
+          svg.transition().duration(500).call(
+            zoom.transform as any,
+            d3.zoomIdentity.translate(width / 2, height / 2)
+          );
+          return;
+        }
 
-      // Auto-fit: compute bounds of visible nodes and zoom to fit them
-      setTimeout(() => {
-        const allNodes = hierarchy.descendants();
-        if (allNodes.length <= 1) return;
-
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        let minX = Infinity,
+          maxX = -Infinity,
+          minY = Infinity,
+          maxY = -Infinity;
         allNodes.forEach((d: any) => {
-          if (d.x !== undefined && d.y !== undefined) {
-            const angle = d.x - Math.PI / 2;
-            const px = d.y * Math.cos(angle);
-            const py = d.y * Math.sin(angle);
-            minX = Math.min(minX, px);
-            maxX = Math.max(maxX, px);
-            minY = Math.min(minY, py);
-            maxY = Math.max(maxY, py);
-          }
+          // d.y = horizontal pos, d.x = vertical pos (d3 tree convention)
+          const label = getLabel(d.data);
+          const nodeW = measureText(
+            label.length > 28 ? label.slice(0, 28) + "…" : label,
+            12
+          );
+          minX = Math.min(minX, d.y - 10);
+          maxX = Math.max(maxX, d.y + nodeW + 10);
+          minY = Math.min(minY, d.x - nodeH / 2);
+          maxY = Math.max(maxY, d.x + nodeH / 2);
         });
 
         const contentW = maxX - minX || 1;
         const contentH = maxY - minY || 1;
-        const padding = 100;
-        const scaleX = (size - padding * 2) / contentW;
-        const scaleY = (size - padding * 2) / contentH;
-        const fitScale = Math.min(scaleX, scaleY, 2.0);
+        const padX = 60;
+        const padY = 60;
+        const scaleX = (width - padX * 2) / contentW;
+        const scaleY = (height - padY * 2) / contentH;
+        const fitScale = Math.min(scaleX, scaleY, 1.5);
 
-        // Center of content in radial coordinates
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
 
-        // Apply fit transform: translate to center the content, then scale
         const fitTransform = d3.zoomIdentity
-          .translate(size / 2 - cx * fitScale, size / 2 - cy * fitScale)
+          .translate(width / 2 - cx * fitScale, height / 2 - cy * fitScale)
           .scale(fitScale);
 
-        svg.transition().duration(600).call(
-          zoom.transform as any,
-          fitTransform
-        );
-      }, 150);
+        svg
+          .transition()
+          .duration(500)
+          .call(zoom.transform as any, fitTransform);
+      }
+
+      // Initial render
+      update(hierarchy);
 
       return () => {
         svg.selectAll("*").remove();
@@ -383,23 +430,11 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       renderTree();
     }, [renderTree]);
 
-    // Re-render on container resize (e.g. sidebar toggle)
-    useEffect(() => {
-      if (!containerRef.current) return;
-      let resizeTimer: NodeJS.Timeout;
-      const observer = new ResizeObserver(() => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-          renderTree();
-        }, 200);
-      });
-      observer.observe(containerRef.current);
-      return () => { observer.disconnect(); clearTimeout(resizeTimer); };
-    }, [renderTree]);
+
 
     return (
-      <div ref={containerRef} className="w-full overflow-hidden flex justify-center relative">
-        <svg ref={svgRef} style={{ minHeight: 500 }} />
+      <div ref={containerRef} className="w-full h-full overflow-hidden relative">
+        <svg ref={svgRef} className="w-full h-full" />
         <div
           ref={tooltipRef}
           style={{ display: "none" }}

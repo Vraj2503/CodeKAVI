@@ -61,7 +61,6 @@ function parseLines(code: string, fallbackStart: number): ParsedLine[] {
 
 export function CodeBlockWithFile({
   code,
-  language,
   filePath,
   lineRange,
 }: CodeBlockWithFileProps) {

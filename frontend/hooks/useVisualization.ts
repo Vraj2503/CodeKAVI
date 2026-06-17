@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useCallback, useRef } from "react";
 import { fetchVisualization, type VizType, type VizResponse } from "@/lib/api";
@@ -57,15 +58,15 @@ export function useVisualization(repoId: string) {
           next.set(type, { status: "success", data, error: null });
           return next;
         });
-      } catch (err: any) {
-        if (err.name === "AbortError") return;
+      } catch (err: unknown) {
+        if ((err as any).name === "AbortError") return;
 
         setCache((prev) => {
           const next = new Map(prev);
           next.set(type, {
             status: "error",
             data: null,
-            error: err.message || "Failed to generate visualization",
+            error: (err as any).message || "Failed to load visualization",
           });
           return next;
         });

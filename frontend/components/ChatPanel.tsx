@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SendHorizontal, Sparkles, FileCode2, Bot, User } from "lucide-react";
+import { SendHorizontal, Sparkles, FileCode2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "./ui/ScrollArea";
@@ -97,13 +97,13 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
-  const welcomeMsg: ChatMessage = {
+  const getWelcomeMsg = (): ChatMessage => ({
     role: "assistant",
     content: `Hey! I've analyzed **${repoData.owner}/${repoData.repo_name}** and indexed ${repoData.total_files} source files. Ask me anything about how this codebase works — I'll answer with references to the actual source code.`,
     timestamp: Date.now(),
-  };
+  });
 
-  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => [getWelcomeMsg()]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [latestSources, setLatestSources] = useState<ChatSource[]>([]);
@@ -115,16 +115,23 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
   useEffect(() => {
     if (!sessionId || sessionId === "dev-session") return;
 
-    setIsLoadingHistory(true);
-    getMessages(sessionId).then((persisted) => {
+    let ignore = false;
+    const loadHistory = async () => {
+      setIsLoadingHistory(true);
+      const persisted = await getMessages(sessionId);
+      if (ignore) return;
       if (persisted.length > 0) {
-        setMessages([welcomeMsg, ...persisted]);
+        setMessages([getWelcomeMsg(), ...persisted]);
       } else {
-        // No history — show welcome message but don't save it to the DB
-        setMessages([welcomeMsg]);
+        setMessages([getWelcomeMsg()]);
       }
       setIsLoadingHistory(false);
-    });
+    };
+    
+    loadHistory();
+    return () => {
+      ignore = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -186,10 +193,10 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
           saveMessage(sessionId, errorMsg);
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       const errorMsg: ChatMessage = {
         role: "assistant",
-        content: `⚠️ ${err.message || "Something went wrong"}`,
+        content: `⚠️ ${err instanceof Error ? err.message : "Something went wrong"}`,
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errorMsg]);
