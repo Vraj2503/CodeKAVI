@@ -78,19 +78,19 @@ export function TreemapViz({ data }: TreemapVizProps) {
       .attr("class", "viz-node")
       .attr(
         "transform",
-        (d: any) => `translate(${d.x0},${d.y0})`
+        (d: unknown) => `translate(${d.x0},${d.y0})`
       );
 
     // Rect
     cell
       .append("rect")
-      .attr("width", (d: any) => Math.max(0, d.x1 - d.x0))
-      .attr("height", (d: any) => Math.max(0, d.y1 - d.y0))
+      .attr("width", (d: unknown) => Math.max(0, d.x1 - d.x0))
+      .attr("height", (d: unknown) => Math.max(0, d.y1 - d.y0))
       .attr("fill", (d) => colorScale(d.value || 0))
       .attr("stroke", "#30363d")
       .attr("stroke-width", 1)
       .attr("rx", 2)
-      .on("mouseenter", function (event, d: any) {
+      .on("mouseenter", function (event, d: unknown) {
         d3.select(this).style("filter", "brightness(1.3)");
         tooltip
           .style("display", "block")
@@ -112,14 +112,14 @@ export function TreemapViz({ data }: TreemapVizProps) {
 
     // Name labels (only if cell is large enough)
     cell
-      .filter((d: any) => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 20)
+      .filter((d: unknown) => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 20)
       .append("text")
       .attr("x", 4)
       .attr("y", 14)
       .attr("fill", "#e6edf3")
       .attr("font-size", 11)
       .attr("pointer-events", "none")
-      .each(function (d: any) {
+      .each(function (d: unknown) {
         const cellWidth = d.x1 - d.x0 - 8;
         const text = d3.select(this);
         text.text(d.data.name);
@@ -134,7 +134,7 @@ export function TreemapViz({ data }: TreemapVizProps) {
 
     // Value labels
     cell
-      .filter((d: any) => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 34)
+      .filter((d: unknown) => (d.x1 - d.x0) > 40 && (d.y1 - d.y0) > 34)
       .append("text")
       .attr("x", 4)
       .attr("y", 26)

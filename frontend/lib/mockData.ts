@@ -17,7 +17,7 @@ export function mockVizResponse(type: string) {
           label: `Module${i}.ts`,
           type: i % 5 === 0 ? "component" : i % 3 === 0 ? "service" : "file",
         })),
-        edges: Array.from({ length: 45 }, (_, i) => ({
+        edges: Array.from({ length: 45 }, () => ({
           source: `node_${Math.floor(Math.random() * 10)}`, // hubs
           target: `node_${Math.floor(Math.random() * 20) + 10}`,
         })).concat([

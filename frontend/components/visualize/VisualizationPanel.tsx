@@ -16,14 +16,13 @@ import type { VizType } from "@/lib/api";
 
 interface VisualizationPanelProps {
   repoId: string;
-  repoName?: string;
 }
 
 export type VizConfigItem = {
   type: VizType;
   label: string;
   description: string;
-  icon: any;
+  icon: unknown;
 };
 
 export const VIZ_CONFIG: VizConfigItem[] = [
@@ -34,7 +33,7 @@ export const VIZ_CONFIG: VizConfigItem[] = [
   { type: "mindmap", label: "Mind Map", description: "Radial mind map of the codebase structure, categories, and patterns.", icon: Brain },
 ];
 
-export function VisualizationPanel({ repoId, repoName }: VisualizationPanelProps) {
+export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   const searchParams = useSearchParams();
   const activeViz = (searchParams.get("type") as VizType) || "dependencies";
   

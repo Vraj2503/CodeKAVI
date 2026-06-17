@@ -3,20 +3,13 @@
 import { Sidebar } from "@/components/Sidebar";
 import { RepoProvider, useRepo } from "@/components/RepoProvider";
 import { TopNav } from "@/components/TopNav";
-import { Toaster } from "sonner";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 
 function RepoLayoutInner({ children }: { children: React.ReactNode }) {
-  const { repoData, isAnalyzing, error, handleAnalyze, handleBackToDashboard } =
+  const { repoData, isAnalyzing, error, handleAnalyze } =
     useRepo();
   const params = useParams();
-  const router = useRouter();
   const repoId = params.repoId as string;
-
-  const handleBack = () => {
-    handleBackToDashboard();
-    router.push("/");
-  };
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-background">
@@ -28,7 +21,6 @@ function RepoLayoutInner({ children }: { children: React.ReactNode }) {
           isAnalyzing={isAnalyzing}
           onAnalyze={handleAnalyze}
           error={error}
-          onBack={handleBack}
         />
         <main className="flex-1 flex flex-col min-h-0 overflow-hidden bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl">
           {children}

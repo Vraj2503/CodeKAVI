@@ -87,7 +87,7 @@ export function DownloadMenu({
         await exportAsPng(containerRef.current, `${filename}.png`);
         toast.success("PNG downloaded");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.error(err.message || `Failed to export as ${format.toUpperCase()}`);
     } finally {
       setExporting(false);

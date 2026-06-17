@@ -382,7 +382,7 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
       const fitX = (width - contentW * fitScale) / 2;
       const fitY = (viewportH - contentH * fitScale) / 2;
       svg.call(
-        zoom.transform as any,
+        zoom.transform as unknown,
         d3.zoomIdentity.translate(fitX, fitY).scale(fitScale)
       );
 

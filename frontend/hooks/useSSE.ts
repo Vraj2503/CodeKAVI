@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
 interface SSECallbacks {
-  onStats?: (data: any) => void;
-  onTree?: (data: any) => void;
-  onSection?: (data: any) => void;
+  onStats?: (data: unknown) => void;
+  onTree?: (data: unknown) => void;
+  onSection?: (data: unknown) => void;
   onProgress?: (data: {
     phase: string;
     progress: number;
@@ -25,7 +25,11 @@ export function useSSE(callbacks: SSECallbacks) {
 
   // Store callbacks in a ref to avoid stale closures
   const callbacksRef = useRef(callbacks);
-  callbacksRef.current = callbacks;
+  
+  // Update ref in an effect to avoid mutating during render
+  useEffect(() => {
+    callbacksRef.current = callbacks;
+  }, [callbacks]);
 
   // AbortController ref for cancellation
   const abortRef = useRef<AbortController | null>(null);
@@ -78,7 +82,7 @@ export function useSSE(callbacks: SSECallbacks) {
           step++;
         }, 1000);
 
-        abortRef.current = { abort: () => clearInterval(interval) } as any;
+        abortRef.current = { abort: () => clearInterval(interval) } as unknown as AbortController;
         return;
       }
 
@@ -157,7 +161,7 @@ export function useSSE(callbacks: SSECallbacks) {
 
             if (!eventType || !eventData) continue;
 
-            let parsed: any;
+            let parsed: unknown;
             try {
               parsed = JSON.parse(eventData);
             } catch {
@@ -201,14 +205,14 @@ export function useSSE(callbacks: SSECallbacks) {
 
         // Stream ended naturally
         setIsStreaming(false);
-      } catch (err: any) {
-        if (err.name === "AbortError") {
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") {
           // User cancelled — don't treat as error
           setIsStreaming(false);
           return;
         }
         callbacksRef.current.onError?.({
-          message: err.message || "Stream connection failed",
+          message: err instanceof Error ? err.message : "Stream connection failed",
         });
         setIsStreaming(false);
       }

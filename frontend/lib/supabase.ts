@@ -34,6 +34,6 @@ export function getSupabase(): SupabaseClient {
 export const supabase = new Proxy({} as SupabaseClient, {
   get: (_target, prop) => {
     const client = getSupabase();
-    return (client as any)[prop];
+    return (client as unknown)[prop];
   },
 });

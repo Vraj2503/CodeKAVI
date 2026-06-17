@@ -22,7 +22,7 @@ import { Button } from "./ui/NeonButton";
 import ThemeSwitch from "./ui/theme-switch";
 import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
-import { analyzeRepo, type AnalyzeResponse } from "@/lib/api";
+import { type AnalyzeResponse } from "@/lib/api";
 import { createSession, getSessions, type Session } from "@/lib/sessions";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
@@ -32,7 +32,7 @@ export function WelcomeScreen() {
   const { user, loading: authLoading, signOut } = useAuth();
   const [url, setUrl] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [showNewChat, setShowNewChat] = useState(false);
@@ -95,8 +95,8 @@ export function WelcomeScreen() {
 
       // Navigate to the chat page for this repo
       router.push(`/repo/${data.repo_id}/chat`);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to create session");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to create session");
       setShowProgress(false);
     }
   };
@@ -122,8 +122,9 @@ export function WelcomeScreen() {
   };
 
   // Format relative time
+  const [now] = useState(() => Date.now());
   const timeAgo = (dateStr: string) => {
-    const diff = Date.now() - new Date(dateStr).getTime();
+    const diff = now - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "Just now";
     if (mins < 60) return `${mins}m ago`;
@@ -174,12 +175,15 @@ export function WelcomeScreen() {
       {/* Top bar — user info + theme toggle */}
       <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
         {user.user_metadata?.avatar_url && (
-          <img
-            src={user.user_metadata.avatar_url}
-            alt={user.user_metadata.full_name || "Avatar"}
-            className="w-8 h-8 rounded-full border border-border/50"
-            referrerPolicy="no-referrer"
-          />
+          <>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={user.user_metadata.avatar_url}
+              alt={user.user_metadata.full_name || "Avatar"}
+              className="w-8 h-8 rounded-full border border-border/50"
+              referrerPolicy="no-referrer"
+            />
+          </>
         )}
         <button
           onClick={handleSignOut}
@@ -406,15 +410,6 @@ export function WelcomeScreen() {
                   )}
                 </Button>
 
-                {error && (
-                  <motion.p
-                    initial={{ opacity: 0, y: -5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-sm text-destructive text-center bg-destructive/10 py-2 rounded-lg border border-destructive/20"
-                  >
-                    {error}
-                  </motion.p>
-                )}
               </form>
             </motion.div>
           </motion.div>

@@ -6,12 +6,10 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { VIZ_CONFIG } from "@/components/visualize/VisualizationPanel";
 import {
-  BookOpen,
+  Search,
+  MessageSquare,
   GitBranch,
   Loader2,
-  Search,
-  ArrowLeft,
-  MessageSquare,
   FileText,
   BarChart3,
   PanelLeftClose,
@@ -30,7 +28,6 @@ interface SidebarProps {
   isAnalyzing: boolean;
   onAnalyze: (url: string) => void;
   error: string | null;
-  onBack?: () => void;
 }
 
 export function Sidebar({
@@ -39,7 +36,6 @@ export function Sidebar({
   isAnalyzing,
   onAnalyze,
   error,
-  onBack,
 }: SidebarProps) {
   const [url, setUrl] = useState("");
   const [isCollapsed, setIsCollapsed] = useState(false);

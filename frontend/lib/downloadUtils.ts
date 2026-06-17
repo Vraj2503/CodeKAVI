@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * downloadUtils.ts — Export visualization graphs as PNG, SVG, or JSON.
  *

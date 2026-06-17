@@ -268,7 +268,7 @@ export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphPro
       const fitY = (height - bboxH * fitScale) / 2 - bboxY * fitScale;
 
       svg.call(
-        zoom.transform as any,
+        zoom.transform as unknown,
         d3.zoomIdentity.translate(fitX, fitY).scale(fitScale)
       );
 

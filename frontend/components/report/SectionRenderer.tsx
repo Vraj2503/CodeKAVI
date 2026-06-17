@@ -16,7 +16,7 @@ export interface SectionData {
   content: string;
   code_snippets?: CodeSnippet[];
   visualization_type?: string;
-  visualization_data?: any;
+  visualization_data?: unknown;
 }
 
 interface SectionRendererProps {

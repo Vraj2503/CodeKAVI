@@ -8,7 +8,7 @@ import { TreemapViz } from "@/components/report/viz/TreemapViz";
 
 interface VizContainerProps {
   visualizationType: string;
-  visualizationData: any;
+  visualizationData: unknown;
 }
 
 const vizTitleMap: Record<string, string> = {
@@ -19,7 +19,7 @@ const vizTitleMap: Record<string, string> = {
   flow_diagram: "🌊 Data Flow",
 };
 
-function renderViz(type: string, data: any) {
+function renderViz(type: string, data: unknown) {
   switch (type) {
     case "dependency_graph":
       return <DependencyGraph nodes={data.nodes} edges={data.edges} />;

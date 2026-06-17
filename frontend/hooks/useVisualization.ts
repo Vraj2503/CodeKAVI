@@ -57,7 +57,7 @@ export function useVisualization(repoId: string) {
           next.set(type, { status: "success", data, error: null });
           return next;
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (err.name === "AbortError") return;
 
         setCache((prev) => {

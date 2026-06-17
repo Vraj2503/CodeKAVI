@@ -52,7 +52,7 @@ export function useExplanation(repoId: string) {
           });
           return next;
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         setCache((prev) => {
           const next = new Map(prev);
           next.set(vizType, {

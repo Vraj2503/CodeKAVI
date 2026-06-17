@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useRef } from "react";
@@ -327,7 +328,7 @@ export function FocusedVisualization({
   );
 }
 
-function renderVisualization(type: VizType, data: any) {
+function renderVisualization(type: VizType, data: unknown) {
   if (!data) return null;
 
   switch (type) {

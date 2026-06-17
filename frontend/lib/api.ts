@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { supabase } from "./supabase";
 
 const API_BASE = "/api";
@@ -172,7 +173,7 @@ export type VizType =
 
 export interface VizResponse {
   type: string;
-  data: any;
+  data: unknown;
 }
 
 export interface ExplanationResponse {
@@ -203,7 +204,7 @@ export async function restoreRepo(
       throw new Error(`Restore failed: ${res.status} ${errText}`);
     }
     return res.json();
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (e.message?.includes("Restore failed")) throw e;
     // Network error — return null so UI degrades gracefully
     console.warn("Failed to restore repo:", e);

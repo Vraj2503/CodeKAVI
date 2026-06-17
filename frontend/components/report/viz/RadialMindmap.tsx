@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 /**
@@ -12,7 +13,7 @@
  * - Auto-fit to fill the viewport
  */
 
-import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback, useState } from "react";
+import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback } from "react";
 import * as d3 from "d3";
 
 interface MindmapNode {
@@ -55,7 +56,6 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const tooltipRef = useRef<HTMLDivElement>(null);
-    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
     useImperativeHandle(ref, () => containerRef.current!);
 
@@ -74,7 +74,6 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       // Build hierarchy
       const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
       const treeDepth = hierarchy.height || 1;
-      const totalLeaves = hierarchy.leaves().length;
 
       // Node sizing
       const nodeH = 30;
@@ -104,7 +103,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         if (node.children) {
           if (node.depth >= 1) {
             node._children = node.children as TreeNode[];
-            node.children = null as any;
+            node.children = null as unknown;
           } else {
             node.children.forEach((child) => collapse(child as TreeNode));
           }
@@ -123,11 +122,11 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         .separation((a, b) => (a.parent === b.parent ? 1 : 1.3));
 
       // Horizontal link generator — smooth cubic Bézier flowing left-to-right
-      function linkPath(d: any): string {
-        const sy = d.source.x;
-        const sx = d.source.y;
-        const ty = d.target.x;
-        const tx = d.target.y;
+      function linkPath(d: unknown): string {
+        const sy = (d as any).source.x;
+        const sx = (d as any).source.y;
+        const ty = (d as any).target.x;
+        const tx = (d as any).target.y;
         // cubic Bézier with control points at midpoint X
         const midX = (sx + tx) / 2;
         return `M${sx},${sy} C${midX},${sy} ${midX},${ty} ${tx},${ty}`;
@@ -290,9 +289,9 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           const node = d as TreeNode;
           if (node.children) {
             node._children = node.children as TreeNode[];
-            node.children = null as any;
+            node.children = null as unknown;
           } else if (node._children) {
-            node.children = node._children as any;
+            node.children = node._children as unknown;
             node._children = null;
           }
           update(node);
@@ -425,19 +424,14 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       return () => {
         svg.selectAll("*").remove();
       };
-    }, [root, containerSize]);
+    }, [root]);
 
     useEffect(() => {
       renderTree();
     }, [renderTree]);
 
-    // Track container dimensions
     useEffect(() => {
       if (!containerRef.current) return;
-      setContainerSize({
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight,
-      });
       let resizeTimer: NodeJS.Timeout;
       const observer = new ResizeObserver((entries) => {
         clearTimeout(resizeTimer);
