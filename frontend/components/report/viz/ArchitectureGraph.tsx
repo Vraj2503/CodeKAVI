@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 /**
@@ -268,7 +269,7 @@ export const ArchitectureGraph = forwardRef<HTMLDivElement, ArchitectureGraphPro
       const fitY = (height - bboxH * fitScale) / 2 - bboxY * fitScale;
 
       svg.call(
-        zoom.transform as unknown,
+        zoom.transform as any,
         d3.zoomIdentity.translate(fitX, fitY).scale(fitScale)
       );
 

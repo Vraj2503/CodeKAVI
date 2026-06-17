@@ -328,7 +328,7 @@ export function FocusedVisualization({
   );
 }
 
-function renderVisualization(type: VizType, data: unknown) {
+function renderVisualization(type: VizType, data: any) {
   if (!data) return null;
 
   switch (type) {

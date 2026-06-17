@@ -23,7 +23,6 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { analyzeRepoStream, type AnalysisProgressEvent, type AnalyzeResponse } from "@/lib/api";
-import { analyzeRepoStream, type AnalysisProgressEvent, type AnalyzeResponse } from "@/lib/api";
 
 interface AnalysisProgressProps {
   repoUrl: string;

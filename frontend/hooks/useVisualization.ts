@@ -58,14 +58,14 @@ export function useVisualization(repoId: string) {
           return next;
         });
       } catch (err: unknown) {
-        if (err.name === "AbortError") return;
+        if ((err as any).name === "AbortError") return;
 
         setCache((prev) => {
           const next = new Map(prev);
           next.set(type, {
             status: "error",
             data: null,
-            error: err.message || "Failed to generate visualization",
+            error: (err as any).message || "Failed to load visualization",
           });
           return next;
         });

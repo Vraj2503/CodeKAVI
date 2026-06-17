@@ -135,7 +135,7 @@ export function Sidebar({
               <div className="space-y-1.5">
                 {VIZ_CONFIG.map((viz) => {
                   const isActive = activeViz === viz.type;
-                  const Icon = viz.icon;
+                  const Icon = viz.icon as any;
                   return (
                     <Link
                       key={viz.type}

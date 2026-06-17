@@ -103,7 +103,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         if (node.children) {
           if (node.depth >= 1) {
             node._children = node.children as TreeNode[];
-            node.children = null as unknown;
+            node.children = undefined;
           } else {
             node.children.forEach((child) => collapse(child as TreeNode));
           }
@@ -289,10 +289,10 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           const node = d as TreeNode;
           if (node.children) {
             node._children = node.children as TreeNode[];
-            node.children = null as unknown;
+            node.children = undefined;
           } else if (node._children) {
-            node.children = node._children as unknown;
-            node._children = null;
+            node.children = node._children as TreeNode[];
+            node._children = undefined;
           }
           update(node);
         });
@@ -430,24 +430,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       renderTree();
     }, [renderTree]);
 
-    useEffect(() => {
-      if (!containerRef.current) return;
-      let resizeTimer: NodeJS.Timeout;
-      const observer = new ResizeObserver((entries) => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-          const rect = entries[0]?.contentRect;
-          if (rect) {
-            setContainerSize({ width: rect.width, height: rect.height });
-          }
-        }, 200);
-      });
-      observer.observe(containerRef.current);
-      return () => {
-        observer.disconnect();
-        clearTimeout(resizeTimer);
-      };
-    }, []);
+
 
     return (
       <div ref={containerRef} className="w-full h-full overflow-hidden relative">

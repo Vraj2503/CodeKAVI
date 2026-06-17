@@ -88,7 +88,7 @@ export function DownloadMenu({
         toast.success("PNG downloaded");
       }
     } catch (err: unknown) {
-      toast.error(err.message || `Failed to export as ${format.toUpperCase()}`);
+      toast.error((err as any).message || `Failed to export as ${format.toUpperCase()}`);
     } finally {
       setExporting(false);
     }

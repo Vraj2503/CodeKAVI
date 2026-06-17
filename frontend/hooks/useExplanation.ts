@@ -59,7 +59,7 @@ export function useExplanation(repoId: string) {
             status: "error",
             explanation: null,
             tokensUsed: 0,
-            error: err.message || "Failed to generate explanation",
+            error: (err as any).message || "Failed to generate explanation",
           });
           return next;
         });

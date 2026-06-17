@@ -205,7 +205,7 @@ export async function restoreRepo(
     }
     return res.json();
   } catch (e: unknown) {
-    if (e.message?.includes("Restore failed")) throw e;
+    if ((e as any).message?.includes("Restore failed")) throw e;
     // Network error — return null so UI degrades gracefully
     console.warn("Failed to restore repo:", e);
     return null;

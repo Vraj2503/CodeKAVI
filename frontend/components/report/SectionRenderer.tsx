@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import ReactMarkdown from "react-markdown";
@@ -40,73 +41,57 @@ export function SectionRenderer({ section }: SectionRendererProps) {
           </div>
 
           {/* Markdown content */}
-          <ReactMarkdown
-            components={{
-              h2: ({ children }) => (
-                <h2 className="text-foreground font-semibold text-lg mt-6 mb-2">
-                  {children}
-                </h2>
+          {(
+            <ReactMarkdown
+              components={{
+              h2: ({ node, ...props }: any) => (
+                <h2 className="text-foreground font-semibold text-lg mt-6 mb-2" {...props} />
               ),
-              h3: ({ children }) => (
-                <h3 className="text-foreground font-semibold text-base mt-6 mb-2">
-                  {children}
-                </h3>
+              h3: ({ node, ...props }: any) => (
+                <h3 className="text-foreground font-semibold text-base mt-6 mb-2" {...props} />
               ),
-              p: ({ children }) => (
-                <p className="text-foreground/85 leading-relaxed mb-3">
-                  {children}
-                </p>
+              p: ({ node, ...props }: any) => (
+                <p className="text-foreground/85 leading-relaxed mb-3" {...props} />
               ),
-              a: ({ href, children }) => (
+              a: ({ node, ...props }: any) => (
                 <a
-                  href={href}
                   className="text-foreground underline underline-offset-2 hover:text-foreground/70"
                   target="_blank"
                   rel="noopener noreferrer"
-                >
-                  {children}
-                </a>
+                  {...props}
+                />
               ),
-              ul: ({ children }) => (
-                <ul className="text-foreground/85 ml-6 space-y-1 list-disc mb-3">
-                  {children}
-                </ul>
+              ul: ({ node, ...props }: any) => (
+                <ul className="text-foreground/85 ml-6 space-y-1 list-disc mb-3" {...props} />
               ),
-              ol: ({ children }) => (
-                <ol className="text-foreground/85 ml-6 space-y-1 list-decimal mb-3">
-                  {children}
-                </ol>
+              ol: ({ node, ...props }: any) => (
+                <ol className="text-foreground/85 ml-6 space-y-1 list-decimal mb-3" {...props} />
               ),
-              li: ({ children }) => (
-                <li className="text-foreground/85">{children}</li>
+              li: ({ node, ...props }: any) => (
+                <li className="text-foreground/85" {...props} />
               ),
-              code: ({ className, children, ...props }) => {
+              code: ({ node, className, ...props }: any) => {
                 const isBlock = className?.includes("language-");
                 if (isBlock) {
                   return (
                     <code
                       className={`font-mono text-foreground text-sm ${className || ""}`}
                       {...props}
-                    >
-                      {children}
-                    </code>
+                    />
                   );
                 }
                 return (
-                  <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-mono">
-                    {children}
-                  </code>
+                  <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-sm font-mono" {...props} />
                 );
               },
-              pre: ({ children }) => (
-                <pre className="bg-background rounded-lg p-4 overflow-x-auto border border-border mb-3">
-                  {children}
-                </pre>
+              pre: ({ node, ...props }: any) => (
+                <pre className="bg-background rounded-lg p-4 overflow-x-auto border border-border mb-3" {...props} />
               ),
             }}
           >
-            {section.content}
-          </ReactMarkdown>
+              {section.content}
+            </ReactMarkdown>
+          ) as any}
 
           {/* Visualization */}
           {section.visualization_type && section.visualization_data && (

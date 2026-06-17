@@ -109,11 +109,12 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
   const [hasStarted, setHasStarted] = useState(false);
 
   const { startStream, stop, isStreaming, progress, phase, message } = useSSE({
-    onStats: (data) => setStats(data),
+    onStats: (data) => setStats(data as StatsData),
     onTree: (data) => console.log("[Report tree]", data),
     onSection: (data) => {
-      setSections((prev) => new Map(prev).set(data.name, data));
-      setCompletedSections((prev) => [...prev, data.name]);
+      const sectionData = data as SectionData;
+      setSections((prev) => new Map(prev).set(sectionData.name, sectionData));
+      setCompletedSections((prev) => [...prev, sectionData.name]);
     },
     onDone: () => setIsComplete(true),
     onError: (data) => toast.error(data.message || "Stream error"),

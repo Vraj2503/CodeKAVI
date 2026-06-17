@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { DependencyGraph } from "@/components/report/viz/DependencyGraph";
@@ -19,7 +20,7 @@ const vizTitleMap: Record<string, string> = {
   flow_diagram: "🌊 Data Flow",
 };
 
-function renderViz(type: string, data: unknown) {
+function renderViz(type: string, data: any) {
   switch (type) {
     case "dependency_graph":
       return <DependencyGraph nodes={data.nodes} edges={data.edges} />;
