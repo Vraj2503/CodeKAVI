@@ -20,7 +20,6 @@ Thumbs.db
 *.swo
 
 # Old test directory (not the pytest test suite)
-/test/
 **/__pycache__/
 .env
 /Components
