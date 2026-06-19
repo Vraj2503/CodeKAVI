@@ -40,3 +40,5 @@ coverage.xml
 node_modules/
 supabase_migrations/
 
+
+.codekavi-fingerprints/
