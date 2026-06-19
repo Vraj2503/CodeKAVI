@@ -91,6 +91,35 @@ async def analyze(
             cleanup_repo(clone_info["clone_path"])
             raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
 
+        # Fingerprint check for incremental analysis
+        from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+        fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
+        
+        if not has_structural:
+            try:
+                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                if cached_result:
+                    logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
+                    return {
+                        "success": True,
+                        "repo_id": repo_id,
+                        "repo_name": clone_info["repo_name"],
+                        "owner": clone_info["owner"],
+                        "github_url": github_url,
+                        **cached_result.get("repo_data", repo_data),
+                        "dependencies": cached_result.get("dep_data", {}),
+                        "file_profiles": cached_result.get("file_profiles", []),
+                        "role_summary": cached_result.get("role_summary", {}),
+                        "graph": cached_result.get("graph_json", {}),
+                        "module_graph": cached_result.get("module_graph", {}),
+                        "cycles": {"has_cycles": False, "cycles": []}, # Default fallback
+                        "mermaid": {"file_level": "", "module_level": ""}
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
+                
+        await _run_sync(save_fingerprints, repo_id, fingerprints)
+
         # Analyze dependencies and classify roles using a shared BoundedContentCache
         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
         start_time = time.perf_counter()
@@ -279,6 +308,39 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 yield _sse_event("error", 0, f"Failed to traverse repository: {e}")
                 return
+
+            # Fingerprint check for incremental analysis
+            from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+            fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
+            
+            if not has_structural:
+                try:
+                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                    if cached_result:
+                        logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
+                        yield _sse_event("analyzing", 100, "No structural changes. Using cached analysis!")
+                        result = {
+                            "success": True,
+                            "repo_id": repo_id,
+                            "repo_name": clone_info["repo_name"],
+                            "owner": clone_info["owner"],
+                            "github_url": github_url,
+                            **cached_result.get("repo_data", repo_data),
+                            "dependencies": cached_result.get("dep_data", {}),
+                            "file_profiles": cached_result.get("file_profiles", []),
+                            "role_summary": cached_result.get("role_summary", {}),
+                            "graph": cached_result.get("graph_json", {}),
+                            "module_graph": cached_result.get("module_graph", {}),
+                            "cycles": {"has_cycles": False, "cycles": []},
+                            "mermaid": {"file_level": "", "module_level": ""}
+                        }
+                        yield _sse_event("complete", 100, "Analysis complete!", result)
+                        yield "data: [DONE]\n\n"
+                        return
+                except Exception as e:
+                    logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
+            
+            await _run_sync(save_fingerprints, repo_id, fingerprints)
 
             # Stage 3: Analyzing dependencies
             if await request.is_disconnected():
