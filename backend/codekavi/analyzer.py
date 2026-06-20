@@ -1,7 +1,7 @@
 """
 analyzer.py — Multi-language import/dependency analyzer.
 
-Parses source files using AST (Python) and regex (JS/TS/Go/Java/etc.)
+Parses source files using AST (Python), Tree-sitter (JS/TS), and regex (Go/Java/etc.)
 to extract import relationships, build dependency graphs, and identify
 key structural nodes (entry points, central files).
 
@@ -24,6 +24,32 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
+
+import tree_sitter_javascript as tsjs
+import tree_sitter_typescript as tsts
+from tree_sitter import Language, Parser
+
+# Initialize Tree-sitter languages and queries (immutable, safe to share across threads).
+# Parsers are NOT global because Tree-sitter Parsers mutate internal state on parse()
+# and FastAPI runs analyze_dependencies() in a thread pool — a single shared Parser
+# would race between concurrent requests and may segfault.
+JS_LANGUAGE = Language(tsjs.language(), "javascript")
+TS_LANGUAGE = Language(tsts.language_typescript(), "typescript")
+
+_JS_TS_QUERY_STR = """
+    (import_statement source: (string (string_fragment) @path))
+    (export_statement source: (string (string_fragment) @path))
+    (call_expression
+        function: (identifier) @fname
+        arguments: (arguments (string (string_fragment) @path))
+        (#eq? @fname "require"))
+    (call_expression
+        function: (import)
+        arguments: (arguments (string (string_fragment) @path)))
+"""
+JS_QUERY = JS_LANGUAGE.query(_JS_TS_QUERY_STR)
+TS_QUERY = TS_LANGUAGE.query(_JS_TS_QUERY_STR)
+
 
 try:
     from codekavi.config import (
@@ -133,41 +159,98 @@ def _resolve_python_module(module_name: str, repo_root: str, file_dir: str, leve
     return None
 
 
+def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
+    """
+    Extract imports from Vue (.vue) and Svelte (.svelte) single-file components.
+
+    The raw file contains <template> and <style> blocks which are NOT valid
+    JavaScript — feeding those directly to a JS tree-sitter parser produces
+    an error tree and zero imports. To handle these correctly:
+      1. Extract the content between <script> ...</script> tags.
+      2. If <script lang="ts"> or <script lang="tsx"> is present, use the
+         TypeScript language/query; otherwise use JavaScript.
+      3. If no <script> block is found, fall back to passing the raw source
+         to the JS parser (some .vue/.svelte files are pure JS/component-syntax
+         with inline scripts).
+    """
+    script_match = re.search(
+        r'<script\b([^>]*)>(.*?)</script>', source, re.DOTALL | re.IGNORECASE
+    )
+
+    if script_match:
+        attrs = script_match.group(1).lower()
+        script_body = script_match.group(2)
+        is_ts = ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or (
+            'lang="typescript"' in attrs
+        )
+        return _extract_js_ts_imports_with_source(
+            filepath, script_body, repo_root, is_ts=is_ts
+        )
+
+    # No <script> block — fall back to parsing raw source as JS
+    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=False)
+
+
 def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """
-    Extract JS/TS imports using regex. Handles:
+    Extract JS/TS imports using tree-sitter AST. Handles:
       - import ... from 'path'
       - import 'path'
       - const x = require('path')
       - import('path')
       - export ... from 'path'
+
+    Thread-safety: creates a fresh tree-sitter Parser() on every call so
+    concurrent /analyze requests don't race on shared parser state.
     """
+    is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
+    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=is_ts)
+
+
+def _extract_js_ts_imports_with_source(
+    filepath: str, source: str, repo_root: str, is_ts: bool
+) -> list[dict]:
+    """Shared JS/TS extraction that picks the right language and a per-call Parser."""
     imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
-    patterns = [
-        # import ... from 'path' / import 'path'
-        r"""(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]""",
-        # require('path')
-        r"""require\s*\(\s*['"]([^'"]+)['"]\s*\)""",
-        # dynamic import('path')
-        r"""import\s*\(\s*['"]([^'"]+)['"]\s*\)""",
-    ]
+    language = TS_LANGUAGE if is_ts else JS_LANGUAGE
+    query = TS_QUERY if is_ts else JS_QUERY
 
-    for pattern in patterns:
-        for match in re.finditer(pattern, source):
-            raw_path = match.group(1)
-            line = source[: match.start()].count("\n") + 1
+    # Per-call Parser — tree-sitter parsers mutate internal state on parse(),
+    # so a single shared Parser() across threads causes segfaults.
+    parser = Parser()
+    parser.set_language(language)
 
-            resolved = _resolve_js_path(raw_path, file_dir, repo_root)
-            imports.append(
-                {
+    source_bytes = source.encode('utf-8', errors='ignore')
+    tree = parser.parse(source_bytes)
+    captures = query.captures(tree.root_node)
+
+    # captures can be a list of tuples in recent tree-sitter bindings
+    if isinstance(captures, list):
+        for node, name in captures:
+            if name == "path":
+                raw_path = node.text.decode('utf-8', errors='ignore')
+                line = node.start_point[0] + 1
+                resolved = _resolve_js_path(raw_path, file_dir, repo_root)
+                imports.append({
                     "raw": raw_path,
                     "resolved": resolved,
                     "line": line,
                     "type": "import",
-                }
-            )
+                })
+    else:
+        for node, name in captures.items():
+            if name == "path":
+                raw_path = node.text.decode('utf-8', errors='ignore')
+                line = node.start_point[0] + 1
+                resolved = _resolve_js_path(raw_path, file_dir, repo_root)
+                imports.append({
+                    "raw": raw_path,
+                    "resolved": resolved,
+                    "line": line,
+                    "type": "import",
+                })
 
     return imports
 
@@ -382,8 +465,8 @@ _EXTRACTORS: dict[str, Callable[..., Any]] = {
     "JavaScript (React)": _extract_js_ts_imports,
     "TypeScript": _extract_js_ts_imports,
     "TypeScript (React)": _extract_js_ts_imports,
-    "Vue": _extract_js_ts_imports,
-    "Svelte": _extract_js_ts_imports,
+    "Vue": _extract_vue_svelte_imports,
+    "Svelte": _extract_vue_svelte_imports,
     "Go": _extract_go_imports,
     "Java": _extract_java_imports,
     "Kotlin": _extract_java_imports,
