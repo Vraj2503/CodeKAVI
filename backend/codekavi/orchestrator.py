@@ -222,11 +222,20 @@ class ExplanationOrchestrator:
         for fp in (self.classification or [])[:20]:
             classifications.append(f"- `{fp.get('path', '')}` — {fp.get('role_label', fp.get('role', '?'))}")
 
-        dep_graph = graph_data.get("adjacency", {})
-        dep_lines = []
-        for src, targets in list(dep_graph.items())[:20]:
-            for t in (targets if isinstance(targets, list) else [targets])[:3]:
-                dep_lines.append(f"- `{src}` → `{t}`")
+        # Deterministic import map (preferred over the generic adjacency subset)
+        complete = graph_data.get("complete_imports", {}) or {}
+        import_lines = []
+        for src, targets in list(complete.items())[:30]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:5]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+        if not import_lines:
+            # Fall back to adjacency if complete_imports is empty for any reason
+            dep_graph = graph_data.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:20]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
 
         key_files = []
         for path, content in list(file_contents.items())[:10]:
@@ -234,7 +243,7 @@ class ExplanationOrchestrator:
 
         user = (
             f"## File classifications (top 20)\n{chr(10).join(classifications)}\n\n"
-            f"## Dependency graph (top 20 edges)\n{chr(10).join(dep_lines)}\n\n"
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
             f"## Key file contents\n{chr(10).join(key_files)}\n\n"
             "## Please analyze:\n"
             "1. **Pattern** — What architectural pattern is used? (MVC, layered, microservices, etc.)\n"
@@ -276,15 +285,23 @@ class ExplanationOrchestrator:
             if ep_file in file_contents:
                 entry_code += f"\n### {ep_file}\n```\n{file_contents[ep_file][:2500]}\n```\n"
 
-        dep_graph = graph_data.get("adjacency", {})
-        dep_lines = []
-        for src, targets in list(dep_graph.items())[:20]:
-            for t in (targets if isinstance(targets, list) else [targets])[:3]:
-                dep_lines.append(f"- `{src}` → `{t}`")
+        # Deterministic import map (preferred over the generic adjacency subset)
+        complete = graph_data.get("complete_imports", {}) or {}
+        import_lines = []
+        for src, targets in list(complete.items())[:25]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:3]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+        if not import_lines:
+            dep_graph = graph_data.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:20]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
 
         user = (
             f"## Entry point code\n{entry_code}\n\n"
-            f"## Dependency graph subset\n{chr(10).join(dep_lines)}\n\n"
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
             "## Please analyze:\n"
             "1. **User Flows** — Trace step-by-step flows from entry points\n"
             "2. **Transformations** — How is data transformed as it moves through?\n"
@@ -295,11 +312,23 @@ class ExplanationOrchestrator:
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
 
     def _prompt_dependencies(self, graph_data: dict) -> dict:
-        dep_graph = graph_data.get("adjacency", {})
-        dep_lines = []
-        for src, targets in list(dep_graph.items())[:25]:
-            for t in (targets if isinstance(targets, list) else [targets])[:3]:
-                dep_lines.append(f"- `{src}` → `{t}`")
+        # Deterministic import map — every edge below has been resolved from
+        # the actual parsed tree and is not inferred. The LLM must NOT guess
+        # additional dependencies beyond what is listed.
+        complete = graph_data.get("complete_imports", {}) or {}
+        import_lines: list[str] = []
+        for src, targets in list(complete.items())[:30]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:5]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+
+        if not import_lines:
+            # Graceful fallback when complete_imports isn't populated
+            dep_graph = graph_data.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:25]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
 
         central = graph_data.get("central_files", [])[:10]
         central_lines = [
@@ -309,11 +338,11 @@ class ExplanationOrchestrator:
         entry_lines = [f"- `{e.get('file', '')}`" for e in graph_data.get("entry_points", [])[:5]]
 
         user = (
-            f"## Dependency graph (top 25)\n{chr(10).join(dep_lines)}\n\n"
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
             f"## Most central files\n{chr(10).join(central_lines)}\n\n"
             f"## Entry points\n{chr(10).join(entry_lines)}\n\n"
-            "## Please analyze:\n"
-            "1. **Core Chains** — What are the main dependency chains?\n"
+            "## Please analyze using the deterministically accurate graph above (do NOT guess dependencies):\n"
+            "1. **Core Chains** — What are the main dependency chains based on the provided graph?\n"
             "2. **Hub Modules** — Which modules are dependency hubs?\n"
             "3. **External Libraries** — What major external dependencies exist?\n"
             "4. **Circular Dependencies** — Any circular dependency risks?\n"
@@ -612,13 +641,27 @@ class ExplanationOrchestrator:
         return contents
 
     def _build_graph_context(self) -> dict:
-        """Extract deps, entry_points, central_files from analysis."""
+        """Extract deps, entry_points, central_files, and deterministic imports from analysis."""
+        
+        edges = self.analysis.get("edges", [])
+        complete_imports = {}
+        for e in edges:
+            src = e.get("source")
+            tgt = e.get("target")
+            if not src or not tgt:
+                continue
+            if src not in complete_imports:
+                complete_imports[src] = []
+            if tgt not in complete_imports[src]:
+                complete_imports[src].append(tgt)
+
         return {
             "adjacency": self.analysis.get("adjacency", {}),
             "reverse_adjacency": self.analysis.get("reverse_adjacency", {}),
             "entry_points": self.analysis.get("entry_points", []),
             "central_files": self.analysis.get("central_files", []),
             "stats": self.analysis.get("stats", {}),
+            "complete_imports": complete_imports,
         }
 
     def _progress(self, pct: int, phase: str, msg: str) -> dict:
