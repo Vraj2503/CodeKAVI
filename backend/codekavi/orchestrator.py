@@ -21,8 +21,18 @@ from collections.abc import AsyncIterator
 
 from codekavi.config import EXTENSION_LANGUAGE_MAP, detect_layer
 from codekavi.llm.providers import get_provider
+from codekavi.normalizer import normalize_node_type, normalize_viz_data, validate_section
+from codekavi.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Auto-viz caps (shared with settings; bound to settings on import).
+# T2.3 prep: replaces hard-coded 60/100 with configurable constants.
+# ──────────────────────────────────────────────────────────────────────
+MAX_VIZ_NODES: int = settings.graph_max_nodes
+MAX_VIZ_EDGES: int = settings.viz_max_edges
 
 
 class ExplanationOrchestrator:
@@ -145,7 +155,20 @@ class ExplanationOrchestrator:
     # ─────────────────────────────────────────
 
     async def _gen(self, name: str, task_type: str, prompt: dict, json_mode: bool = False) -> dict:
-        """Generate a single section via async LLM call."""
+        """Generate a single section via async LLM call.
+
+        Validation flow (T2.1+T2.2):
+          - JSON-mode path: ``viz_data`` comes from parsed LLM JSON, so it
+            is normalized through ``normalize_viz_data``.
+          - Text-mode path: ``viz_data`` comes from ``self._auto_viz(name)``
+            which is already deterministic — no normalization.
+          - After both branches, the assembled section dict (title/content/
+            snippets/viz_type/viz_data) is passed through
+            ``validate_section`` (4-tier pipeline). On Tier 3 failure the
+            viz_data is dropped to None and ``_auto_viz`` retries. On Tier
+            4 (content missing), ``_validation_failed=True`` is set so the
+            caller can emit a warning event instead of a section event.
+        """
         provider = get_provider(task_type)
         response = await provider.generate(
             system_prompt=prompt["system"],
@@ -162,7 +185,12 @@ class ExplanationOrchestrator:
             try:
                 parsed = json.loads(response)
                 raw_viz = parsed.get("visualization", {})
-                viz_data = {"root": raw_viz} if raw_viz else None
+                # Normalize node/edge types in the JSON payload before
+                # shaping it for the frontend. This is the only place LLM
+                # output flows into viz_data — text-mode uses _auto_viz()
+                # which already canonicalizes types via _detect_layer().
+                normalized = normalize_viz_data({"root": raw_viz} if raw_viz else None)
+                viz_data = normalized if normalized else None
                 response = parsed.get("content", "")
             except json.JSONDecodeError:
                 viz_data = None
@@ -170,13 +198,20 @@ class ExplanationOrchestrator:
         if viz_data is None:
             viz_data = self._auto_viz(name)
 
-        return {
+        section = {
             "title": self._title(name),
             "content": response,
             "code_snippets": snippets,
             "visualization_type": self._viz_type(name),
             "visualization_data": viz_data,
         }
+
+        validated = validate_section(section)
+        # Tier 4 fallback — reroute to deterministic viz when content is
+        # empty AND the validation pipeline flagged the section as fatal.
+        if validated.get("_validation_failed"):
+            validated["visualization_data"] = self._auto_viz(name)
+        return validated
 
     # ─────────────────────────────────────────
     # Prompt builders
@@ -476,7 +511,12 @@ class ExplanationOrchestrator:
         return None
 
     def _auto_viz_dependencies(self) -> dict:
-        """Build dependency graph viz from analysis data."""
+        """Build dependency graph viz from analysis data.
+
+        Caps are bounded by the module-level :data:`MAX_VIZ_NODES` and
+        :data:`MAX_VIZ_EDGES` constants (T2.3) which are initialized from
+        ``settings.graph_max_nodes`` and ``settings.viz_max_edges``.
+        """
         from typing import Any
 
         nodes: list[dict[str, Any]] = []
@@ -485,7 +525,7 @@ class ExplanationOrchestrator:
 
         adjacency = self.analysis.get("adjacency", {})
         for src, targets in adjacency.items():
-            if len(nodes) >= 60:
+            if len(nodes) >= MAX_VIZ_NODES:
                 break
             if src not in seen_nodes:
                 seen_nodes.add(src)
@@ -493,20 +533,20 @@ class ExplanationOrchestrator:
                     {
                         "id": src,
                         "label": os.path.basename(src),
-                        "type": self._detect_layer(src),
+                        "type": normalize_node_type(src),
                     }
                 )
             target_list = targets if isinstance(targets, list) else [targets]
             for t in target_list:
-                if len(edges) >= 100:
+                if len(edges) >= MAX_VIZ_EDGES:
                     break
-                if t not in seen_nodes and len(nodes) < 60:
+                if t not in seen_nodes and len(nodes) < MAX_VIZ_NODES:
                     seen_nodes.add(t)
                     nodes.append(
                         {
                             "id": t,
                             "label": os.path.basename(t),
-                            "type": self._detect_layer(t),
+                            "type": normalize_node_type(t),
                         }
                     )
                 if t in seen_nodes:
