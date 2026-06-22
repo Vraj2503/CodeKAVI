@@ -14,6 +14,7 @@ from codekavi.cache import AnalysisCache
 from codekavi.limiter import limiter
 from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
+from codekavi.quota import get_token_tracker
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ChatRequest
 from codekavi.utils import run_sync as _run_sync
@@ -69,7 +70,25 @@ async def chat_repo(
 
     For technical/architecture questions, retrieves more chunks (top_k=8)
     and filters out frontend/test code for higher relevance.
+
+    T4.1 — quota gate. Raises HTTP 429 with ``quota_exceeded`` if the
+    authenticated user is over their daily token budget (only enforced
+    when ``settings.enforce_token_quota`` is True).
     """
+    from codekavi.settings import settings
+
+    tracker = get_token_tracker()
+    if not tracker.check_quota(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": "Daily LLM token quota exceeded. Please retry tomorrow.",
+                "remaining_tokens": tracker.get_remaining(user_id),
+                "enforced": settings.enforce_token_quota,
+            },
+        )
+
     # Validate repo_id format early (must be 12-char hex from clone_repo)
     import re
 

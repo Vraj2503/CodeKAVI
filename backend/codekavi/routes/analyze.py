@@ -65,9 +65,12 @@ async def analyze(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     # Clone the repository (blocking I/O)
+    from codekavi.metrics import analysis_stage_timer  # T4.3 — Prometheus stage timing
+
     start_time = time.perf_counter()
     try:
-        clone_info = await _run_sync(clone_repo, github_url)
+        with analysis_stage_timer("cloning"):
+            clone_info = await _run_sync(clone_repo, github_url)
         duration = (time.perf_counter() - start_time) * 1000
         logger.info(f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration})
     except Exception as e:
@@ -77,11 +80,56 @@ async def analyze(
     repo_id = clone_info["repo_id"]
     token = repo_id_ctx.set(repo_id)
 
+    # T4.4 — cross-user dedup. If another user (with a different repo_id)
+    # already produced an analysis for this exact commit, short-circuit
+    # the pipeline and hand back the cached result. The new repo_id is the
+    # freshly-allocated UUID — clients should treat it as opaque; the
+    # clone dir + L2 Redis index are aligned via the signature.
+    signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
+    if signature:
+        deduped = await _run_sync(cache.lookup_by_signature, signature)
+        if deduped:
+            logger.info(
+                f"T4.4 commit-cache hit for {signature}; reusing cached repo result "
+                f"(repo_name={deduped.get('repo_name', '')})."
+            )
+            # Register this fresh repo_id against the signature index too, so
+            # treat the cache key as the linkage. No L1/L2 result re-write is
+            # needed; ``deduped`` already references the original repo_id.
+            await _run_sync(cache.register_signature, signature, deduped.get("_origin_repo_id", repo_id))
+            repo_data_for_response = deduped.get("repo_data", {}) or {
+                "total_files": 0,
+                "total_size": 0,
+                "total_size_formatted": "0 B",
+                "languages": {},
+                "tree": [],
+                "files": [],
+                "skipped_files": [],
+            }
+            return {
+                "success": True,
+                "repo_id": repo_id,
+                "repo_name": clone_info["repo_name"],
+                "owner": clone_info["owner"],
+                "github_url": github_url,
+                "deduplicated": True,
+                "signature": signature,
+                **repo_data_for_response,
+                "dependencies": deduped.get("dep_data", {}),
+                "file_profiles": deduped.get("file_profiles", []),
+                "role_summary": deduped.get("role_summary", {}),
+                "graph": deduped.get("graph_json", {}),
+                "module_graph": deduped.get("module_graph", {}),
+                "cycles": {"has_cycles": False, "cycles": []},
+                "mermaid": {"file_level": "", "module_level": ""},
+            }
+
     try:
         # Traverse and collect metadata
         start_time = time.perf_counter()
         try:
-            repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+            with analysis_stage_timer("traversing"):
+                repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage traversing completed in {duration:.2f}ms",
@@ -124,9 +172,10 @@ async def analyze(
         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
         start_time = time.perf_counter()
         try:
-            dep_data = await _run_sync(
-                analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
-            )
+            with analysis_stage_timer("analyzing"):
+                dep_data = await _run_sync(
+                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+                )
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
@@ -145,14 +194,15 @@ async def analyze(
         # Classify file roles
         start_time = time.perf_counter()
         try:
-            file_profiles = await _run_sync(
-                classify_files,
-                clone_info["clone_path"],
-                repo_data["files"],
-                dep_data,
-                content_cache=content_cache,
-            )
-            role_summary = summarize_roles(file_profiles)
+            with analysis_stage_timer("classifying"):
+                file_profiles = await _run_sync(
+                    classify_files,
+                    clone_info["clone_path"],
+                    repo_data["files"],
+                    dep_data,
+                    content_cache=content_cache,
+                )
+                role_summary = summarize_roles(file_profiles)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage classifying completed in {duration:.2f}ms",
@@ -168,10 +218,11 @@ async def analyze(
         # Build graph exports
         start_time = time.perf_counter()
         try:
-            graph_json = export_graph_json(dep_data, file_profiles)
-            mermaid_file = export_mermaid(graph_json)
-            module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-            cycles = detect_cycles(dep_data)
+            with analysis_stage_timer("graphing"):
+                graph_json = export_graph_json(dep_data, file_profiles, max_nodes=settings.graph_max_nodes)
+                mermaid_file = export_mermaid(graph_json)
+                module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+                cycles = detect_cycles(dep_data)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
@@ -186,7 +237,8 @@ async def analyze(
         selector = SmartFileSelector()
         start_time = time.perf_counter()
         try:
-            selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+            with analysis_stage_timer("selecting"):
+                selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage selecting completed in {duration:.2f}ms", extra={"stage": "selecting", "duration_ms": duration}
@@ -208,6 +260,11 @@ async def analyze(
             "selected_files": selected_files,
         }
         save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
+
+        # T4.4 — register cross-user signature so subsequent callers probing
+        # this commit at this SHA skip the pipeline.
+        if signature:
+            await _run_sync(cache.register_signature, signature, repo_id)
 
         # Index repository for RAG in the background (prevents proxy timeouts)
         if settings.gemini_api_key and settings.zilliz_uri:
@@ -238,12 +295,29 @@ async def analyze(
 # ── SSE Streaming Analysis ──
 
 
-def _sse_event(stage: str, progress: int, message: str, data: dict | None = None) -> str:
-    """Format a single SSE event."""
-    payload = {"stage": stage, "progress": progress, "message": message}
+def _sse_event(
+    stage: str,
+    progress: int,
+    message: str,
+    data: dict | None = None,
+    seq: int = 0,
+) -> str:
+    """Format a single SSE event.
+
+    Includes ``seq`` in the JSON payload for client drop-detection AND emits
+    a FrameWire ``id:`` line so SSE-aware clients can resume via the standard
+    ``Last-Event-ID`` HTTP header.
+    """
+    payload = {"stage": stage, "progress": progress, "message": message, "seq": seq}
     if data is not None:
         payload["data"] = data
-    return f"data: {json.dumps(payload)}\n\n"
+    return f"id: {seq}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _next_seq(counter_ref: list[int]) -> int:
+    """Increment-and-return helper for threading seq through event_generator."""
+    counter_ref[0] += 1
+    return counter_ref[0]
 
 
 @router.post("/analyze/stream")
@@ -267,22 +341,28 @@ async def analyze_stream(
 
     async def event_generator():
 
+        # T2.4 — single counter threaded through every yield so the client
+        # can verify seq === total_events and resume via Last-Event-ID.
+        seq_box: list[int] = [0]
+
         # Stage 1: Cloning
         if await request.is_disconnected():
             logger.info("Client disconnected before cloning.")
             return
 
-        yield _sse_event("cloning", 10, "Cloning repository…")
+        yield _sse_event("cloning", 10, "Cloning repository…", seq=_next_seq(seq_box))
+        from codekavi.metrics import analysis_stage_timer  # T4.3 — Prometheus stage timing
         start_time = time.perf_counter()
         try:
-            clone_info = await _run_sync(clone_repo, github_url)
+            with analysis_stage_timer("cloning"):
+                clone_info = await _run_sync(clone_repo, github_url)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration}
             )
         except Exception as e:
             message = getattr(e, "message", str(e))
-            yield _sse_event("error", 0, f"Failed to clone repository: {message}")
+            yield _sse_event("error", 0, f"Failed to clone repository: {message}", seq=_next_seq(seq_box))
             return
 
         repo_id = clone_info["repo_id"]
@@ -295,10 +375,11 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("traversing", 25, "Scanning file structure…")
+            yield _sse_event("traversing", 25, "Scanning file structure…", seq=_next_seq(seq_box))
             start_time = time.perf_counter()
             try:
-                repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
+                with analysis_stage_timer("traversing"):
+                    repo_data = await _run_sync(traverse_repo, clone_info["clone_path"])
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage traversing completed in {duration:.2f}ms",
@@ -306,19 +387,24 @@ async def analyze_stream(
                 )
             except Exception as e:
                 cleanup_repo(clone_info["clone_path"])
-                yield _sse_event("error", 0, f"Failed to traverse repository: {e}")
+                yield _sse_event("error", 0, f"Failed to traverse repository: {e}", seq=_next_seq(seq_box))
                 return
 
             # Fingerprint check for incremental analysis
             from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
             fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
-            
+
             if not has_structural:
                 try:
                     cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                     if cached_result:
                         logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
-                        yield _sse_event("analyzing", 100, "No structural changes. Using cached analysis!")
+                        yield _sse_event(
+                            "analyzing",
+                            100,
+                            "No structural changes. Using cached analysis!",
+                            seq=_next_seq(seq_box),
+                        )
                         result = {
                             "success": True,
                             "repo_id": repo_id,
@@ -334,12 +420,21 @@ async def analyze_stream(
                             "cycles": {"has_cycles": False, "cycles": []},
                             "mermaid": {"file_level": "", "module_level": ""}
                         }
-                        yield _sse_event("complete", 100, "Analysis complete!", result)
-                        yield "data: [DONE]\n\n"
+                        # T2.4 — pre-compute the final seq BEFORE building the
+                        # payload so ``total_events`` matches the seq of this
+                        # event (the final event).
+                        final_seq = _next_seq(seq_box)
+                        yield _sse_event(
+                            "complete",
+                            100,
+                            "Analysis complete!",
+                            data={"total_events": final_seq, "result": result},
+                            seq=final_seq,
+                        )
                         return
                 except Exception as e:
                     logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
-            
+
             await _run_sync(save_fingerprints, repo_id, fingerprints)
 
             # Stage 3: Analyzing dependencies
@@ -348,13 +443,14 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("analyzing", 40, "Analyzing dependencies…")
+            yield _sse_event("analyzing", 40, "Analyzing dependencies…", seq=_next_seq(seq_box))
             content_cache = BoundedContentCache(settings.max_content_cache_bytes)
             start_time = time.perf_counter()
             try:
-                dep_data = await _run_sync(
-                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
-                )
+                with analysis_stage_timer("analyzing"):
+                    dep_data = await _run_sync(
+                        analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+                    )
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage analyzing completed in {duration:.2f}ms",
@@ -377,17 +473,18 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("classifying", 55, "Classifying file roles…")
+            yield _sse_event("classifying", 55, "Classifying file roles…", seq=_next_seq(seq_box))
             start_time = time.perf_counter()
             try:
-                file_profiles = await _run_sync(
-                    classify_files,
-                    clone_info["clone_path"],
-                    repo_data["files"],
-                    dep_data,
-                    content_cache=content_cache,
-                )
-                role_summary = summarize_roles(file_profiles)
+                with analysis_stage_timer("classifying"):
+                    file_profiles = await _run_sync(
+                        classify_files,
+                        clone_info["clone_path"],
+                        repo_data["files"],
+                        dep_data,
+                        content_cache=content_cache,
+                    )
+                    role_summary = summarize_roles(file_profiles)
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage classifying completed in {duration:.2f}ms",
@@ -406,13 +503,14 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("graphing", 70, "Building dependency graphs…")
+            yield _sse_event("graphing", 70, "Building dependency graphs…", seq=_next_seq(seq_box))
             start_time = time.perf_counter()
             try:
-                graph_json = export_graph_json(dep_data, file_profiles)
-                mermaid_file = export_mermaid(graph_json)
-                module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-                cycles = detect_cycles(dep_data)
+                with analysis_stage_timer("graphing"):
+                    graph_json = export_graph_json(dep_data, file_profiles, max_nodes=settings.graph_max_nodes)
+                    mermaid_file = export_mermaid(graph_json)
+                    module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+                    cycles = detect_cycles(dep_data)
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage graphing completed in {duration:.2f}ms",
@@ -430,11 +528,12 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("selecting", 80, "Selecting key files…")
+            yield _sse_event("selecting", 80, "Selecting key files…", seq=_next_seq(seq_box))
             selector = SmartFileSelector()
             start_time = time.perf_counter()
             try:
-                selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+                with analysis_stage_timer("selecting"):
+                    selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage selecting completed in {duration:.2f}ms",
@@ -464,11 +563,12 @@ async def analyze_stream(
                 cleanup_repo(clone_info["clone_path"])
                 return
 
-            yield _sse_event("indexing", 90, "Creating embeddings for RAG…")
+            yield _sse_event("indexing", 90, "Creating embeddings for RAG…", seq=_next_seq(seq_box))
             if settings.gemini_api_key and settings.zilliz_uri:
                 start_time = time.perf_counter()
                 try:
-                    await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+                    with analysis_stage_timer("indexing"):
+                        await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
                     duration = (time.perf_counter() - start_time) * 1000
                     logger.info(
                         f"Stage indexing completed in {duration:.2f}ms",
@@ -478,6 +578,11 @@ async def analyze_stream(
                     logger.warning(f"Indexing failed (non-fatal): {e}")
 
             # Stage 8: Complete — include full result data
+            # T4.4 — register the freshly-computed repo_id under its commit
+            # signature so any future caller (same URL + same sha) sees the
+            # dedup hit instead of re-running the whole pipeline.
+            if signature:
+                await _run_sync(cache.register_signature, signature, repo_id)
             result = {
                 "success": True,
                 "repo_id": repo_id,
@@ -496,8 +601,15 @@ async def analyze_stream(
                     "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
                 },
             }
-            yield _sse_event("complete", 100, "Analysis complete!", result)
-            yield "data: [DONE]\n\n"
+            # T2.4 — final event carries seq + total_events so the client can
+            # verify completeness. Replaces the previous bare "data: [DONE]\n\n"
+            # sentinel, which had no seq field.
+            final_seq = _next_seq(seq_box)
+            final_data = {
+                "total_events": final_seq,
+                "result": result,
+            }
+            yield _sse_event("complete", 100, "Analysis complete!", data=final_data, seq=final_seq)
         finally:
             repo_id_ctx.reset(token)
 
