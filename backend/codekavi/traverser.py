@@ -86,10 +86,15 @@ def traverse_repo(clone_path: str) -> dict:
           - languages: dict[str, int]  (language → file count)
           - tree: list of dicts (hierarchical folder structure)
           - files: list of dicts (flat list of file metadata)
+          - skipped_files: list of {path, size, size_formatted, reason} for files
+            excluded by traversal rules. Surfaced in the API response so the
+            frontend can warn that some files were omitted (size limit, hidden
+            files, ignored extensions, etc.).
     """
     all_files = []
     languages: dict[str, int] = {}
     total_size = 0
+    skipped_files: list[dict] = []
 
     # Build a hierarchical tree structure
     tree = _build_tree(clone_path, clone_path)
@@ -101,11 +106,25 @@ def traverse_repo(clone_path: str) -> dict:
 
         for filename in sorted(files):
             filepath = os.path.join(root, filename)
+            rel_path = os.path.relpath(filepath, clone_path)
 
-            if _should_ignore_file(filepath):
+            # Determine WHY a file is skipped so we can surface it to the user.
+            skip_reason = _skip_reason(filepath)
+            if skip_reason:
+                try:
+                    size = os.path.getsize(filepath)
+                except OSError:
+                    size = 0
+                skipped_files.append(
+                    {
+                        "path": rel_path,
+                        "size": size,
+                        "size_formatted": _format_size(size),
+                        "reason": skip_reason,
+                    }
+                )
                 continue
 
-            rel_path = os.path.relpath(filepath, clone_path)
             file_size = os.path.getsize(filepath)
             language = _detect_language(filepath)
 
@@ -135,7 +154,37 @@ def traverse_repo(clone_path: str) -> dict:
         "languages": sorted_languages,
         "tree": tree,
         "files": all_files,
+        "skipped_files": skipped_files,
     }
+
+
+def _skip_reason(filepath: str) -> str | None:
+    """
+    Return a human-readable reason why ``filepath`` was skipped, or ``None`` if
+    the file is keepable. Centralised so traverse_repo() can surface skip
+    reasons to the API caller.
+    """
+    basename = os.path.basename(filepath)
+
+    if basename in IGNORED_FILES:
+        return "ignored_filename"
+
+    _, ext = os.path.splitext(basename)
+    if ext.lower() in IGNORED_EXTENSIONS:
+        return "ignored_extension"
+
+    if basename.startswith(".") and basename not in FILENAME_LANGUAGE_MAP:
+        return "hidden_file"
+
+    try:
+        size = os.path.getsize(filepath)
+    except OSError:
+        return "unreadable"
+
+    if size > MAX_FILE_SIZE_BYTES:
+        return f"exceeds_max_size_{MAX_FILE_SIZE_BYTES // 1024}KB"
+
+    return None
 
 
 def _build_tree(current_path: str, root_path: str) -> list:
@@ -187,6 +236,17 @@ def _build_tree(current_path: str, root_path: str) -> list:
     for f in files:
         file_path = os.path.join(current_path, f)
         rel_path = os.path.relpath(file_path, root_path)
+        skip_reason = _skip_reason(file_path)
+        if skip_reason:
+            entries.append(
+                {
+                    "name": f,
+                    "type": "skipped",
+                    "path": rel_path,
+                    "reason": skip_reason,
+                }
+            )
+            continue
         file_size = os.path.getsize(file_path)
         entries.append(
             {
