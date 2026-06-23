@@ -2,8 +2,8 @@ import ast
 import hashlib
 import json
 import os
-from dataclasses import dataclass, asdict, field
-from typing import Any, Optional
+from dataclasses import asdict, dataclass
+from typing import Any
 
 import tree_sitter_javascript as tsjs
 import tree_sitter_typescript as tsts
@@ -109,7 +109,7 @@ def _hash_python_signature(sig: list[Any]) -> str:
     return hashlib.md5(json.dumps(canonical, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def compute_structure_signature(rel_path: str, abs_path: str, source: Optional[str] = None) -> dict:
+def compute_structure_signature(rel_path: str, abs_path: str, source: str | None = None) -> dict:
     """
     Compute structure-hash components for a file:
 
@@ -257,7 +257,7 @@ def load_fingerprints(repo_id: str) -> dict[str, FileFingerprint]:
         return {}
 
     try:
-        with open(cache_path, "r", encoding="utf-8") as f:
+        with open(cache_path, encoding="utf-8") as f:
             data = json.load(f)
             result: dict[str, FileFingerprint] = {}
             for k, v in data.items():
