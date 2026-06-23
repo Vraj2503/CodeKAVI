@@ -18,6 +18,10 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from codekavi.exceptions import ProviderError
 
 import dotenv
 from google import genai as google_genai
@@ -238,7 +242,7 @@ class GroqProvider:
     # Circuit breaker + quota hooks (T4.1, T4.2)
     # ─────────────────────────────────────────
 
-    def _rejected_by_breaker(self) -> "ProviderError | None":
+    def _rejected_by_breaker(self) -> ProviderError | None:
         """Return a ProviderError if the breaker rejects this call, else None."""
         if self._breaker.can_execute():
             return None
@@ -250,7 +254,7 @@ class GroqProvider:
             f"(state={snapshot['state']}, failures={snapshot['failures']})"
         )
         return ProviderError(
-            f"Circuit breaker open for groq — call rejected without network I/O",
+            "Circuit breaker open for groq — call rejected without network I/O",
             detail=f"state={snapshot['state']}, failures={snapshot['failures']}",
         )
 
@@ -545,7 +549,7 @@ class GeminiProvider:
     # Circuit breaker helpers (T4.2)
     # ─────────────────────────────────────────
 
-    def _rejected_by_breaker(self) -> "ProviderError | None":
+    def _rejected_by_breaker(self) -> ProviderError | None:
         """Return a ProviderError if the breaker rejects this call, else None."""
         if self._breaker.can_execute():
             return None
@@ -557,7 +561,7 @@ class GeminiProvider:
             f"(state={snapshot['state']}, failures={snapshot['failures']})"
         )
         return ProviderError(
-            f"Circuit breaker open for gemini — call rejected without network I/O",
+            "Circuit breaker open for gemini — call rejected without network I/O",
             detail=f"state={snapshot['state']}, failures={snapshot['failures']}",
         )
 
