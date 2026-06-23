@@ -142,7 +142,7 @@ async def analyze(
         # Fingerprint check for incremental analysis
         from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
         fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
-        
+
         if not has_structural:
             try:
                 cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
@@ -165,7 +165,7 @@ async def analyze(
                     }
             except Exception as e:
                 logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
-                
+
         await _run_sync(save_fingerprints, repo_id, fingerprints)
 
         # Analyze dependencies and classify roles using a shared BoundedContentCache
@@ -366,6 +366,7 @@ async def analyze_stream(
             return
 
         repo_id = clone_info["repo_id"]
+        signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
         token = repo_id_ctx.set(repo_id)
 
         try:

@@ -302,7 +302,7 @@ async def explain_repo_stream(
                     break
                 seq += 1
                 yield f"event: {event['type']}\nid: {seq}\ndata: {json.dumps({**event['data'], 'seq': seq})}\n\n"
-        except (RateLimitError, ProviderError, asyncio.TimeoutError) as e:
+        except (TimeoutError, RateLimitError, ProviderError) as e:
             # The orchestrator is LLM-bound; if Groq/Gemini is unavailable the
             # stream errors mid-flight. Emit a deterministic-tour fallback so
             # the client still gets a usable response (zero LLM cost).

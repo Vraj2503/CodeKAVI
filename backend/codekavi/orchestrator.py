@@ -682,9 +682,9 @@ class ExplanationOrchestrator:
 
     def _build_graph_context(self) -> dict:
         """Extract deps, entry_points, central_files, and deterministic imports from analysis."""
-        
+
         edges = self.analysis.get("edges", [])
-        complete_imports = {}
+        complete_imports: dict[str, list[str]] = {}
         for e in edges:
             src = e.get("source")
             tgt = e.get("target")
