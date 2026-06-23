@@ -93,6 +93,19 @@ app.include_router(api_router)
 
 os.makedirs("output/reports", exist_ok=True)
 
+# T4.3 — Prometheus /metrics endpoint. Lazily imported so missing packages
+# never crash startup; the rest of the app stays fully functional without it.
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    Instrumentator().instrument(app).expose(app)
+except ImportError:
+    import logging
+
+    logging.getLogger(__name__).info(
+        "prometheus-fastapi-instrumentator not installed; /metrics endpoint disabled"
+    )
+
 
 @app.get("/api/health")
 async def health():
