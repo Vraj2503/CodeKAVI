@@ -1,4 +1,4 @@
-# CodeKAVI — Codebase Intelligence Platform
+# CodeKAVI: Codebase Intelligence Platform
 
 CodeKAVI is an AI-powered codebase intelligence platform. It ingests repositories, maps dependency structures, performs smart code role classification, indexes source code chunks for RAG semantic search, and provides interactive, section-by-section AI-generated walkthroughs and explanation streams.
 
