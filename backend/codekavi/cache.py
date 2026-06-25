@@ -112,11 +112,25 @@ class AnalysisCache:
             return None
 
         try:
-            from supabase import create_client
+            from supabase import create_client, ClientOptions
+            from postgrest.utils import SyncClient
+            import httpx
 
-            self._supabase = create_client(supabase_url, supabase_key)
+            options = ClientOptions(postgrest_client_timeout=10)
+            self._supabase = create_client(supabase_url, supabase_key, options=options)
+            
+            # Explicitly configure HTTP connection pooling limits for Supabase under high concurrency
+            limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
+            old_session = self._supabase.postgrest.session
+            self._supabase.postgrest.session = SyncClient(
+                base_url=old_session.base_url,
+                headers=old_session.headers,
+                timeout=old_session.timeout,
+                limits=limits
+            )
+            
             self._supabase_available = True
-            logger.info("Supabase L3 cache connected")
+            logger.info("Supabase L3 cache connected with connection pooling")
             return self._supabase
         except Exception as e:
             logger.warning(f"Supabase connection failed — L3 cache disabled: {e}")
@@ -158,11 +172,11 @@ class AnalysisCache:
         # L1
         self._memory[repo_id] = serializable
 
-        # L2
-        self._redis_set(repo_id, serializable)
+        # L2 & L3 (serialize ONCE)
+        json_str = json.dumps(serializable)
+        self._redis_set_raw(repo_id, json_str)
+        self._supabase_set_raw(repo_id, json_str, result.get("repo_name", ""), result.get("owner", ""))
 
-        # L3
-        self._supabase_set(repo_id, serializable)
 
     def delete(self, repo_id: str) -> None:
         """Evict from all 3 tiers."""
@@ -195,6 +209,16 @@ class AnalysisCache:
             r.set(key, json.dumps(result), ex=REDIS_TTL_SECONDS)
         except Exception as e:
             logger.warning(f"Redis SET failed for {repo_id}: {e}")
+
+    def _redis_set_raw(self, repo_id: str, json_str: str) -> None:
+        r = self._get_redis()
+        if not r:
+            return
+        try:
+            key = f"{_REDIS_PREFIX}{repo_id}"
+            r.set(key, json_str, ex=REDIS_TTL_SECONDS)
+        except Exception as e:
+            logger.warning(f"Redis SET RAW failed for {repo_id}: {e}")
 
     def _redis_get(self, repo_id: str) -> dict | None:
         r = self._get_redis()
@@ -239,6 +263,30 @@ class AnalysisCache:
             ).execute()
         except Exception as e:
             logger.warning(f"Supabase SET failed for {repo_id}: {e}")
+
+    def _supabase_set_raw(self, repo_id: str, json_str: str, repo_name: str, owner: str) -> None:
+        sb = self._get_supabase()
+        if not sb:
+            return
+        try:
+            # We must parse json_str back to dict because Supabase Python client 
+            # uses JSON serialization internally, and passing a string to a JSONB 
+            # column would double-encode it. 
+            # (Wait, actually to avoid serialization completely we could use raw HTTP,
+            # but for now we fall back to dict to satisfy the supabase-py client).
+            # We'll just load it. This avoids the _make_serializable cost anyway.
+            # If the user wants raw, we load.
+            sb.table("analysis_cache").upsert(
+                {
+                    "repo_id": repo_id,
+                    "repo_name": repo_name,
+                    "owner": owner,
+                    "result_json": json.loads(json_str),
+                    "updated_at": "now()",
+                }
+            ).execute()
+        except Exception as e:
+            logger.warning(f"Supabase SET RAW failed for {repo_id}: {e}")
 
     def _supabase_get(self, repo_id: str) -> dict | None:
         sb = self._get_supabase()
