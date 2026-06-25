@@ -213,6 +213,7 @@ def _content_signals(
     ext: str,
     content_cache: dict[str, str] | BoundedContentCache | None = None,
     rel_path: str | None = None,
+    precomputed_signals: list[str] | None = None,
 ) -> dict:
     """
     Read up to 4KB of a source file and detect structural signals.
@@ -241,25 +242,33 @@ def _content_signals(
         except OSError:
             return signals
 
-    # Python main guard
-    if "if __name__" in content and "__main__" in content:
-        signals["has_main_guard"] = True
+    if precomputed_signals is not None:
+        if "main_guard" in precomputed_signals:
+            signals["has_main_guard"] = True
+        if "main_fn" in precomputed_signals:
+            signals["has_main_function"] = True
+        if "starts_server" in precomputed_signals:
+            signals["starts_server"] = True
+    else:
+        # Python main guard
+        if "if __name__" in content and "__main__" in content:
+            signals["has_main_guard"] = True
 
-    # Main / entry functions
-    if re.search(r"def\s+main\s*\(", content):
-        signals["has_main_function"] = True
-    if re.search(r"func\s+main\s*\(", content):  # Go
-        signals["has_main_function"] = True
-    if re.search(r"public\s+static\s+void\s+main", content):  # Java
-        signals["has_main_function"] = True
+        # Main / entry functions
+        if re.search(r"def\s+main\s*\(", content):
+            signals["has_main_function"] = True
+        if re.search(r"func\s+main\s*\(", content):  # Go
+            signals["has_main_function"] = True
+        if re.search(r"public\s+static\s+void\s+main", content):  # Java
+            signals["has_main_function"] = True
 
-    # Server startup
-    if re.search(r"app\.listen\s*\(", content) or re.search(r"createServer\s*\(", content):
-        signals["starts_server"] = True
-    if re.search(r"\.run\s*\(", content) and any(kw in content for kw in ["Flask", "FastAPI", "uvicorn", "Django"]):
-        signals["starts_server"] = True
-    if "uvicorn.run" in content:
-        signals["starts_server"] = True
+        # Server startup
+        if re.search(r"app\.listen\s*\(", content) or re.search(r"createServer\s*\(", content):
+            signals["starts_server"] = True
+        if re.search(r"\.run\s*\(", content) and any(kw in content for kw in ["Flask", "FastAPI", "uvicorn", "Django"]):
+            signals["starts_server"] = True
+        if "uvicorn.run" in content:
+            signals["starts_server"] = True
 
     # Class definitions (model/type files often have many)
     class_count = len(re.findall(r"(?:class|interface|struct|enum)\s+\w+", content))
@@ -361,7 +370,10 @@ def classify_files(
         used_by = reverse_adjacency.get(rel_path, [])
 
         # Collect signals
-        signals = _content_signals(abs_path, ext, content_cache=content_cache, rel_path=rel_path)
+        precomputed = dep_data.get("file_signals", {}).get(rel_path)
+        signals = _content_signals(
+            abs_path, ext, content_cache=content_cache, rel_path=rel_path, precomputed_signals=precomputed
+        )
 
         # ── Classify ──
         role, role_label, confidence, tags = _determine_role(
