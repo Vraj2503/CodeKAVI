@@ -8,23 +8,182 @@ export function mockChatResponse() {
   return responses[Math.floor(Math.random() * responses.length)];
 }
 
+/**
+ * Module configuration used by the `dependencies` mock to build a realistic
+ * architectural module hierarchy. Module IDs match `ModuleInfo.name` — the
+ * key the DependencyGraph component uses to wire up file-level expansion.
+ */
+const modulesConfig = [
+  {
+    name: "routes",
+    files: [
+      "src/routes/auth.routes.ts",
+      "src/routes/api.routes.ts",
+      "src/routes/web.routes.ts",
+    ],
+    roles: { routes: 3 },
+    importance: 0.92,
+    internal_edges: 0,
+  },
+  {
+    name: "services",
+    files: [
+      "src/services/userService.ts",
+      "src/services/orderService.ts",
+      "src/services/productService.ts",
+      "src/services/notificationService.ts",
+    ],
+    roles: { services: 4 },
+    importance: 0.78,
+    internal_edges: 2,
+  },
+  {
+    name: "models",
+    files: [
+      "src/models/User.ts",
+      "src/models/Order.ts",
+      "src/models/Product.ts",
+    ],
+    roles: { models: 3 },
+    importance: 0.65,
+    internal_edges: 0,
+  },
+  {
+    name: "database",
+    files: ["src/database/postgres.ts", "src/database/redis.ts"],
+    roles: { database: 2 },
+    importance: 0.55,
+    internal_edges: 0,
+  },
+  {
+    name: "utils",
+    files: ["src/utils/hash.ts", "src/utils/jwt.ts"],
+    roles: { utils: 2 },
+    importance: 0.35,
+    internal_edges: 0,
+  },
+  {
+    name: "components",
+    files: ["src/components/Button.tsx", "src/components/Form.tsx"],
+    roles: { component: 2 },
+    importance: 0.4,
+    internal_edges: 1,
+  },
+];
+
 export function mockVizResponse(type: string) {
   switch (type) {
-    case "dependencies":
-      return {
-        nodes: Array.from({ length: 30 }, (_, i) => ({
-          id: `node_${i}`,
-          label: `Module${i}.ts`,
-          type: i % 5 === 0 ? "component" : i % 3 === 0 ? "service" : "file",
-        })),
-        edges: Array.from({ length: 45 }, () => ({
-          source: `node_${Math.floor(Math.random() * 10)}`, // hubs
-          target: `node_${Math.floor(Math.random() * 20) + 10}`,
-        })).concat([
-          { source: "node_0", target: "node_1" },
-          { source: "node_1", target: "node_2" }
-        ]),
+    case "dependencies": {
+      // Realistic architectural module hierarchy.
+      // Mock is now deterministic (no Math.random) and exposes BOTH
+      // file-level graph data AND the module-level aggregate the
+      // two-stage DependencyGraph component reads.
+      const fileToModule = (filePath: string): string => {
+        const m = modulesConfig.find((mm) => mm.files.includes(filePath));
+        return m ? m.name : "components";
       };
+
+      const modules = modulesConfig.map((mm) => ({
+        name: mm.name,
+        file_count: mm.files.length,
+        files: mm.files,
+        languages: { typescript: mm.files.length },
+        roles: mm.roles,
+        importance: mm.importance,
+        internal_edges: mm.internal_edges,
+      }));
+
+      // Flatten every module's files into file-level nodes
+      const nodes = modulesConfig.flatMap((mm) =>
+        mm.files.map((f) => ({
+          id: f,
+          label: f.split("/").pop() || f,
+          type: Object.keys(mm.roles)[0] || "file",
+        }))
+      );
+      // Entry-point / cross-cutting files outside any module
+      nodes.push(
+        { id: "src/index.ts", label: "index.ts", type: "file" },
+        { id: "src/app.ts", label: "app.ts", type: "file" }
+      );
+
+      // Hand-authored file-level edges — believable dependency flow
+      const edges = [
+        // app bootstrap
+        { source: "src/index.ts", target: "src/app.ts" },
+        { source: "src/app.ts", target: "src/routes/auth.routes.ts" },
+        { source: "src/app.ts", target: "src/routes/api.routes.ts" },
+        { source: "src/app.ts", target: "src/routes/web.routes.ts" },
+        // routes → services
+        { source: "src/routes/auth.routes.ts", target: "src/services/userService.ts" },
+        { source: "src/routes/auth.routes.ts", target: "src/services/notificationService.ts" },
+        { source: "src/routes/api.routes.ts", target: "src/services/orderService.ts" },
+        { source: "src/routes/api.routes.ts", target: "src/services/productService.ts" },
+        { source: "src/routes/web.routes.ts", target: "src/services/productService.ts" },
+        // routes → utils
+        { source: "src/routes/auth.routes.ts", target: "src/utils/jwt.ts" },
+        // services → models
+        { source: "src/services/userService.ts", target: "src/models/User.ts" },
+        { source: "src/services/userService.ts", target: "src/models/Order.ts" },
+        { source: "src/services/orderService.ts", target: "src/models/Order.ts" },
+        { source: "src/services/orderService.ts", target: "src/models/User.ts" },
+        { source: "src/services/productService.ts", target: "src/models/Product.ts" },
+        // services → utils
+        { source: "src/services/userService.ts", target: "src/utils/hash.ts" },
+        { source: "src/services/notificationService.ts", target: "src/utils/jwt.ts" },
+        // models → database
+        { source: "src/models/User.ts", target: "src/database/postgres.ts" },
+        { source: "src/models/Order.ts", target: "src/database/postgres.ts" },
+        { source: "src/models/Product.ts", target: "src/database/redis.ts" },
+        // components → utils
+        { source: "src/components/Form.tsx", target: "src/components/Button.tsx" },
+        { source: "src/components/Form.tsx", target: "src/utils/hash.ts" },
+      ];
+
+      // Aggregate file-level edges into module-level edges with weights
+      const moduleEdgeMap = new Map<string, number>();
+      for (const e of edges) {
+        const ms = fileToModule(e.source);
+        const mt = fileToModule(e.target);
+        if (ms === mt) continue;
+        const key = `${ms}|${mt}`;
+        moduleEdgeMap.set(key, (moduleEdgeMap.get(key) || 0) + 1);
+      }
+      const moduleEdges = Array.from(moduleEdgeMap.entries()).map(([k, weight]) => {
+        const [source, target] = k.split("|");
+        return { source, target, weight };
+      });
+
+      // Compute in/out weights from the aggregated edges
+      const inWeight = new Map<string, number>();
+      const outWeight = new Map<string, number>();
+      for (const me of moduleEdges) {
+        outWeight.set(me.source, (outWeight.get(me.source) || 0) + me.weight);
+        inWeight.set(me.target, (inWeight.get(me.target) || 0) + me.weight);
+      }
+
+      const moduleGraph = {
+        nodes: modules.map((m) => ({
+          id: m.name,
+          label: m.name,
+          group: m.name,
+          file_count: m.file_count,
+          importance: m.importance,
+          in_weight: inWeight.get(m.name) || 0,
+          out_weight: outWeight.get(m.name) || 0,
+          primary_language: "typescript",
+          size: 0,
+        })),
+        edges: moduleEdges,
+      };
+
+      return {
+        nodes,
+        edges,
+        modules,
+        module_graph: moduleGraph,
+      };
+    }
 
     case "complexity":
       return {

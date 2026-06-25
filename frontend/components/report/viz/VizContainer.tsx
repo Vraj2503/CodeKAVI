@@ -23,7 +23,7 @@ const vizTitleMap: Record<string, string> = {
 function renderViz(type: string, data: any) {
   switch (type) {
     case "dependency_graph":
-      return <DependencyGraph nodes={data.nodes} edges={data.edges} />;
+      return <DependencyGraph nodes={data.nodes} edges={data.edges} moduleGraph={data.module_graph} modules={data.modules} />;
     case "architecture_graph":
       return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
     case "flow_diagram":

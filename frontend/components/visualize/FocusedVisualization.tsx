@@ -333,7 +333,7 @@ function renderVisualization(type: VizType, data: any) {
 
   switch (type) {
     case "dependencies":
-      return <DependencyGraph nodes={data.nodes || []} edges={data.edges || []} />;
+      return <DependencyGraph nodes={data.nodes || []} edges={data.edges || []} moduleGraph={data.module_graph} modules={data.modules} />;
     case "architecture":
       return <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />;
     case "dataflow":

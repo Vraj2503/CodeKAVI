@@ -65,6 +65,9 @@ async def visualize_dependencies(
     """
     Build dependency graph visualization from static analysis data.
     Zero LLM cost — uses adjacency data computed during /analyze.
+
+    Returns BOTH file-level graph (nodes/edges) AND module-level data
+    (modules/connections) so the frontend can render either view.
     """
     result, _ = await _load_repo(repo_id, cache)
     analysis = result.get("dep_data", {})
@@ -104,9 +107,31 @@ async def visualize_dependencies(
             if t in seen_nodes:
                 edges.append({"source": src, "target": t})
 
+    # ───── Module-level data (for hierarchical view) ─────
+    module_graph = result.get("module_graph", {}) or {}
+    modules: list[dict[str, Any]] = []
+    connections: list[dict[str, Any]] = []
+    module_graph_json: dict[str, Any] = {"nodes": [], "edges": []}
+
+    if isinstance(module_graph, dict):
+        modules = module_graph.get("modules", []) or []
+        connections = module_graph.get("connections", []) or []
+        gjson = module_graph.get("graph_json") or {}
+        if isinstance(gjson, dict):
+            module_graph_json = {
+                "nodes": gjson.get("nodes", []) or [],
+                "edges": gjson.get("edges", []) or [],
+            }
+
     return {
         "type": "dependency_graph",
-        "data": {"nodes": nodes, "edges": edges},
+        "data": {
+            "nodes": nodes,
+            "edges": edges,
+            "modules": modules,
+            "connections": connections,
+            "module_graph": module_graph_json,
+        },
     }
 
 
