@@ -4,7 +4,7 @@ import { ReportView } from "@/components/report/ReportView";
 import { useRepo } from "@/components/RepoProvider";
 
 export default function ReportPage() {
-  const { repoData } = useRepo();
+  const { repoData, needsReanalysis, handleAnalyze } = useRepo();
 
   if (!repoData) {
     return (
@@ -18,6 +18,8 @@ export default function ReportPage() {
     <ReportView
       repoId={repoData.repo_id}
       repoName={`${repoData.owner}/${repoData.repo_name}`}
+      needsReanalysis={needsReanalysis}
+      onReanalyze={() => handleAnalyze(repoData.github_url)}
     />
   );
 }

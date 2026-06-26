@@ -20,6 +20,7 @@ class ExplainRequest(BaseModel):
     min_importance: float = 10.0
     model: str | None = None
     depth: str = "detailed"
+    prompt: str | None = None
 
 
 class ExplainFileRequest(BaseModel):

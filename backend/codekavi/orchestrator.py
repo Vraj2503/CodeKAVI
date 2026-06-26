@@ -182,8 +182,10 @@ class ExplanationOrchestrator:
         viz_data = None
 
         if json_mode:
+            # Strip markdown code blocks if the model wrapped the JSON output
+            clean_response = re.sub(r"^```(?:json)?\s*(.*?)\s*```$", r"\1", response.strip(), flags=re.DOTALL)
             try:
-                parsed = json.loads(response)
+                parsed = json.loads(clean_response)
                 raw_viz = parsed.get("visualization", {})
                 # Normalize node/edge types in the JSON payload before
                 # shaping it for the frontend. This is the only place LLM
@@ -194,9 +196,11 @@ class ExplanationOrchestrator:
                 response = parsed.get("content", "")
             except json.JSONDecodeError:
                 viz_data = None
+                response = "" # Prevent raw JSON string from being shown to the user
 
         if viz_data is None:
             viz_data = self._auto_viz(name)
+
 
         section = {
             "title": self._title(name),
@@ -508,6 +512,8 @@ class ExplanationOrchestrator:
             return self._auto_viz_architecture()
         elif section_name == "data_flow":
             return self._auto_viz_dataflow()
+        elif section_name == "mindmap":
+            return {"root": {"name": "Root", "children": []}}
         return None
 
     def _auto_viz_dependencies(self) -> dict:

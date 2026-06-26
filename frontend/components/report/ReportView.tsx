@@ -2,12 +2,13 @@
 
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, CheckCircle } from "lucide-react";
+import { Sparkles, CheckCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useSSE } from "@/hooks/useSSE";
 import { ProgressTracker } from "./ProgressTracker";
 import { SectionSkeleton } from "./SectionSkeleton";
 import { SectionRenderer, type SectionData } from "./SectionRenderer";
+import { CreateReportModal } from "./CreateReportModal";
 
 const API_BASE = "/api";
 
@@ -22,74 +23,15 @@ const sectionOrder = [
   "mindmap",
 ] as const;
 
-// ── Helper components ──
 
-function StatCard({ value, label }: { value: number | string; label: string }) {
-  return (
-    <div className="bg-card border border-border rounded-xl p-4 text-center">
-      <div className="text-2xl font-bold text-foreground">{value}</div>
-      <div className="text-sm text-muted-foreground mt-1">{label}</div>
-    </div>
-  );
-}
-
-function LanguageBar({ languages }: { languages: Record<string, number> }) {
-  const entries = Object.entries(languages).sort(([, a], [, b]) => b - a);
-  const total = entries.reduce((sum, [, count]) => sum + count, 0);
-  if (total === 0) return null;
-
-  // Monochrome shades from light to dark
-  const monoShades = [
-    "hsl(var(--foreground))",
-    "hsl(var(--muted-foreground))",
-    "hsl(var(--ring))",
-    "hsl(var(--primary))",
-    "hsl(0 0% 55%)",
-    "hsl(0 0% 40%)",
-    "hsl(0 0% 30%)",
-    "hsl(0 0% 70%)",
-  ];
-
-  return (
-    <div>
-      {/* Bar */}
-      <div className="flex h-2 rounded-full overflow-hidden">
-        {entries.map(([lang, count], i) => (
-          <div
-            key={lang}
-            style={{
-              width: `${(count / total) * 100}%`,
-              backgroundColor: monoShades[i % monoShades.length],
-            }}
-          />
-        ))}
-      </div>
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-        {entries.map(([lang, count], i) => {
-          const pct = ((count / total) * 100).toFixed(1);
-          return (
-            <div key={lang} className="flex items-center gap-1.5 text-xs">
-              <span
-                className="w-2 h-2 rounded-full flex-shrink-0"
-                style={{ backgroundColor: monoShades[i % monoShades.length] }}
-              />
-              <span className="text-foreground">
-                {lang} ({pct}%)
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 // ── Main ReportView ──
 
 interface ReportViewProps {
   repoId: string;
   repoName?: string;
+  needsReanalysis?: boolean;
+  onReanalyze?: () => void;
 }
 
 interface StatsData {
@@ -99,7 +41,7 @@ interface StatsData {
   entry_points: string[];
 }
 
-export function ReportView({ repoId, repoName }: ReportViewProps) {
+export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: ReportViewProps) {
   const [stats, setStats] = useState<StatsData | null>(null);
   const [sections, setSections] = useState<Map<string, SectionData>>(
     new Map()
@@ -107,6 +49,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
   const [completedSections, setCompletedSections] = useState<string[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const { startStream, stop, isStreaming, progress, phase, message } = useSSE({
     onStats: (data) => setStats(data as StatsData),
@@ -121,22 +64,39 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
     onWarning: (data) => console.warn("[Report warning]", data),
   });
 
-  const handleGenerate = useCallback(() => {
-    // Reset state
-    setStats(null);
-    setSections(new Map());
-    setCompletedSections([]);
-    setIsComplete(false);
-    setHasStarted(true);
+  const handleGenerate = useCallback(
+    (prompt: string) => {
+      // Close the modal
+      setIsModalOpen(false);
 
-    const streamUrl = `${API_BASE}/explain/${repoId}/stream`;
-    startStream(streamUrl, { depth: "detailed" });
-  }, [repoId, startStream]);
+      // Reset state
+      setStats(null);
+      setSections(new Map());
+      setCompletedSections([]);
+      setIsComplete(false);
+      setHasStarted(true);
+
+      const streamUrl = `${API_BASE}/explain/${repoId}/stream`;
+      startStream(streamUrl, {
+        depth: "detailed",
+        ...(prompt ? { prompt } : {}),
+      });
+    },
+    [repoId, startStream]
+  );
+
+  const openModal = useCallback(() => {
+    setIsModalOpen(true);
+  }, []);
+
+  const closeModal = useCallback(() => {
+    setIsModalOpen(false);
+  }, []);
 
   return (
     <div className="flex flex-col h-full bg-background overflow-y-auto">
       {/* Sticky header */}
-      <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-sm border-b border-border px-6 py-4">
+      <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-sm px-6 py-4">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="text-xl font-bold text-foreground">
@@ -148,9 +108,9 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           </div>
 
           {/* Generate / Stop / Regenerate button */}
-          {!isStreaming && !isComplete && (
+          {!isStreaming && !isComplete && hasStarted && (
             <button
-              onClick={handleGenerate}
+              onClick={openModal}
               className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
             >
               <Sparkles size={16} /> Generate Report
@@ -166,7 +126,7 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           )}
           {isComplete && !isStreaming && (
             <button
-              onClick={handleGenerate}
+              onClick={openModal}
               className="bg-card hover:bg-muted text-foreground rounded-lg px-4 py-2 font-medium border border-border transition-colors"
             >
               Regenerate
@@ -189,42 +149,47 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
       {/* Empty state when not started */}
       {!hasStarted && !isStreaming && (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
-          <h2 className="text-2xl font-bold text-foreground mb-2">
-            Ready to Generate Your Report
-          </h2>
-          <p className="text-muted-foreground max-w-md">
-            AI will analyze your codebase and generate 8 comprehensive sections
-            covering architecture, components, data flow, and more.
-          </p>
+          {needsReanalysis ? (
+            <>
+              <h2 className="text-2xl font-bold text-foreground mb-2">
+                Analysis Data Expired
+              </h2>
+              <p className="text-muted-foreground max-w-md mb-6">
+                The cached analysis for this repository has expired.
+                Please re-analyze the repository before generating a report.
+              </p>
+              {onReanalyze && (
+                <button
+                  onClick={onReanalyze}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
+                >
+                  <RefreshCw size={16} />
+                  Re-analyze Repository
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <h2 className="text-2xl font-bold text-foreground mb-2">
+                Ready to Generate Your Report
+              </h2>
+              <p className="text-muted-foreground max-w-md mb-6">
+                AI will analyze your codebase and generate a comprehensive report.
+                You can provide custom instructions or use the default template.
+              </p>
+              <button
+                onClick={openModal}
+                className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
+              >
+                <Sparkles size={16} />
+                Generate Report
+              </button>
+            </>
+          )}
         </div>
       )}
 
-      {/* Stat cards (appear instantly when stats arrive) */}
-      {stats && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="grid grid-cols-2 md:grid-cols-4 gap-4 px-6 py-6"
-        >
-          <StatCard value={stats.total_files} label="Source Files" />
-          <StatCard
-            value={Object.keys(stats.languages || {}).length}
-            label="Languages"
-          />
-          <StatCard value={stats.selected_files} label="Files Analyzed" />
-          <StatCard
-            value={(stats.entry_points || []).length}
-            label="Entry Points"
-          />
-        </motion.div>
-      )}
 
-      {/* Language bar */}
-      {stats?.languages && Object.keys(stats.languages).length > 0 && (
-        <div className="px-6 mb-6">
-          <LanguageBar languages={stats.languages} />
-        </div>
-      )}
 
       {/* Sections */}
       <div className="px-6 pb-20 space-y-4">
@@ -265,6 +230,14 @@ export function ReportView({ repoId, repoName }: ReportViewProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Create Report Modal */}
+      <CreateReportModal
+        isOpen={isModalOpen}
+        onClose={closeModal}
+        onGenerate={handleGenerate}
+        isStreaming={isStreaming}
+      />
     </div>
   );
 }
