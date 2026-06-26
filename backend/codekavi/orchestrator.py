@@ -72,13 +72,13 @@ class ExplanationOrchestrator:
         yield self._progress(10, "generating", "AI is reading your codebase...")
 
         # Load file contents
-        file_contents = self._load_selected_file_contents()
-        graph_data = self._build_graph_context()
+        self.file_contents = self._load_selected_file_contents()
+        file_contents = self.file_contents
 
         # ── BATCH 1 — 3 sections in parallel ──
         batch_1 = {
-            "overview": self._gen("overview", "overview", self._prompt_overview(file_contents, graph_data)),
-            "dependencies": self._gen("dependencies", "viz_data", self._prompt_dependencies(graph_data)),
+            "overview": self._gen("overview", "overview", self._prompt_overview(file_contents)),
+            "dependencies": self._gen("dependencies", "viz_data", self._prompt_dependencies()),
             "complexity": self._gen("complexity", "viz_data", self._prompt_complexity()),
         }
         async for ev in self._run_batch(batch_1, 15, 40):
@@ -90,7 +90,7 @@ class ExplanationOrchestrator:
         # ── BATCH 2 — 3 sections in parallel ──
         batch_2 = {
             "architecture": self._gen(
-                "architecture", "architecture", self._prompt_architecture(file_contents, graph_data)
+                "architecture", "architecture", self._prompt_architecture(file_contents)
             ),
             "components": self._gen("components", "components", self._prompt_components(file_contents)),
             "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents, graph_data)),
@@ -105,7 +105,7 @@ class ExplanationOrchestrator:
         batch_3 = {
             "patterns": self._gen("patterns", "patterns", self._prompt_patterns(file_contents)),
             "mindmap": self._gen(
-                "mindmap", "mindmap_data", self._prompt_mindmap(file_contents, graph_data), json_mode=True
+                "mindmap", "mindmap_data", self._prompt_mindmap(file_contents), json_mode=True
             ),
         }
         async for ev in self._run_batch(batch_3, 75, 95):
@@ -128,7 +128,34 @@ class ExplanationOrchestrator:
 
         try:
             while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=60.0)
+                
+                if not done and pending:
+                    # Timeout reached
+                    logger.warning(f"Timeout generating sections: {[task_to_name[p] for p in pending]}")
+                    for task in pending:
+                        if not task.done():
+                            task.cancel()
+                            name = task_to_name[task]
+                            self.sections_completed += 1
+                            done_count += 1
+                            yield {"type": "warning", "data": {"section": name, "message": "Generation timed out."}}
+                            
+                            # Provide deterministic fallback
+                            viz_data = self._auto_viz(name)
+                            yield {
+                                "type": "section",
+                                "data": {
+                                    "name": name,
+                                    "title": self._title(name),
+                                    "content": "",
+                                    "code_snippets": [],
+                                    "visualization_type": self._viz_type(name),
+                                    "visualization_data": viz_data,
+                                }
+                            }
+                    break
+
                 for task in done:
                     name = task_to_name[task]
                     self.sections_completed += 1
@@ -230,9 +257,9 @@ class ExplanationOrchestrator:
         "markdown only. Visualization data is handled separately."
     )
 
-    def _prompt_overview(self, file_contents: dict, graph_data: dict) -> dict:
+    def _prompt_overview(self, file_contents: dict) -> dict:
         files_list = list(file_contents.keys())[:30]
-        entry_points = graph_data.get("entry_points", [])[:2]
+        entry_points = self.analysis.get("entry_points", [])[:2]
         entry_code = ""
         for ep in entry_points:
             ep_file = ep.get("file", "")
@@ -256,13 +283,13 @@ class ExplanationOrchestrator:
         )
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
 
-    def _prompt_architecture(self, file_contents: dict, graph_data: dict) -> dict:
+    def _prompt_architecture(self, file_contents: dict) -> dict:
         classifications = []
         for fp in (self.classification or [])[:20]:
             classifications.append(f"- `{fp.get('path', '')}` — {fp.get('role_label', fp.get('role', '?'))}")
 
         # Deterministic import map (preferred over the generic adjacency subset)
-        complete = graph_data.get("complete_imports", {}) or {}
+        complete = self.analysis.get("adjacency", {}) or {}
         import_lines = []
         for src, targets in list(complete.items())[:30]:
             target_list = targets if isinstance(targets, list) else [targets]
@@ -317,7 +344,7 @@ class ExplanationOrchestrator:
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3500}
 
     def _prompt_dataflow(self, file_contents: dict, graph_data: dict) -> dict:
-        entry_points = graph_data.get("entry_points", [])[:3]
+        entry_points = self.analysis.get("entry_points", [])[:3]
         entry_code = ""
         for ep in entry_points:
             ep_file = ep.get("file", "")
@@ -325,7 +352,7 @@ class ExplanationOrchestrator:
                 entry_code += f"\n### {ep_file}\n```\n{file_contents[ep_file][:2500]}\n```\n"
 
         # Deterministic import map (preferred over the generic adjacency subset)
-        complete = graph_data.get("complete_imports", {}) or {}
+        complete = self.analysis.get("adjacency", {}) or {}
         import_lines = []
         for src, targets in list(complete.items())[:25]:
             target_list = targets if isinstance(targets, list) else [targets]
@@ -350,11 +377,11 @@ class ExplanationOrchestrator:
         )
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
 
-    def _prompt_dependencies(self, graph_data: dict) -> dict:
+    def _prompt_dependencies(self) -> dict:
         # Deterministic import map — every edge below has been resolved from
         # the actual parsed tree and is not inferred. The LLM must NOT guess
         # additional dependencies beyond what is listed.
-        complete = graph_data.get("complete_imports", {}) or {}
+        complete = self.analysis.get("adjacency", {}) or {}
         import_lines: list[str] = []
         for src, targets in list(complete.items())[:30]:
             target_list = targets if isinstance(targets, list) else [targets]
@@ -374,7 +401,7 @@ class ExplanationOrchestrator:
             f"- `{c.get('file', '')}` (in: {c.get('in_degree', 0)}, out: {c.get('out_degree', 0)})" for c in central
         ]
 
-        entry_lines = [f"- `{e.get('file', '')}`" for e in graph_data.get("entry_points", [])[:5]]
+        entry_lines = [f"- `{e.get('file', '')}`" for e in self.analysis.get("entry_points", [])[:5]]
 
         user = (
             f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
@@ -429,9 +456,9 @@ class ExplanationOrchestrator:
         )
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
 
-    def _prompt_mindmap(self, file_contents: dict, graph_data: dict) -> dict:
+    def _prompt_mindmap(self, file_contents: dict) -> dict:
         files_list = list(file_contents.keys())[:20]
-        entry_points = [e.get("file", "") for e in graph_data.get("entry_points", [])[:5]]
+        entry_points = [e.get("file", "") for e in self.analysis.get("entry_points", [])[:5]]
         languages = self._count_languages()
         classifications = []
         for fp in (self.classification or [])[:20]:
@@ -478,6 +505,20 @@ class ExplanationOrchestrator:
 
             # Check if the matched path exists in selected files
             if match not in selected_set:
+                continue
+
+            # Fast path: Use memory cache if available
+            if hasattr(self, "file_contents") and match in self.file_contents:
+                code = self.file_contents[match][:2000]
+                lines = code.count("\n") + 1
+                snippets.append(
+                    {
+                        "file_path": match,
+                        "code": code,
+                        "line_start": 1,
+                        "line_end": lines,
+                    }
+                )
                 continue
 
             # Read actual file content from disk
@@ -685,30 +726,6 @@ class ExplanationOrchestrator:
             except OSError:
                 continue
         return contents
-
-    def _build_graph_context(self) -> dict:
-        """Extract deps, entry_points, central_files, and deterministic imports from analysis."""
-
-        edges = self.analysis.get("edges", [])
-        complete_imports: dict[str, list[str]] = {}
-        for e in edges:
-            src = e.get("source")
-            tgt = e.get("target")
-            if not src or not tgt:
-                continue
-            if src not in complete_imports:
-                complete_imports[src] = []
-            if tgt not in complete_imports[src]:
-                complete_imports[src].append(tgt)
-
-        return {
-            "adjacency": self.analysis.get("adjacency", {}),
-            "reverse_adjacency": self.analysis.get("reverse_adjacency", {}),
-            "entry_points": self.analysis.get("entry_points", []),
-            "central_files": self.analysis.get("central_files", []),
-            "stats": self.analysis.get("stats", {}),
-            "complete_imports": complete_imports,
-        }
 
     def _progress(self, pct: int, phase: str, msg: str) -> dict:
         return {
