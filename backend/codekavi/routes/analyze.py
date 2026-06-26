@@ -20,6 +20,15 @@ from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
+
+def safe_cleanup(path: str):
+    from codekavi.cloner import cleanup_repo
+    import logging
+    try:
+        safe_cleanup(path)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to cleanup repo {path}: {e}")
+
 from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
     build_module_graph,
@@ -136,12 +145,20 @@ async def analyze(
                 extra={"stage": "traversing", "duration_ms": duration},
             )
         except Exception as e:
-            cleanup_repo(clone_info["clone_path"])
+            safe_cleanup(clone_info["clone_path"])
             raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
+
+        # Build initial content cache from traverser
+        content_cache_dict = {}
+        for f in repo_data.get("files", []):
+            if "content" in f:
+                content_cache_dict[f["path"]] = f.pop("content")
 
         # Fingerprint check for incremental analysis
         from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
-        fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
+        fingerprints, has_structural = await _run_sync(
+            compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"], content_cache_dict, executor_type='cpu'
+        )
 
         if not has_structural:
             try:
@@ -170,11 +187,16 @@ async def analyze(
 
         # Analyze dependencies and classify roles using a shared BoundedContentCache
         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+        # Pre-populate BoundedContentCache with already loaded content
+        for k, v in content_cache_dict.items():
+            content_cache.cache[k] = v
+            content_cache.current_size += len(v.encode('utf-8'))
+        
         start_time = time.perf_counter()
         try:
             with analysis_stage_timer("analyzing"):
                 dep_data = await _run_sync(
-                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache, executor_type='cpu'
                 )
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
@@ -201,6 +223,7 @@ async def analyze(
                     repo_data["files"],
                     dep_data,
                     content_cache=content_cache,
+                    executor_type='cpu'
                 )
                 role_summary = summarize_roles(file_profiles)
             duration = (time.perf_counter() - start_time) * 1000
@@ -259,7 +282,7 @@ async def analyze(
             "module_graph": module_graph,
             "selected_files": selected_files,
         }
-        save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
+        background_tasks.add_task(save_analysis, repo_id, clone_info["clone_path"], result_data, cache)
 
         # T4.4 — register cross-user signature so subsequent callers probing
         # this commit at this SHA skip the pipeline.
@@ -320,11 +343,48 @@ def _next_seq(counter_ref: list[int]) -> int:
     return counter_ref[0]
 
 
+async def with_keepalive(async_gen_func):
+    """
+    Wraps an async generator to yield a keepalive comment every 15 seconds
+    if the generator hasn't produced an event. Prevents proxy timeouts.
+    """
+    import asyncio
+    q = asyncio.Queue()
+
+    async def producer():
+        try:
+            async for item in async_gen_func():
+                await q.put(item)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            await q.put(e)
+        finally:
+            await q.put(None)
+
+    task = asyncio.create_task(producer())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(q.get(), timeout=15.0)
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+            except asyncio.TimeoutError:
+                yield ":keepalive\n\n"
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+
+
 @router.post("/analyze/stream")
 @limiter.limit("5/minute")
 async def analyze_stream(
     request: Request,
     body: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
     cache: AnalysisCache = Depends(get_cache),
     user_id: str = Depends(verify_supabase_token),
 ):
@@ -373,7 +433,7 @@ async def analyze_stream(
             # Stage 2: Traversing
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before traversing repo {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 return
 
             yield _sse_event("traversing", 25, "Scanning file structure…", seq=_next_seq(seq_box))
@@ -387,7 +447,7 @@ async def analyze_stream(
                     extra={"stage": "traversing", "duration_ms": duration},
                 )
             except Exception as e:
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 yield _sse_event("error", 0, f"Failed to traverse repository: {e}", seq=_next_seq(seq_box))
                 return
 
@@ -441,7 +501,7 @@ async def analyze_stream(
             # Stage 3: Analyzing dependencies
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before dependency analysis of {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 return
 
             yield _sse_event("analyzing", 40, "Analyzing dependencies…", seq=_next_seq(seq_box))
@@ -471,7 +531,7 @@ async def analyze_stream(
             # Stage 4: Classifying files
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before role classification of {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 return
 
             yield _sse_event("classifying", 55, "Classifying file roles…", seq=_next_seq(seq_box))
@@ -501,7 +561,7 @@ async def analyze_stream(
             # Stage 5: Building graphs
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before graph export of {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 return
 
             yield _sse_event("graphing", 70, "Building dependency graphs…", seq=_next_seq(seq_box))
@@ -526,7 +586,7 @@ async def analyze_stream(
             # Stage 6: Smart file selection
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before file selection of {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
+                safe_cleanup(clone_info["clone_path"])
                 return
 
             yield _sse_event("selecting", 80, "Selecting key files…", seq=_next_seq(seq_box))
@@ -556,27 +616,12 @@ async def analyze_stream(
                 "module_graph": module_graph,
                 "selected_files": selected_files,
             }
-            save_analysis(repo_id, clone_info["clone_path"], stream_result_data, cache)
+            background_tasks.add_task(save_analysis, repo_id, clone_info["clone_path"], stream_result_data, cache)
 
-            # Stage 7: Indexing (embedding) — done INLINE so chat is ready
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected before indexing repo {repo_id}.")
-                cleanup_repo(clone_info["clone_path"])
-                return
-
-            yield _sse_event("indexing", 90, "Creating embeddings for RAG…", seq=_next_seq(seq_box))
+            # Stage 7: Indexing (embedding) — move to background task
             if settings.gemini_api_key and settings.zilliz_uri:
-                start_time = time.perf_counter()
-                try:
-                    with analysis_stage_timer("indexing"):
-                        await _run_sync(index_repository, repo_id, file_profiles, clone_info["clone_path"])
-                    duration = (time.perf_counter() - start_time) * 1000
-                    logger.info(
-                        f"Stage indexing completed in {duration:.2f}ms",
-                        extra={"stage": "indexing", "duration_ms": duration},
-                    )
-                except Exception as e:
-                    logger.warning(f"Indexing failed (non-fatal): {e}")
+                background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+                yield _sse_event("indexing", 90, "Creating embeddings for RAG in background…", seq=_next_seq(seq_box))
 
             # Stage 8: Complete — include full result data
             # T4.4 — register the freshly-computed repo_id under its commit
@@ -615,7 +660,7 @@ async def analyze_stream(
             repo_id_ctx.reset(token)
 
     return StreamingResponse(
-        event_generator(),
+        with_keepalive(event_generator),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
