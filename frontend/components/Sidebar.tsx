@@ -286,7 +286,7 @@ export function Sidebar({
                         <Stat label="Size" value={repoData.total_size_formatted} />
                         <Stat
                           label="Languages"
-                          value={Object.keys(repoData.languages).length}
+                          value={Object.keys(repoData.languages || {}).length}
                         />
                         <Stat
                           label="Deps"
@@ -301,11 +301,11 @@ export function Sidebar({
                         Languages
                       </h2>
                       <div className="space-y-1.5">
-                        {Object.entries(repoData.languages)
+                        {Object.entries(repoData.languages || {})
                           .sort(([, a], [, b]) => b - a)
                           .map(([lang, count]) => {
                             const max = Math.max(
-                              ...Object.values(repoData.languages)
+                              ...Object.values(repoData.languages || {})
                             );
                             const pct = (count / max) * 100;
                             return (

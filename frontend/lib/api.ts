@@ -227,14 +227,21 @@ export async function analyzeRepo(
   });
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    let errDetail = "Analysis failed";
+    let errDetail: string | any = "Analysis failed";
     try {
       const errJson = JSON.parse(errText);
       errDetail = errJson.detail || errJson.error || errDetail;
+      if (typeof errDetail === 'object') {
+        if (Array.isArray(errDetail) && errDetail.length > 0 && errDetail[0].msg) {
+          errDetail = errDetail.map((e: any) => e.msg).join(", ");
+        } else {
+          errDetail = JSON.stringify(errDetail);
+        }
+      }
     } catch {
       if (errText.trim()) errDetail = errText;
     }
-    throw new Error(errDetail);
+    throw new Error(errDetail as string);
   }
   const data = await res.json();
   if (!data.success) {
