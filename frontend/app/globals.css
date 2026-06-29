@@ -206,7 +206,7 @@
 .spotlight-container {
   position: relative;
   width: 100%;
-  min-height: 100vh;
+  height: 100dvh;
   overflow-y: auto;
   overflow-x: hidden;
   background-color: hsl(var(--background));

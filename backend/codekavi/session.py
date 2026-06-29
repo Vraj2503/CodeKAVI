@@ -55,9 +55,26 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
         if clone_path:
             cache.set_session_path(repo_id, clone_path)
             return result, clone_path
-        # We have cached results but no clone dir — still usable for
-        # chat/visualize/explain (they only need the result dict).
-        # Return with clone_path=None; callers that need files will handle it.
+        # We have cached results but no clone dir — we need it for explain/report to extract snippets.
+        try:
+            repo_name = result.get("repo_name")
+            owner = result.get("owner")
+            
+            if repo_name and owner:
+                github_url = f"https://github.com/{owner}/{repo_name}"
+                from codekavi.cloner import clone_repo
+                import logging
+                logging.getLogger(__name__).info(f"Re-cloning {repo_id} from {github_url} for cache restoration")
+                
+                clone_info = clone_repo(github_url)
+                clone_path = clone_info["clone_path"]
+                cache.set_session_path(repo_id, clone_path)
+                return result, clone_path
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Failed to re-clone {repo_id} during restore: {e}")
+            
+        # Return with clone_path=None; callers that need files will handle it (or fail)
         return result, None
 
     # No cached result anywhere. Try to find the clone dir and re-analyze.
