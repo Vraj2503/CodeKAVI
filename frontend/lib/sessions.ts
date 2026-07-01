@@ -105,8 +105,8 @@ export async function createSession(params: {
     .single();
 
   if (error) {
-    console.error("Failed to create session:", error);
-    return null;
+    console.error("Failed to create session:", JSON.stringify(error, null, 2));
+    throw new Error(error.message || "Failed to create session in database");
   }
 
   return data;

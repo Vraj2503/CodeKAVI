@@ -252,11 +252,21 @@ export async function analyzeRepo(
 
 // ── SSE Streaming Analysis ──
 
+export interface StreamCompleteData {
+  total_events: number;
+  result: AnalyzeResponse;
+}
+
 export interface AnalysisProgressEvent {
   stage: string;
   progress: number;
   message: string;
-  data?: AnalyzeResponse;
+  seq?: number;
+  data?: AnalyzeResponse | StreamCompleteData;
+}
+
+function isStreamCompleteData(data: unknown): data is StreamCompleteData {
+  return typeof data === 'object' && data !== null && 'result' in data && 'total_events' in data;
 }
 
 /**
@@ -312,7 +322,11 @@ export async function analyzeRepoStream(
           }
 
           if (event.stage === "complete" && event.data) {
-            finalData = event.data;
+            if (isStreamCompleteData(event.data)) {
+              finalData = event.data.result;
+            } else {
+              finalData = event.data as AnalyzeResponse;
+            }
           }
         } catch (e) {
           if (e instanceof SyntaxError) {
@@ -327,6 +341,10 @@ export async function analyzeRepoStream(
 
   if (!finalData) {
     throw new Error("Analysis stream ended without complete event");
+  }
+  
+  if (!finalData.repo_id) {
+    throw new Error("Received malformed analysis data from server (missing repo_id)");
   }
 
   return finalData;

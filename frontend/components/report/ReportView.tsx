@@ -65,7 +65,7 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
   });
 
   const handleGenerate = useCallback(
-    (prompt: string) => {
+    (prompt: string, useTour: boolean = false) => {
       // Close the modal
       setIsModalOpen(false);
 
@@ -79,11 +79,19 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
       const streamUrl = `${API_BASE}/explain/${repoId}/stream`;
       startStream(streamUrl, {
         depth: "detailed",
+        use_tour: useTour,
         ...(prompt ? { prompt } : {}),
       });
     },
     [repoId, startStream]
   );
+
+  // Auto-start deterministic tour on mount
+  useEffect(() => {
+    if (!hasStarted && !isStreaming && repoId && !needsReanalysis) {
+      handleGenerate("", true);
+    }
+  }, [hasStarted, isStreaming, repoId, needsReanalysis, handleGenerate]);
 
   const openModal = useCallback(() => {
     setIsModalOpen(true);
@@ -127,9 +135,9 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
           {isComplete && !isStreaming && (
             <button
               onClick={openModal}
-              className="bg-card hover:bg-muted text-foreground rounded-lg px-4 py-2 font-medium border border-border transition-colors"
+              className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
             >
-              Regenerate
+              <Sparkles size={16} /> Load AI Analysis
             </button>
           )}
         </div>
@@ -147,44 +155,23 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
       </div>
 
       {/* Empty state when not started */}
-      {!hasStarted && !isStreaming && (
+      {!hasStarted && !isStreaming && needsReanalysis && (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
-          {needsReanalysis ? (
-            <>
-              <h2 className="text-2xl font-bold text-foreground mb-2">
-                Analysis Data Expired
-              </h2>
-              <p className="text-muted-foreground max-w-md mb-6">
-                The cached analysis for this repository has expired.
-                Please re-analyze the repository before generating a report.
-              </p>
-              {onReanalyze && (
-                <button
-                  onClick={onReanalyze}
-                  className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
-                >
-                  <RefreshCw size={16} />
-                  Re-analyze Repository
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <h2 className="text-2xl font-bold text-foreground mb-2">
-                Ready to Generate Your Report
-              </h2>
-              <p className="text-muted-foreground max-w-md mb-6">
-                AI will analyze your codebase and generate a comprehensive report.
-                You can provide custom instructions or use the default template.
-              </p>
-              <button
-                onClick={openModal}
-                className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
-              >
-                <Sparkles size={16} />
-                Generate Report
-              </button>
-            </>
+          <h2 className="text-2xl font-bold text-foreground mb-2">
+            Analysis Data Expired
+          </h2>
+          <p className="text-muted-foreground max-w-md mb-6">
+            The cached analysis for this repository has expired.
+            Please re-analyze the repository before generating a report.
+          </p>
+          {onReanalyze && (
+            <button
+              onClick={onReanalyze}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
+            >
+              <RefreshCw size={16} />
+              Re-analyze Repository
+            </button>
           )}
         </div>
       )}
