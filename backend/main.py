@@ -21,7 +21,7 @@ from codekavi.limiter import limiter
 from codekavi.logging_config import RequestIDMiddleware, setup_logging
 from codekavi.routes import api_router
 from codekavi.settings import settings
-from codekavi.utils import current_executor
+from codekavi.utils import current_io_executor, current_cpu_executor
 
 # Setup logging immediately before other modules log anything
 setup_logging()
@@ -44,16 +44,19 @@ async def lifespan(app: FastAPI):
 
     validate_providers()
 
-    executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="codekavi-")
+    io_executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="codekavi-io-")
+    cpu_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="codekavi-cpu-")
     cache = AnalysisCache()
 
-    app.state.executor = executor
+    app.state.io_executor = io_executor
+    app.state.cpu_executor = cpu_executor
     app.state.cache = cache
 
     cleanup_old_repos(max_age_hours=2)
     yield
     # Shutdown — let in-flight requests complete, then terminate executor
-    executor.shutdown(wait=True)
+    io_executor.shutdown(wait=True)
+    cpu_executor.shutdown(wait=True)
 
 
 app = FastAPI(
@@ -68,14 +71,20 @@ app.add_middleware(RequestIDMiddleware)
 
 @app.middleware("http")
 async def set_current_executor_middleware(request: Request, call_next):
-    executor = getattr(request.app.state, "executor", None)
-    if executor:
-        token = current_executor.set(executor)
-        try:
-            return await call_next(request)
-        finally:
-            current_executor.reset(token)
-    return await call_next(request)
+    io_executor = getattr(request.app.state, "io_executor", None)
+    cpu_executor = getattr(request.app.state, "cpu_executor", None)
+    
+    tokens = []
+    if io_executor:
+        tokens.append((current_io_executor, current_io_executor.set(io_executor)))
+    if cpu_executor:
+        tokens.append((current_cpu_executor, current_cpu_executor.set(cpu_executor)))
+        
+    try:
+        return await call_next(request)
+    finally:
+        for var, token in tokens:
+            var.reset(token)
 
 
 # CORS — configurable origins for production, defaults to localhost:3000 for dev
