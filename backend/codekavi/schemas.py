@@ -21,6 +21,7 @@ class ExplainRequest(BaseModel):
     model: str | None = None
     depth: str = "detailed"
     prompt: str | None = None
+    use_tour: bool = True
 
 
 class ExplainFileRequest(BaseModel):
