@@ -38,6 +38,10 @@ const RadialMindmap = dynamic(
   () => import("@/components/report/viz/RadialMindmap").then((m) => m.RadialMindmap),
   { ssr: false, loading: () => <VizSkeleton /> }
 );
+const NeuralNetworkViz = dynamic(
+  () => import("@/components/report/viz/NeuralNetworkViz").then((m) => m.NeuralNetworkViz),
+  { ssr: false, loading: () => <VizSkeleton /> }
+);
 
 function VizSkeleton() {
   return (
@@ -342,6 +346,8 @@ function renderVisualization(type: VizType, data: any) {
       return <TreemapViz data={data} />;
     case "mindmap":
       return <RadialMindmap root={data.root || data} />;
+    case "neural_network":
+      return <NeuralNetworkViz data={data} />;
     default:
       return <p className="text-muted-foreground text-center py-12">Unknown visualization type: {type}</p>;
   }

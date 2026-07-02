@@ -12,6 +12,7 @@ from codekavi.config import (
     IGNORED_EXTENSIONS,
     IGNORED_FILES,
     MAX_FILE_SIZE_BYTES,
+    MAX_NOTEBOOK_SIZE_BYTES,
 )
 
 
@@ -56,7 +57,8 @@ def _should_ignore_file(filepath: str) -> bool:
 
     # Skip files that are too large
     try:
-        if os.path.getsize(filepath) > MAX_FILE_SIZE_BYTES:
+        max_size = MAX_NOTEBOOK_SIZE_BYTES if ext.lower() == ".ipynb" else MAX_FILE_SIZE_BYTES
+        if os.path.getsize(filepath) > max_size:
             return True
     except OSError:
         return True
@@ -181,8 +183,9 @@ def _skip_reason(filepath: str) -> str | None:
     except OSError:
         return "unreadable"
 
-    if size > MAX_FILE_SIZE_BYTES:
-        return f"exceeds_max_size_{MAX_FILE_SIZE_BYTES // 1024}KB"
+    max_size = MAX_NOTEBOOK_SIZE_BYTES if ext.lower() == ".ipynb" else MAX_FILE_SIZE_BYTES
+    if size > max_size:
+        return f"exceeds_max_size_{max_size // 1024}KB"
 
     return None
 

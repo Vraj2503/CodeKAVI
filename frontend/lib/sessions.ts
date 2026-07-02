@@ -89,6 +89,19 @@ export async function createSession(params: {
     return null;
   }
 
+  // Check if session already exists for this user and repo
+  const { data: existingSession } = await supabase
+    .from("sessions")
+    .select()
+    .eq("user_id", user.id)
+    .eq("repo_id", params.repo_id)
+    .maybeSingle();
+
+  if (existingSession) {
+    // Optionally update it, but for now just return the existing one
+    return existingSession;
+  }
+
   const { data, error } = await supabase
     .from("sessions")
     .insert({
@@ -105,7 +118,7 @@ export async function createSession(params: {
     .single();
 
   if (error) {
-    console.error("Failed to create session:", error);
+    console.error("Failed to create session:", error.message || error);
     return null;
   }
 

@@ -325,6 +325,14 @@ export function mockVizResponse(type: string) {
         })),
       };
 
+    case "neural_network":
+      // Re-use the NN data from mockAnalyzeResponse
+      const nn_models = mockAnalyzeResponse().nn_models;
+      return {
+        models: nn_models,
+        count: nn_models.length
+      };
+
     default:
       return {};
   }
@@ -332,4 +340,100 @@ export function mockVizResponse(type: string) {
 
 export function mockExplanationResponse(type: string) {
   return `This is an updated mock AI explanation for the **${type}** visualization, generated to stress-test the new dynamic resizing and auto-fit capabilities. You should see a large amount of data gracefully fitting into the container.`;
+}
+
+export function mockAnalyzeResponse(): any {
+  return {
+    success: true,
+    repo_id: "dev-mock-repo",
+    repo_name: "Mock Neural Network Repo",
+    owner: "CodeKavi",
+    github_url: "mock://nn",
+    total_files: 10,
+    total_size: 1024,
+    total_size_formatted: "1 KB",
+    languages: { python: 10 },
+    tree: [],
+    files: [],
+    file_profiles: [],
+    role_summary: { ml_model: 1 } as any,
+    graph: { nodes: [], edges: [], metadata: { total_nodes: 0, total_edges: 0, connected_nodes: 0, groups: [] } },
+    module_graph: { modules: [], connections: [], graph_json: { nodes: [], edges: [] }, mermaid: "" },
+    cycles: { has_cycles: false, cycle_count: 0, cycles: [], summary: "" },
+    mermaid: { file_level: "", module_level: "" },
+    nn_models: [
+      {
+        name: "ResNet50_Mock",
+        file: "src/models/resnet.py",
+        line: 15,
+        framework: "pytorch",
+        type: "class",
+        total_params: 25600000,
+        input_shape: [3, 224, 224],
+        output_shape: [1000],
+        layers: [
+          {
+            id: "conv1",
+            type: "Conv2d",
+            category: "convolution",
+            params: { in_channels: 3, out_channels: 64, kernel_size: 7, stride: 2, padding: 3 },
+            output_shape: [64, 112, 112],
+            param_count: 9408,
+            activation: "ReLU",
+            block_dims: { width: 10, height: 10, depth: 8, x: 0, y: 0, z: 0 }
+          },
+          {
+            id: "bn1",
+            type: "BatchNorm2d",
+            category: "normalization",
+            params: { num_features: 64 },
+            output_shape: [64, 112, 112],
+            param_count: 128,
+            block_dims: { width: 4, height: 10, depth: 8, x: 0, y: 0, z: 0 }
+          },
+          {
+            id: "pool1",
+            type: "MaxPool2d",
+            category: "pooling",
+            params: { kernel_size: 3, stride: 2, padding: 1 },
+            output_shape: [64, 56, 56],
+            param_count: 0,
+            block_dims: { width: 6, height: 6, depth: 8, x: 0, y: 0, z: 0 }
+          },
+          {
+            id: "layer1_conv",
+            type: "Conv2d",
+            category: "convolution",
+            params: { in_channels: 64, out_channels: 256, kernel_size: 3, stride: 1, padding: 1 },
+            output_shape: [256, 56, 56],
+            param_count: 147456,
+            activation: "ReLU",
+            block_dims: { width: 6, height: 6, depth: 15, x: 0, y: 0, z: 0 }
+          },
+          {
+            id: "fc",
+            type: "Linear",
+            category: "dense",
+            params: { in_features: 256, out_features: 1000 },
+            output_shape: [1000],
+            param_count: 257000,
+            activation: "Softmax",
+            block_dims: { width: 2, height: 20, depth: 2, x: 0, y: 0, z: 0 }
+          }
+        ],
+        connections: [
+          { from_id: "conv1", to_id: "bn1", type: "sequential" },
+          { from_id: "bn1", to_id: "pool1", type: "sequential" },
+          { from_id: "pool1", to_id: "layer1_conv", type: "sequential" },
+          { from_id: "layer1_conv", to_id: "fc", type: "sequential" },
+          // Mock skip connection to test UI
+          { from_id: "pool1", to_id: "fc", type: "skip", label: "Residual" }
+        ],
+        blocks: [
+          { name: "Stem", layers: ["conv1", "bn1", "pool1"], has_skip: false },
+          { name: "ResBlock1", layers: ["layer1_conv", "fc"], has_skip: true }
+        ]
+      }
+    ]
+  };
 }

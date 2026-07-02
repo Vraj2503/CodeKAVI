@@ -21,6 +21,9 @@ Roles:
   │ data               │ Data files, fixtures, migrations               │
   │ documentation      │ Docs, READMEs, changelogs                      │
   │ build              │ Build scripts, CI/CD, Dockerfiles              │
+  │ ml_model           │ ML/DL model definition (nn.Module, keras)      │
+  │ ml_training        │ ML training loop / fit() script                │
+  │ ml_pipeline        │ ML data pipeline (DataLoader, transforms)      │
   └────────────────────┴────────────────────────────────────────────────┘
 """
 
@@ -200,6 +203,7 @@ _SOURCE_EXTENSIONS = {
     ".exs",
     ".vue",
     ".svelte",
+    ".ipynb",
 }
 
 
@@ -231,14 +235,24 @@ def _content_signals(
     if ext.lower() not in _SOURCE_EXTENSIONS:
         return signals
 
-    # Use content_cache if available, otherwise read from disk
+    # Use content_cache if available (but notebooks aren't cached), otherwise read from disk
     if content_cache and rel_path and rel_path in content_cache:
         content = content_cache[rel_path][:4096]
     else:
         try:
-            with open(abs_path, encoding="utf-8", errors="ignore") as f:
-                content = f.read(4096)
-        except OSError:
+            if ext.lower() == ".ipynb":
+                import json
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
+                    nb = json.load(f)
+                code_cells = [
+                    "".join(c.get("source", [])) if isinstance(c.get("source"), list) else c.get("source", "")
+                    for c in nb.get("cells", []) if c.get("cell_type") == "code"
+                ]
+                content = "\n".join(code_cells)[:16384]  # Read up to 16KB of actual code
+            else:
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
+                    content = f.read(4096)
+        except Exception:
             return signals
 
     # Python main guard
@@ -294,6 +308,41 @@ def _content_signals(
     const_lines = sum(1 for ln in code_lines if re.match(r"^[A-Z][A-Z_0-9]+\s*=", ln))
     if len(code_lines) > 3 and const_lines / len(code_lines) > 0.4:
         signals["mostly_constants"] = True
+
+    # ML/DL framework signals
+    signals["has_ml_model_def"] = False
+    signals["has_ml_training"] = False
+    signals["has_ml_pipeline"] = False
+    signals["ml_frameworks"] = []
+
+    _ml_fw_patterns = {
+        "pytorch": [r"\bimport\s+torch\b", r"\bfrom\s+torch\b", r"\bimport\s+torchvision\b"],
+        "tensorflow": [r"\bimport\s+tensorflow\b", r"\bfrom\s+tensorflow\b"],
+        "keras": [r"\bimport\s+keras\b", r"\bfrom\s+keras\b", r"\bfrom\s+tensorflow\.keras\b"],
+        "jax": [r"\bimport\s+jax\b", r"\bfrom\s+jax\b", r"\bimport\s+flax\b", r"\bfrom\s+flax\b"],
+        "sklearn": [r"\bimport\s+sklearn\b", r"\bfrom\s+sklearn\b"],
+    }
+    detected_fw = []
+    for fw, patterns in _ml_fw_patterns.items():
+        if any(re.search(p, content) for p in patterns):
+            detected_fw.append(fw)
+    signals["ml_frameworks"] = detected_fw
+
+    # Model definition signals
+    if re.search(r"class\s+\w+\s*\(\s*(?:nn\.Module|keras\.Model|tf\.keras\.Model)\s*\)", content):
+        signals["has_ml_model_def"] = True
+    if re.search(r"(?:nn\.Sequential|keras\.Sequential|tf\.keras\.Sequential)\s*\(", content):
+        signals["has_ml_model_def"] = True
+    if re.search(r"(?:nn\.(?:Conv|Linear|LSTM|GRU|BatchNorm|Dropout|Embedding|Transformer)|layers\.(?:Dense|Conv))", content):
+        signals["has_ml_model_def"] = True
+
+    # Training signals
+    if re.search(r"(?:\.backward\(\)|optimizer\.(?:step|zero_grad)|model\.fit\(|model\.train\(\))", content):
+        signals["has_ml_training"] = True
+
+    # Data pipeline signals
+    if re.search(r"(?:DataLoader|Dataset|transforms\.(?:Compose|Normalize)|tf\.data)", content):
+        signals["has_ml_pipeline"] = True
 
     return signals
 
@@ -432,6 +481,9 @@ _ROLE_LABELS = {
     "documentation": "Documentation",
     "build": "Build / DevOps",
     "barrel": "Barrel / Re-export",
+    "ml_model": "ML Model Definition",
+    "ml_training": "ML Training Script",
+    "ml_pipeline": "ML Data Pipeline",
     "leaf": "Standalone / Leaf",
 }
 
@@ -516,6 +568,17 @@ def _determine_role(
         tags = ["routes", "api"]
         candidates.append(("router", 0.85, tags))
 
+    # ── 9.5 ML/DL roles ──
+    if signals.get("has_ml_model_def") and signals.get("ml_frameworks"):
+        tags = ["ml", "model"] + signals.get("ml_frameworks", [])
+        candidates.append(("ml_model", 0.90, tags))
+    elif signals.get("has_ml_training") and signals.get("ml_frameworks"):
+        tags = ["ml", "training"] + signals.get("ml_frameworks", [])
+        candidates.append(("ml_training", 0.85, tags))
+    elif signals.get("has_ml_pipeline") and signals.get("ml_frameworks"):
+        tags = ["ml", "pipeline"] + signals.get("ml_frameworks", [])
+        candidates.append(("ml_pipeline", 0.82, tags))
+
     # ── 10. Graph-based roles (only for source files with connections) ──
     if ext.lower() in _SOURCE_EXTENSIONS:
         in_ratio = in_degree / max_in if max_in > 0 else 0
@@ -593,6 +656,9 @@ def _compute_importance(
         "type_definition": 8,
         "barrel": 5,
         "internal_helper": 5,
+        "ml_model": 18,
+        "ml_training": 12,
+        "ml_pipeline": 10,
         "test": 3,
         "build": 2,
         "documentation": 1,

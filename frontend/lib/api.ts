@@ -36,6 +36,7 @@ export interface AnalyzeResponse {
   module_graph: ModuleGraphData;
   cycles: CycleData;
   mermaid: MermaidData;
+  nn_models?: NNModel[];
 }
 
 export interface FileNode {
@@ -169,11 +170,58 @@ export type VizType =
   | "complexity"
   | "architecture"
   | "dataflow"
-  | "mindmap";
+  | "mindmap"
+  | "neural_network";
 
 export interface VizResponse {
   type: string;
   data: unknown;
+}
+
+// ── Neural Network Model Types ──
+
+export interface NNBlockDims {
+    height: number;
+    depth: number;
+    width: number;
+}
+
+export interface NNLayer {
+    id: string;
+    type: string;
+    category: string;
+    params: Record<string, any>;
+    output_shape?: number[];
+    param_count?: number;
+    activation?: string;
+    block_dims?: NNBlockDims;
+}
+
+export interface NNConnection {
+    from_id: string;
+    to_id: string;
+    type: "sequential" | "skip" | "concat" | "add";
+    label?: string;
+}
+
+export interface NNBlock {
+    name: string;
+    layers: string[];
+    has_skip: boolean;
+}
+
+export interface NNModel {
+    name: string;
+    file: string;
+    line: number;
+    framework: string;
+    type: "class" | "sequential" | "functional";
+    total_params?: number;
+    input_shape?: number[];
+    output_shape?: number[];
+    layers: NNLayer[];
+    connections: NNConnection[];
+    blocks?: NNBlock[];
 }
 
 export interface ExplanationResponse {
@@ -191,6 +239,11 @@ export interface ExplanationResponse {
 export async function restoreRepo(
   repoId: string
 ): Promise<AnalyzeResponse | null> {
+  if (repoId === "dev-mock-repo") {
+    const { mockAnalyzeResponse } = await import("./mockData");
+    return mockAnalyzeResponse();
+  }
+
   try {
     const headers = await getAuthHeaders();
     const res = await fetch(`${API_BASE}/restore/${repoId}`, {
@@ -267,6 +320,16 @@ export async function analyzeRepoStream(
   githubUrl: string,
   onProgress: (event: AnalysisProgressEvent) => void
 ): Promise<AnalyzeResponse> {
+  if (githubUrl === "mock://nn") {
+    const { mockAnalyzeResponse } = await import("./mockData");
+    onProgress({ stage: "init", progress: 0, message: "Starting mock analysis..." });
+    await new Promise(r => setTimeout(r, 500));
+    onProgress({ stage: "analyzing", progress: 50, message: "Mocking NN models..." });
+    await new Promise(r => setTimeout(r, 500));
+    onProgress({ stage: "complete", progress: 100, message: "Mock complete." });
+    return mockAnalyzeResponse();
+  }
+
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/analyze/stream`, {
     method: "POST",
@@ -312,7 +375,7 @@ export async function analyzeRepoStream(
           }
 
           if (event.stage === "complete" && event.data) {
-            finalData = event.data;
+            finalData = (event.data as any).result ? (event.data as any).result : event.data;
           }
         } catch (e) {
           if (e instanceof SyntaxError) {
@@ -384,7 +447,8 @@ export async function fetchVisualization(
 
   const authHeaders = await getAuthHeaders();
   const isPost = type === "mindmap";
-  const endpoint = `${API_BASE}/visualize/${type}/${repoId}`;
+  const vizPath = type === "neural_network" ? "nn" : type;
+  const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}`;
 
   const res = await fetch(endpoint, {
     method: isPost ? "POST" : "GET",

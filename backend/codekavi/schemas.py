@@ -81,3 +81,62 @@ class SectionResponse(BaseModel):
     code_snippets: list[dict] = Field(default_factory=list)
     visualization_type: str | None = None
     visualization_data: dict | None = None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Neural Network model schemas (for NN visualization feature)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class NNBlockDims(BaseModel):
+    """Pre-computed dimensions for PlotNeuralNet-style 3D block rendering."""
+
+    height: float = 20.0  # Proportional to spatial H
+    depth: float = 20.0  # Proportional to spatial W
+    width: float = 2.0  # Proportional to channels/filters
+
+
+class NNLayer(BaseModel):
+    """A single layer in a neural network architecture."""
+
+    id: str
+    type: str  # "Conv2d", "Linear", "LSTM", etc.
+    category: str = "other"  # "convolution", "pooling", "dense", "normalization", "activation", "dropout", "recurrent", "attention", "embedding", "output", "other"
+    params: dict = Field(default_factory=dict)
+    output_shape: list[int] | None = None
+    param_count: int | None = None
+    activation: str | None = None
+    block_dims: NNBlockDims | None = None
+
+
+class NNConnection(BaseModel):
+    """Connection between two layers in a neural network."""
+
+    from_id: str
+    to_id: str
+    type: str = "sequential"  # "sequential" | "skip" | "concat" | "add"
+    label: str | None = None  # Dimension annotation on arrow
+
+
+class NNBlock(BaseModel):
+    """A logical block grouping layers (e.g., ResNet block, Encoder)."""
+
+    name: str
+    layers: list[str] = Field(default_factory=list)  # Layer IDs
+    has_skip: bool = False
+
+
+class NNModel(BaseModel):
+    """Complete neural network model architecture extracted from source code."""
+
+    name: str
+    file: str
+    line: int = 0
+    framework: str = "unknown"  # "pytorch", "tensorflow", "keras", "jax"
+    type: str = "unknown"  # "class" | "sequential" | "functional"
+    total_params: int | None = None
+    input_shape: list[int] | None = None
+    output_shape: list[int] | None = None
+    layers: list[NNLayer] = Field(default_factory=list)
+    connections: list[NNConnection] = Field(default_factory=list)
+    blocks: list[NNBlock] | None = None

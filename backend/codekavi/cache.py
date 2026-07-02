@@ -246,7 +246,7 @@ class AnalysisCache:
             return None
         try:
             response = sb.table("analysis_cache").select("result_json").eq("repo_id", repo_id).maybe_single().execute()
-            if response.data:
+            if response and getattr(response, "data", None):
                 return response.data["result_json"]
         except Exception as e:
             logger.warning(f"Supabase GET failed for {repo_id}: {e}")

@@ -134,7 +134,12 @@ export function Sidebar({
             {/* List of visualizations */}
             <ScrollArea className="flex-1 px-3 py-4">
               <div className="space-y-1.5">
-                {VIZ_CONFIG.map((viz) => {
+                {VIZ_CONFIG.filter((viz) => {
+                  if (viz.type === "neural_network" && (!repoData?.nn_models || repoData.nn_models.length === 0)) {
+                    return false;
+                  }
+                  return true;
+                }).map((viz) => {
                   const isActive = activeViz === viz.type;
                   const Icon = viz.icon as any;
                   return (

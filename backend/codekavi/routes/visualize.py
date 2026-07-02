@@ -500,3 +500,39 @@ def _explain_prompt_mindmap(classification: list) -> str:
         f"Codebase mind map — {len(classification)} files classified:\n" + "\n".join(items) + "\n"
         "Explain the codebase organization and key categories."
     )
+
+
+# ─────────────────────────────────────────
+# 6. Neural Network Architecture (NO LLM)
+# ─────────────────────────────────────────
+
+
+@router.get("/visualize/nn/{repo_id}")
+@limiter.limit("30/minute")
+async def visualize_neural_network(
+    request: Request,
+    repo_id: str,
+    model: str | None = None,
+    cache: AnalysisCache = Depends(get_cache),
+    _user: str = Depends(verify_supabase_token),
+):
+    """Return extracted neural network model architectures for PlotNeuralNet-style rendering.
+
+    Zero LLM cost — returns pre-extracted data from analysis cache.
+    Optionally filter to a specific model with ?model=ModelName.
+    """
+    result, _ = await _load_repo(repo_id, cache)
+
+    nn_models = result.get("nn_models", [])
+
+    if model:
+        nn_models = [m for m in nn_models if m.get("name") == model]
+
+    return {
+        "type": "neural_network",
+        "data": {
+            "models": nn_models,
+            "count": len(nn_models),
+        },
+    }
+

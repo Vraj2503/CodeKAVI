@@ -38,6 +38,7 @@ from codekavi.settings import settings
 from codekavi.traverser import traverse_repo
 from codekavi.utils import BoundedContentCache
 from codekavi.utils import run_sync as _run_sync
+from codekavi.nn_extractor import extract_all_models
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -122,6 +123,7 @@ async def analyze(
                 "module_graph": deduped.get("module_graph", {}),
                 "cycles": {"has_cycles": False, "cycles": []},
                 "mermaid": {"file_level": "", "module_level": ""},
+                "nn_models": deduped.get("nn_models", []),
             }
 
     try:
@@ -161,7 +163,8 @@ async def analyze(
                         "graph": cached_result.get("graph_json", {}),
                         "module_graph": cached_result.get("module_graph", {}),
                         "cycles": {"has_cycles": False, "cycles": []}, # Default fallback
-                        "mermaid": {"file_level": "", "module_level": ""}
+                        "mermaid": {"file_level": "", "module_level": ""},
+                        "nn_models": cached_result.get("nn_models", []),
                     }
             except Exception as e:
                 logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
@@ -211,7 +214,22 @@ async def analyze(
         except Exception as e:
             file_profiles = []
             role_summary = {"error": f"Classification failed: {e}"}
-        finally:
+
+        # NN Model Extraction (before content_cache is cleared)
+        nn_models = []
+        ml_model_files = [fp for fp in file_profiles if fp.get("role") == "ml_model"]
+        if ml_model_files and content_cache:
+            try:
+                nn_models = await extract_all_models(
+                    ml_model_files,
+                    content_cache=content_cache,
+                    repo_root=clone_info["clone_path"],
+                )
+            except Exception as e:
+                logger.warning(f"NN extraction failed: {e}")
+
+        # Now safe to clear content cache
+        if content_cache:
             content_cache.clear()
             del content_cache
 
@@ -258,6 +276,7 @@ async def analyze(
             "graph_json": graph_json,
             "module_graph": module_graph,
             "selected_files": selected_files,
+            "nn_models": nn_models,
         }
         save_analysis(repo_id, clone_info["clone_path"], result_data, cache)
 
@@ -287,6 +306,7 @@ async def analyze(
                 "file_level": mermaid_file,
                 "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
             },
+            "nn_models": nn_models,
         }
     finally:
         repo_id_ctx.reset(token)
@@ -494,7 +514,22 @@ async def analyze_stream(
             except Exception as e:
                 file_profiles = []
                 role_summary = {"error": f"Classification failed: {e}"}
-            finally:
+
+            # NN Model Extraction (before content_cache is cleared)
+            nn_models = []
+            ml_model_files = [fp for fp in file_profiles if fp.get("role") == "ml_model"]
+            if ml_model_files and content_cache:
+                try:
+                    nn_models = await extract_all_models(
+                        ml_model_files,
+                        content_cache=content_cache,
+                        repo_root=clone_info["clone_path"],
+                    )
+                except Exception as e:
+                    logger.warning(f"NN extraction failed: {e}")
+
+            # Now safe to clear content cache
+            if content_cache:
                 content_cache.clear()
                 del content_cache
 
@@ -555,6 +590,7 @@ async def analyze_stream(
                 "graph_json": graph_json,
                 "module_graph": module_graph,
                 "selected_files": selected_files,
+                "nn_models": nn_models,
             }
             save_analysis(repo_id, clone_info["clone_path"], stream_result_data, cache)
 
@@ -601,6 +637,7 @@ async def analyze_stream(
                     "file_level": mermaid_file,
                     "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
                 },
+                "nn_models": nn_models,
             }
             # T2.4 — final event carries seq + total_events so the client can
             # verify completeness. Replaces the previous bare "data: [DONE]\n\n"
@@ -704,6 +741,7 @@ async def restore_repo(
         "role_summary": result.get("role_summary", {}),
         "graph": graph_json,
         "module_graph": module_graph,
+        "nn_models": result.get("nn_models", []),
     }
 
 

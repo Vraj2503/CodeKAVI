@@ -119,6 +119,7 @@ IGNORED_FILES = {
 
 # Maximum file size to read (in bytes) — skip very large files
 MAX_FILE_SIZE_BYTES = 512 * 1024  # 512 KB
+MAX_NOTEBOOK_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 # File extension → language mapping
 EXTENSION_LANGUAGE_MAP = {

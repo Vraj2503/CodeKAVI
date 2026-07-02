@@ -6,6 +6,7 @@ import { ArchitectureGraph } from "@/components/report/viz/ArchitectureGraph";
 import { DataFlowGraph } from "@/components/report/viz/DataFlowGraph";
 import { RadialMindmap } from "@/components/report/viz/RadialMindmap";
 import { TreemapViz } from "@/components/report/viz/TreemapViz";
+import { NeuralNetworkViz } from "@/components/report/viz/NeuralNetworkViz";
 
 interface VizContainerProps {
   visualizationType: string;
@@ -18,6 +19,7 @@ const vizTitleMap: Record<string, string> = {
   radial_mindmap: "🧠 Mind Map",
   treemap: "🔥 Complexity Heatmap",
   flow_diagram: "🌊 Data Flow",
+  neural_network: "🧠 Neural Network Architecture",
 };
 
 function renderViz(type: string, data: any) {
@@ -43,6 +45,9 @@ function renderViz(type: string, data: any) {
     case "treemap":
       if (!data.children || data.children.length === 0) return <EmptyViz message="Not enough files to calculate complexity." />;
       return <TreemapViz data={data} />;
+    case "neural_network":
+      if (!data.models || data.models.length === 0) return <EmptyViz message="No neural network models found in this repository." />;
+      return <NeuralNetworkViz data={data} />;
     default:
       return (
         <p className="text-[#8b949e] text-center py-12">

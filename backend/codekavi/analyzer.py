@@ -56,6 +56,7 @@ try:
         EXTENSION_LANGUAGE_MAP,
         FILENAME_LANGUAGE_MAP,
         MAX_FILE_SIZE_BYTES,
+        MAX_NOTEBOOK_SIZE_BYTES,
     )
     from codekavi.settings import settings
 except ModuleNotFoundError:
@@ -63,6 +64,7 @@ except ModuleNotFoundError:
         EXTENSION_LANGUAGE_MAP,
         FILENAME_LANGUAGE_MAP,
         MAX_FILE_SIZE_BYTES,
+        MAX_NOTEBOOK_SIZE_BYTES,
     )
     from settings import settings  # type: ignore[no-redef]
 
@@ -543,14 +545,16 @@ def analyze_dependencies(
         if not extractor:
             continue
 
-        # Read file ONCE and cache
+        # Read file ONCE and cache (skip caching large notebooks to save memory)
         try:
+            max_size = MAX_NOTEBOOK_SIZE_BYTES if rel_path.endswith(".ipynb") else MAX_FILE_SIZE_BYTES
             file_size = os.path.getsize(abs_path)
-            if file_size > MAX_FILE_SIZE_BYTES:
+            if file_size > max_size:
                 continue
             with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 source = f.read()
-            content_cache[rel_path] = source[:4096]
+            if not rel_path.endswith(".ipynb"):
+                content_cache[rel_path] = source[:4096]
         except (OSError, UnicodeDecodeError):
             continue
 

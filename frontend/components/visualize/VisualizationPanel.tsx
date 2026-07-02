@@ -7,7 +7,8 @@ import {
   BarChart3,
   Layers,
   ArrowRightLeft,
-  Brain
+  Brain,
+  Network,
 } from "lucide-react";
 import { useVisualization } from "@/hooks/useVisualization";
 import { useExplanation } from "@/hooks/useExplanation";
@@ -31,6 +32,7 @@ export const VIZ_CONFIG: VizConfigItem[] = [
   { type: "architecture", label: "Architecture Graph", description: "Module-level architecture showing how directories depend on each other.", icon: Layers },
   { type: "dataflow", label: "Data Flow Diagram", description: "Trace data flow from entry points through the system layers.", icon: ArrowRightLeft },
   { type: "mindmap", label: "Mind Map", description: "Radial mind map of the codebase structure, categories, and patterns.", icon: Brain },
+  { type: "neural_network", label: "Neural Network", description: "PlotNeuralNet-style 3D model architecture visualization for detected ML models.", icon: Network },
 ];
 
 export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
