@@ -45,7 +45,7 @@ typecheck:
 
 # ── Development Server ──
 run:
-	python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+	python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "cloned_repos/*" --reload-exclude "output/*"
 
 # ── Cleanup ──
 clean:

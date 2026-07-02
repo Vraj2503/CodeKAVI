@@ -16,17 +16,18 @@ logger = logging.getLogger(__name__)
 
 # ContextVar to hold the request-scoped or lifespan-scoped ThreadPoolExecutor.
 # Avoids using a module-level mutable global.
-current_executor: ContextVar[ThreadPoolExecutor] = ContextVar("current_executor")
+current_io_executor: ContextVar[ThreadPoolExecutor] = ContextVar("current_io_executor")
+current_cpu_executor: ContextVar[ThreadPoolExecutor] = ContextVar("current_cpu_executor")
 
 
-async def run_sync(func, *args, **kwargs):
+async def run_sync(func, *args, executor_type='io', **kwargs):
     """
-    Run a synchronous function in the executor stored in current_executor ContextVar.
+    Run a synchronous function in the appropriate executor.
     Falls back to the event loop's default executor if none is set.
     """
     loop = asyncio.get_running_loop()
     try:
-        executor = current_executor.get()
+        executor = current_cpu_executor.get() if executor_type == 'cpu' else current_io_executor.get()
     except LookupError:
         executor = None  # type: ignore[assignment]
     return await loop.run_in_executor(executor, partial(func, *args, **kwargs))
@@ -41,8 +42,9 @@ class BoundedContentCache:
 
     def __init__(self, max_bytes: int):
         self.max_bytes = max_bytes
+        self.max_bytes = max_bytes
         self.current_bytes = 0
-        self.cache: OrderedDict[str, str] = OrderedDict()
+        self.cache: OrderedDict[str, tuple[str, int]] = OrderedDict()
 
     def __setitem__(self, key: str, value: str) -> None:
         val_bytes = len(value.encode("utf-8", errors="ignore"))
@@ -53,29 +55,29 @@ class BoundedContentCache:
 
         # Evict oldest entries until we have enough space
         while self.current_bytes + val_bytes > self.max_bytes and self.cache:
-            _oldest_key, oldest_val = self.cache.popitem(last=False)
-            self.current_bytes -= len(oldest_val.encode("utf-8", errors="ignore"))
+            _oldest_key, (_, oldest_val_bytes) = self.cache.popitem(last=False)
+            self.current_bytes -= oldest_val_bytes
 
-        self.cache[key] = value
+        self.cache[key] = (value, val_bytes)
         self.current_bytes += val_bytes
 
     def __getitem__(self, key: str) -> str:
         if key in self.cache:
             # Move to end (MRU)
             self.cache.move_to_end(key)
-            return self.cache[key]
+            return self.cache[key][0]
         raise KeyError(key)
 
     def get(self, key: str, default: Any = None) -> Any:
         if key in self.cache:
             self.cache.move_to_end(key)
-            return self.cache[key]
+            return self.cache[key][0]
         return default
 
     def pop(self, key: str, default: Any = None) -> Any:
         if key in self.cache:
-            val = self.cache.pop(key)
-            self.current_bytes -= len(val.encode("utf-8", errors="ignore"))
+            val, val_bytes = self.cache.pop(key)
+            self.current_bytes -= val_bytes
             return val
         return default
 

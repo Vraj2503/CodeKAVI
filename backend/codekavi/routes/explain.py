@@ -26,6 +26,7 @@ from codekavi.quota import get_token_tracker
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ExplainFileRequest, ExplainRequest
 from codekavi.session import ensure_repo_loaded
+from codekavi.routes.analyze import with_keepalive
 from codekavi.tour_generator import generate_deterministic_tour
 from codekavi.utils import get_explainer as _get_explainer
 from codekavi.utils import run_sync
@@ -284,6 +285,21 @@ async def explain_repo_stream(
         from codekavi.logging_config import repo_id_ctx
 
         token = repo_id_ctx.set(repo_id)
+
+        if getattr(body, "use_tour", False):
+            tour = generate_deterministic_tour(
+                result.get("dep_data", {}), result.get("file_profiles", [])
+            )
+            seq = 1
+            yield (
+                f"event: fallback\nid: {seq}\n"
+                f"data: {json.dumps({'seq': seq, 'fallback': True, 'tour': tour, 'fallback_reason': 'Deterministic tour requested'})}\n\n"
+            )
+            seq += 1
+            yield f"event: done\nid: {seq}\ndata: {json.dumps({'status': 'complete', 'total_events': seq, 'seq': seq})}\n\n"
+            repo_id_ctx.reset(token)
+            return
+
         orchestrator = ExplanationOrchestrator(
             repo_path=clone_path,
             tree=result.get("repo_data", {}),
@@ -326,7 +342,7 @@ async def explain_repo_stream(
             yield f"event: done\nid: {seq}\ndata: {json.dumps({'status': 'complete', 'total_events': seq, 'seq': seq})}\n\n"
 
     return StreamingResponse(
-        event_stream(),
+        with_keepalive(event_stream),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

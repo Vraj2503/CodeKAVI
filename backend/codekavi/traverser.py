@@ -38,129 +38,7 @@ def _should_ignore_dir(dirname: str) -> bool:
     return dirname in IGNORED_DIRS or dirname.startswith(".")
 
 
-def _should_ignore_file(filepath: str) -> bool:
-    """Check if a file should be skipped based on name, extension, or size."""
-    basename = os.path.basename(filepath)
-
-    # Ignored filenames
-    if basename in IGNORED_FILES:
-        return True
-
-    # Ignored extensions
-    _, ext = os.path.splitext(basename)
-    if ext.lower() in IGNORED_EXTENSIONS:
-        return True
-
-    # Skip hidden files
-    if basename.startswith(".") and basename not in FILENAME_LANGUAGE_MAP:
-        return True
-
-    # Skip files that are too large
-    try:
-        max_size = MAX_NOTEBOOK_SIZE_BYTES if ext.lower() == ".ipynb" else MAX_FILE_SIZE_BYTES
-        if os.path.getsize(filepath) > max_size:
-            return True
-    except OSError:
-        return True
-
-    return False
-
-
-def _format_size(size_bytes: int) -> str:
-    """Human-readable file size."""
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    else:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
-
-
-def traverse_repo(clone_path: str) -> dict:
-    """
-    Walk through the cloned repo and collect metadata for all relevant files.
-
-    Returns:
-        dict with:
-          - total_files: int
-          - total_size: int (bytes)
-          - total_size_formatted: str
-          - languages: dict[str, int]  (language → file count)
-          - tree: list of dicts (hierarchical folder structure)
-          - files: list of dicts (flat list of file metadata)
-          - skipped_files: list of {path, size, size_formatted, reason} for files
-            excluded by traversal rules. Surfaced in the API response so the
-            frontend can warn that some files were omitted (size limit, hidden
-            files, ignored extensions, etc.).
-    """
-    all_files = []
-    languages: dict[str, int] = {}
-    total_size = 0
-    skipped_files: list[dict] = []
-
-    # Build a hierarchical tree structure
-    tree = _build_tree(clone_path, clone_path)
-
-    # Also build a flat file list with metadata
-    for root, dirs, files in os.walk(clone_path):
-        # Filter out ignored directories (modifying dirs in-place prunes os.walk)
-        dirs[:] = sorted([d for d in dirs if not _should_ignore_dir(d)])
-
-        for filename in sorted(files):
-            filepath = os.path.join(root, filename)
-            rel_path = os.path.relpath(filepath, clone_path)
-
-            # Determine WHY a file is skipped so we can surface it to the user.
-            skip_reason = _skip_reason(filepath)
-            if skip_reason:
-                try:
-                    size = os.path.getsize(filepath)
-                except OSError:
-                    size = 0
-                skipped_files.append(
-                    {
-                        "path": rel_path,
-                        "size": size,
-                        "size_formatted": _format_size(size),
-                        "reason": skip_reason,
-                    }
-                )
-                continue
-
-            file_size = os.path.getsize(filepath)
-            language = _detect_language(filepath)
-
-            # Track language stats
-            languages[language] = languages.get(language, 0) + 1
-            total_size += file_size
-
-            all_files.append(
-                {
-                    "path": rel_path,
-                    "name": filename,
-                    "extension": os.path.splitext(filename)[1].lower(),
-                    "language": language,
-                    "size": file_size,
-                    "size_formatted": _format_size(file_size),
-                    "depth": rel_path.count(os.sep),
-                }
-            )
-
-    # Sort languages by count (descending)
-    sorted_languages = dict(sorted(languages.items(), key=lambda x: x[1], reverse=True))
-
-    return {
-        "total_files": len(all_files),
-        "total_size": total_size,
-        "total_size_formatted": _format_size(total_size),
-        "languages": sorted_languages,
-        "tree": tree,
-        "files": all_files,
-        "skipped_files": skipped_files,
-    }
-
-
-def _skip_reason(filepath: str) -> str | None:
+def _get_skip_reason(filepath: str, size: int | None = None) -> str | None:
     """
     Return a human-readable reason why ``filepath`` was skipped, or ``None`` if
     the file is keepable. Centralised so traverse_repo() can surface skip
@@ -178,10 +56,11 @@ def _skip_reason(filepath: str) -> str | None:
     if basename.startswith(".") and basename not in FILENAME_LANGUAGE_MAP:
         return "hidden_file"
 
-    try:
-        size = os.path.getsize(filepath)
-    except OSError:
-        return "unreadable"
+    if size is None:
+        try:
+            size = os.path.getsize(filepath)
+        except OSError:
+            return "unreadable"
 
     max_size = MAX_NOTEBOOK_SIZE_BYTES if ext.lower() == ".ipynb" else MAX_FILE_SIZE_BYTES
     if size > max_size:
@@ -190,76 +69,139 @@ def _skip_reason(filepath: str) -> str | None:
     return None
 
 
-def _build_tree(current_path: str, root_path: str) -> list:
+def _format_size(size_bytes: int) -> str:
+    """Human-readable file size."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def traverse_repo(clone_path: str) -> dict:
     """
-    Recursively build a nested tree structure for the directory.
-
-    Each node:
-      - name: str
-      - type: "dir" | "file"
-      - path: relative path from root
-      - children: list (only for dirs)
-      - size, size_formatted, language (only for files)
+    Walk through the cloned repo and collect metadata for all relevant files.
+    Builds both the flat file list and the hierarchical tree in a single pass.
     """
-    from typing import Any
+    all_files = []
+    languages: dict[str, int] = {}
+    total_size = 0
+    skipped_files: list[dict] = []
 
-    entries: list[dict[str, Any]] = []
+    def _walk_tree(current_path: str) -> list[dict]:
+        nonlocal total_size
+        entries = []
+        dirs = []
+        files = []
 
-    try:
-        items = sorted(os.listdir(current_path))
-    except PermissionError:
-        return entries
+        try:
+            with os.scandir(current_path) as it:
+                for entry in it:
+                    if entry.is_dir(follow_symlinks=False):
+                        if not _should_ignore_dir(entry.name):
+                            dirs.append((entry.name, entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        try:
+                            stat_res = entry.stat()
+                            files.append((entry.name, entry.path, stat_res))
+                        except OSError:
+                            continue
+        except OSError:
+            return entries
 
-    # Directories first, then files
-    dirs = []
-    files = []
+        # Sort to ensure deterministic output
+        dirs.sort(key=lambda x: x[0])
+        files.sort(key=lambda x: x[0])
 
-    for item in items:
-        item_path = os.path.join(current_path, item)
-        if os.path.isdir(item_path):
-            if not _should_ignore_dir(item):
-                dirs.append(item)
-        else:
-            if not _should_ignore_file(item_path):
-                files.append(item)
-
-    for d in dirs:
-        dir_path = os.path.join(current_path, d)
-        rel_path = os.path.relpath(dir_path, root_path)
-        children = _build_tree(dir_path, root_path)
-        entries.append(
-            {
-                "name": d,
-                "type": "dir",
-                "path": rel_path,
-                "children": children,
-            }
-        )
-
-    for f in files:
-        file_path = os.path.join(current_path, f)
-        rel_path = os.path.relpath(file_path, root_path)
-        skip_reason = _skip_reason(file_path)
-        if skip_reason:
+        for d_name, d_path in dirs:
+            rel_path = os.path.relpath(d_path, clone_path)
+            children = _walk_tree(d_path)
             entries.append(
                 {
-                    "name": f,
-                    "type": "skipped",
+                    "name": d_name,
+                    "type": "dir",
                     "path": rel_path,
-                    "reason": skip_reason,
+                    "children": children,
                 }
             )
-            continue
-        file_size = os.path.getsize(file_path)
-        entries.append(
-            {
-                "name": f,
-                "type": "file",
+
+        for f_name, f_path, stat_res in files:
+            rel_path = os.path.relpath(f_path, clone_path)
+            file_size = stat_res.st_size
+            
+            skip_reason = _get_skip_reason(f_path, file_size)
+            if skip_reason:
+                skipped_files.append(
+                    {
+                        "path": rel_path,
+                        "size": file_size,
+                        "size_formatted": _format_size(file_size),
+                        "reason": skip_reason,
+                    }
+                )
+                entries.append(
+                    {
+                        "name": f_name,
+                        "type": "skipped",
+                        "path": rel_path,
+                        "reason": skip_reason,
+                    }
+                )
+                continue
+
+            language = _detect_language(f_path)
+            languages[language] = languages.get(language, 0) + 1
+            total_size += file_size
+            
+            # Read content if file is < 100KB to prevent subsequent disk reads
+            content = None
+            if file_size < 100 * 1024:
+                try:
+                    with open(f_path, "r", encoding="utf-8") as f_obj:
+                        content = f_obj.read()
+                except UnicodeDecodeError:
+                    pass
+                except Exception:
+                    pass
+
+            file_entry = {
                 "path": rel_path,
+                "name": f_name,
+                "extension": os.path.splitext(f_name)[1].lower(),
+                "language": language,
                 "size": file_size,
                 "size_formatted": _format_size(file_size),
-                "language": _detect_language(file_path),
+                "depth": rel_path.count(os.sep),
+                "mtime": stat_res.st_mtime,
             }
-        )
+            if content is not None:
+                file_entry["content"] = content
+                
+            all_files.append(file_entry)
 
-    return entries
+            entries.append(
+                {
+                    "name": f_name,
+                    "type": "file",
+                    "path": rel_path,
+                    "size": file_size,
+                    "size_formatted": _format_size(file_size),
+                    "language": language,
+                }
+            )
+
+        return entries
+
+    tree = _walk_tree(clone_path)
+    sorted_languages = dict(sorted(languages.items(), key=lambda x: x[1], reverse=True))
+
+    return {
+        "total_files": len(all_files),
+        "total_size": total_size,
+        "total_size_formatted": _format_size(total_size),
+        "languages": sorted_languages,
+        "tree": tree,
+        "files": all_files,
+        "skipped_files": skipped_files,
+    }

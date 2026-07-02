@@ -820,8 +820,7 @@ def validate_providers() -> None:
         groq_provider.complete([Message(role="user", content="ping")], max_tokens=2)
         logger.info("Groq connectivity verified.")
     except Exception as e:
-        logger.error(f"Groq connectivity check failed: {e}")
-        raise RuntimeError(f"Groq connectivity check failed: {e}") from e
+        logger.warning(f"Groq connectivity check failed (server will still start): {e}")
 
     try:
         gemini_provider = GeminiProvider()
@@ -831,5 +830,4 @@ def validate_providers() -> None:
         )
         logger.info("Gemini connectivity verified.")
     except Exception as e:
-        logger.error(f"Gemini connectivity check failed: {e}")
-        raise RuntimeError(f"Gemini connectivity check failed: {e}") from e
+        logger.warning(f"Gemini connectivity check failed (server will still start): {e}")

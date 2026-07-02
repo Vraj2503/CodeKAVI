@@ -72,12 +72,16 @@ class FileFingerprint:
     exports_hash: str = ""
     structure_hash: str = ""
     change_type: str = "NONE"  # NONE / COSMETIC / STRUCTURAL
+    parse_error: bool = False
 
 
-def compute_file_hash(abs_path: str) -> str:
+def compute_file_hash(abs_path: str, content: str | None = None) -> str:
     """
     Compute a fast hash of a file by reading the first 8KB and last 2KB.
+    If content is provided, hash the whole content string directly.
     """
+    if content is not None:
+        return hashlib.md5(content.encode('utf-8', errors='ignore')).hexdigest()
     try:
         with open(abs_path, "rb") as f:
             head = f.read(8192)
@@ -91,6 +95,7 @@ def compute_file_hash(abs_path: str) -> str:
         return hashlib.md5(head + tail).hexdigest()
     except OSError:
         return ""
+
 
 
 def _hash_sorted(values: list[str]) -> str:
@@ -133,7 +138,7 @@ def compute_structure_signature(rel_path: str, abs_path: str, source: str | None
             with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 source = f.read()
         except OSError:
-            return {"imports_hash": "", "exports_hash": "", "structure_hash": ""}
+            return {"imports_hash": "", "exports_hash": "", "structure_hash": "", "parse_error": True}
 
     if language_name in {"Python", "Jupyter Notebook"}:
         return _python_structure_signature(source)
@@ -144,7 +149,7 @@ def compute_structure_signature(rel_path: str, abs_path: str, source: str | None
 
     # Other languages have no signature support yet → caller treats as
     # structural to be safe.
-    return {"imports_hash": "", "exports_hash": "", "structure_hash": ""}
+    return {"imports_hash": "", "exports_hash": "", "structure_hash": "", "parse_error": True}
 
 
 def _python_structure_signature(source: str) -> dict:
@@ -152,7 +157,7 @@ def _python_structure_signature(source: str) -> dict:
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return {"imports_hash": "", "exports_hash": "", "structure_hash": ""}
+        return {"imports_hash": "", "exports_hash": "", "structure_hash": "", "parse_error": True}
 
     imports: list[str] = []
     exports: list[str] = []
@@ -200,6 +205,7 @@ def _python_structure_signature(source: str) -> dict:
         "imports_hash": _hash_python_signature(imports),
         "exports_hash": _hash_sorted(exports),
         "structure_hash": _hash_python_signature(declarations),
+        "parse_error": False,
     }
 
 
@@ -219,7 +225,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     try:
         tree = parser.parse(source_bytes)
     except Exception:
-        return {"imports_hash": "", "exports_hash": "", "structure_hash": ""}
+        return {"imports_hash": "", "exports_hash": "", "structure_hash": "", "parse_error": True}
 
     captures = query.captures(tree.root_node)
 
@@ -246,6 +252,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
         "imports_hash": _hash_sorted(imports),
         "exports_hash": _hash_sorted(exports),
         "structure_hash": _hash_sorted(declarations),
+        "parse_error": False,
     }
 
 
@@ -288,6 +295,7 @@ def compare_and_classify_repo(
     repo_id: str,
     repo_root: str,
     current_files: list[dict],
+    content_cache: dict[str, str] | None = None,
 ) -> tuple[dict[str, FileFingerprint], bool]:
     """
     Compute fingerprints for current_files, compare with cached, and classify.
@@ -310,28 +318,45 @@ def compare_and_classify_repo(
     for f_info in current_files:
         rel_path = f_info["path"]
         abs_path = os.path.join(repo_root, rel_path)
+        content = content_cache.get(rel_path) if content_cache else None
 
-        current_hash = compute_file_hash(abs_path)
-        sig = compute_structure_signature(rel_path, abs_path)
+        current_hash = compute_file_hash(abs_path, content=content)
 
         if rel_path in cached:
             prev = cached[rel_path]
             if prev.content_hash == current_hash:
                 change_type = "NONE"
-            elif (
-                prev.imports_hash == sig["imports_hash"]
-                and prev.exports_hash == sig["exports_hash"]
-                and prev.structure_hash == sig["structure_hash"]
-                and prev.imports_hash != ""
-                and prev.structure_hash != ""
-            ):
-                # Quick content change but the structural fingerprint is identical
-                # → safe to call COSMETIC and skip re-analysis.
-                change_type = "COSMETIC"
+                sig = {
+                    "imports_hash": prev.imports_hash,
+                    "exports_hash": prev.exports_hash,
+                    "structure_hash": prev.structure_hash,
+                    "parse_error": getattr(prev, "parse_error", False),
+                }
             else:
-                change_type = "STRUCTURAL"
-                has_structural = True
+                sig = compute_structure_signature(rel_path, abs_path, source=content)
+                
+                is_unsupported_or_error = (
+                    sig.get("parse_error", False) and
+                    (getattr(prev, "parse_error", False) or (prev.imports_hash == "" and prev.structure_hash == ""))
+                )
+                
+                if is_unsupported_or_error:
+                    change_type = "COSMETIC"
+                elif (
+                    prev.imports_hash == sig["imports_hash"]
+                    and prev.exports_hash == sig["exports_hash"]
+                    and prev.structure_hash == sig["structure_hash"]
+                    and prev.imports_hash != ""
+                    and prev.structure_hash != ""
+                ):
+                    # Quick content change but the structural fingerprint is identical
+                    # → safe to call COSMETIC and skip re-analysis.
+                    change_type = "COSMETIC"
+                else:
+                    change_type = "STRUCTURAL"
+                    has_structural = True
         else:
+            sig = compute_structure_signature(rel_path, abs_path, source=content)
             change_type = "STRUCTURAL"
             has_structural = True
 
@@ -342,6 +367,7 @@ def compare_and_classify_repo(
             exports_hash=sig["exports_hash"],
             structure_hash=sig["structure_hash"],
             change_type=change_type,
+            parse_error=sig.get("parse_error", False),
         )
 
     return updated, has_structural

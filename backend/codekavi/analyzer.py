@@ -79,7 +79,9 @@ except ModuleNotFoundError:
 # ─────────────────────────────────────────────
 
 
-def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
+def _extract_python_imports(
+    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None
+) -> list[dict]:
     """
     Use Python's AST to extract imports. Handles:
       - import foo
@@ -99,7 +101,7 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                resolved = _resolve_python_module(alias.name, repo_root, file_dir, level=0)
+                resolved = _resolve_python_module(alias.name, repo_root, file_dir, level=0, known_files=known_files)
                 imports.append(
                     {
                         "raw": alias.name,
@@ -112,7 +114,7 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             level = node.level or 0
-            resolved = _resolve_python_module(module, repo_root, file_dir, level=level)
+            resolved = _resolve_python_module(module, repo_root, file_dir, level=level, known_files=known_files)
             imports.append(
                 {
                     "raw": f"{'.' * level}{module}" if module else "." * level,
@@ -125,7 +127,9 @@ def _extract_python_imports(filepath: str, source: str, repo_root: str) -> list[
     return imports
 
 
-def _resolve_python_module(module_name: str, repo_root: str, file_dir: str, level: int = 0) -> str | None:
+def _resolve_python_module(
+    module_name: str, repo_root: str, file_dir: str, level: int = 0, known_files: set[str] | None = None
+) -> str | None:
     """
     Resolve a Python module name to a file path relative to repo root.
     Returns the relative path if found, None otherwise.
@@ -142,21 +146,27 @@ def _resolve_python_module(module_name: str, repo_root: str, file_dir: str, leve
         parts = module_name.split(".")
         candidate_base = os.path.join(repo_root, *parts)
 
+    def _exists(path: str) -> bool:
+        rel = os.path.relpath(path, repo_root).replace("\\", "/")
+        if known_files is not None:
+            return rel in known_files
+        return os.path.isfile(path)
+
     # Check: package/__init__.py
     init_path = os.path.join(candidate_base, "__init__.py")
-    if os.path.isfile(init_path):
-        return os.path.relpath(init_path, repo_root)
+    if _exists(init_path):
+        return os.path.relpath(init_path, repo_root).replace("\\", "/")
 
     # Check: module.py
     py_path = candidate_base + ".py"
-    if os.path.isfile(py_path):
-        return os.path.relpath(py_path, repo_root)
+    if _exists(py_path):
+        return os.path.relpath(py_path, repo_root).replace("\\", "/")
 
     # Check: module (directory with __init__.py in subdir — already covered)
     if os.path.isdir(candidate_base):
         init = os.path.join(candidate_base, "__init__.py")
-        if os.path.isfile(init):
-            return os.path.relpath(init, repo_root)
+        if _exists(init):
+            return os.path.relpath(init, repo_root).replace("\\", "/")
 
     return None
 
@@ -175,25 +185,21 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
          to the JS parser (some .vue/.svelte files are pure JS/component-syntax
          with inline scripts).
     """
-    script_match = re.search(
-        r'<script\b([^>]*)>(.*?)</script>', source, re.DOTALL | re.IGNORECASE
-    )
+    script_match = re.search(r"<script\b([^>]*)>(.*?)</script>", source, re.DOTALL | re.IGNORECASE)
 
     if script_match:
         attrs = script_match.group(1).lower()
         script_body = script_match.group(2)
-        is_ts = ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or (
-            'lang="typescript"' in attrs
-        )
-        return _extract_js_ts_imports_with_source(
-            filepath, script_body, repo_root, is_ts=is_ts
-        )
+        is_ts = ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or ('lang="typescript"' in attrs)
+        return _extract_js_ts_imports_with_source(filepath, script_body, repo_root, is_ts=is_ts)
 
     # No <script> block — fall back to parsing raw source as JS
     return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=False)
 
 
-def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
+def _extract_js_ts_imports(
+    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None
+) -> list[dict]:
     """
     Extract JS/TS imports using tree-sitter AST. Handles:
       - import ... from 'path'
@@ -209,9 +215,7 @@ def _extract_js_ts_imports(filepath: str, source: str, repo_root: str) -> list[d
     return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=is_ts)
 
 
-def _extract_js_ts_imports_with_source(
-    filepath: str, source: str, repo_root: str, is_ts: bool
-) -> list[dict]:
+def _extract_js_ts_imports_with_source(filepath: str, source: str, repo_root: str, is_ts: bool) -> list[dict]:
     """Shared JS/TS extraction that picks the right language and a per-call Parser."""
     imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
@@ -224,7 +228,7 @@ def _extract_js_ts_imports_with_source(
     parser = Parser()
     parser.set_language(language)
 
-    source_bytes = source.encode('utf-8', errors='ignore')
+    source_bytes = source.encode("utf-8", errors="ignore")
     tree = parser.parse(source_bytes)
     captures = query.captures(tree.root_node)
 
@@ -232,32 +236,38 @@ def _extract_js_ts_imports_with_source(
     if isinstance(captures, list):
         for node, name in captures:
             if name == "path":
-                raw_path = node.text.decode('utf-8', errors='ignore')
+                raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
                 resolved = _resolve_js_path(raw_path, file_dir, repo_root)
-                imports.append({
-                    "raw": raw_path,
-                    "resolved": resolved,
-                    "line": line,
-                    "type": "import",
-                })
+                imports.append(
+                    {
+                        "raw": raw_path,
+                        "resolved": resolved,
+                        "line": line,
+                        "type": "import",
+                    }
+                )
     else:
         for node, name in captures.items():
             if name == "path":
-                raw_path = node.text.decode('utf-8', errors='ignore')
+                raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
                 resolved = _resolve_js_path(raw_path, file_dir, repo_root)
-                imports.append({
-                    "raw": raw_path,
-                    "resolved": resolved,
-                    "line": line,
-                    "type": "import",
-                })
+                imports.append(
+                    {
+                        "raw": raw_path,
+                        "resolved": resolved,
+                        "line": line,
+                        "type": "import",
+                    }
+                )
 
     return imports
 
 
-def _resolve_js_path(import_path: str, file_dir: str, repo_root: str) -> str | None:
+def _resolve_js_path(
+    import_path: str, file_dir: str, repo_root: str, known_files: set[str] | None = None
+) -> str | None:
     """Resolve a JS/TS import path to a file relative to repo root."""
     # Skip node_modules / bare specifiers
     if not import_path.startswith(".") and not import_path.startswith("/"):
@@ -271,23 +281,29 @@ def _resolve_js_path(import_path: str, file_dir: str, repo_root: str) -> str | N
 
     candidate = os.path.normpath(os.path.join(base, import_path))
 
+    def _exists(path: str) -> bool:
+        rel = os.path.relpath(path, repo_root).replace("\\", "/")
+        if known_files is not None:
+            return rel in known_files
+        return os.path.isfile(path)
+
     # Try exact, then with extensions
     js_extensions = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".vue", ".svelte"]
 
     # Exact match
-    if os.path.isfile(candidate):
-        return os.path.relpath(candidate, repo_root)
+    if _exists(candidate):
+        return os.path.relpath(candidate, repo_root).replace("\\", "/")
 
     # Try adding extensions
     for ext in js_extensions:
-        if os.path.isfile(candidate + ext):
-            return os.path.relpath(candidate + ext, repo_root)
+        if _exists(candidate + ext):
+            return os.path.relpath(candidate + ext, repo_root).replace("\\", "/")
 
     # Try index files
     for ext in js_extensions:
         index_path = os.path.join(candidate, f"index{ext}")
-        if os.path.isfile(index_path):
-            return os.path.relpath(index_path, repo_root)
+        if _exists(index_path):
+            return os.path.relpath(index_path, repo_root).replace("\\", "/")
 
     return None
 
@@ -409,7 +425,9 @@ def _extract_php_imports(filepath: str, source: str, repo_root: str) -> list[dic
     return imports
 
 
-def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
+def _extract_ipynb_imports(
+    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None
+) -> list[dict]:
     """
     Extract imports from Jupyter Notebook (.ipynb) files.
 
@@ -445,7 +463,7 @@ def _extract_ipynb_imports(filepath: str, source: str, repo_root: str) -> list[d
             continue
 
         # Run Python import extraction on the cell
-        cell_imports = _extract_python_imports(filepath, cell_source, repo_root)
+        cell_imports = _extract_python_imports(filepath, cell_source, repo_root, known_files=known_files)
 
         # Tag each import with the cell number for traceability
         for imp in cell_imports:
@@ -559,7 +577,13 @@ def analyze_dependencies(
             continue
 
         # Extract imports
-        imports = extractor(abs_path, source, repo_root)
+        if extractor in (_extract_python_imports, _extract_js_ts_imports):
+            imports = extractor(abs_path, source, repo_root, known_files=known_files)
+        elif extractor == _extract_ipynb_imports:
+            # Need to patch ipynb too since it calls python extractor
+            imports = extractor(abs_path, source, repo_root, known_files=known_files)
+        else:
+            imports = extractor(abs_path, source, repo_root)
         file_imports[rel_path] = imports
 
         for imp in imports:
@@ -581,7 +605,9 @@ def analyze_dependencies(
                 unresolved_count += 1
 
     # ── Detect entry points (using content_cache to avoid re-reading files) ──
-    entry_points = _detect_entry_points(repo_root, known_files, adjacency, reverse_adjacency, content_cache)
+    entry_points, file_signals = _detect_entry_points(
+        repo_root, known_files, adjacency, reverse_adjacency, content_cache
+    )
 
     # ── Find central/important files ──
     central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
@@ -596,6 +622,7 @@ def analyze_dependencies(
         "reverse_adjacency": {k: sorted(v) for k, v in reverse_adjacency.items()},
         "file_imports": {k: v for k, v in file_imports.items() if v},
         "entry_points": entry_points,
+        "file_signals": {k: list(v) for k, v in file_signals.items()},
         "central_files": central_files,
         "stats": {
             "total_edges": resolved_count + unresolved_count,
@@ -675,15 +702,18 @@ def _detect_entry_points(
     adjacency: dict[str, set],
     reverse_adjacency: dict[str, set],
     content_cache: dict[str, str] | BoundedContentCache | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], dict[str, set]]:
     """
     Detect likely entry point files using heuristics:
       1. Filename matches common entry point patterns
       2. Has 'if __name__' guard (Python)  /  main() function
       3. Graph-based: files that import others but are not imported themselves
+
+    Returns: (entry_points, file_signals)
     """
     entry_points = []
     scored: dict[str, dict] = {}
+    file_signals: dict[str, set] = {}
 
     # Extensions that are actual source code (not docs/config)
     source_extensions = {
@@ -720,6 +750,7 @@ def _detect_entry_points(
         is_source = ext.lower() in source_extensions
         score = 0
         reasons = []
+        signals = set()
 
         # ── Heuristic 1: filename ──
         if basename in _ENTRY_POINT_NAMES:
@@ -746,23 +777,33 @@ def _detect_entry_points(
             if "if __name__" in content and "__main__" in content:
                 score += 4
                 reasons.append("has_main_guard")
+                signals.add("main_guard")
             if re.search(r"def\s+main\s*\(", content):
                 score += 2
                 reasons.append("has_main_function")
+                signals.add("main_fn")
             if re.search(r"func\s+main\s*\(", content):  # Go
                 score += 4
                 reasons.append("has_main_function")
+                signals.add("main_fn")
             if re.search(r"public\s+static\s+void\s+main", content):  # Java
                 score += 4
                 reasons.append("has_main_method")
+                signals.add("main_fn")
             if re.search(r"app\.listen\s*\(", content) or re.search(r"createServer\s*\(", content):  # Node.js
                 score += 3
                 reasons.append("starts_server")
+                signals.add("starts_server")
             if re.search(r"\.run\s*\(", content) and (
                 "Flask" in content or "FastAPI" in content or "uvicorn" in content
             ):
                 score += 3
                 reasons.append("starts_server")
+                signals.add("starts_server")
+            if "React" in content or "useState" in content or "useEffect" in content or "Component" in content:
+                signals.add("is_react")
+
+            file_signals[fpath] = signals
 
         # ── Heuristic 3: graph topology ──
         # Files that import others but nobody imports them = likely entry points
@@ -788,7 +829,7 @@ def _detect_entry_points(
 
     # Sort by score descending
     entry_points = sorted(scored.values(), key=lambda x: x["score"], reverse=True)
-    return entry_points
+    return entry_points, file_signals
 
 
 # ─────────────────────────────────────────────

@@ -2,7 +2,7 @@ import hashlib
 import logging
 import os
 import time
-import concurrent.futures
+import asyncio
 from typing import Any
 
 from dotenv import load_dotenv
@@ -35,7 +35,7 @@ def create_genai_client():
         return None
 
 
-def _embed_single_with_retry(client, text: str) -> list[float]:
+async def _embed_single_with_retry(client, text: str) -> list[float]:
     """
     Call Gemini embed_content for a single text with exponential backoff on rate-limit (429) errors.
     """
@@ -43,7 +43,8 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.models.embed_content(
+            response = await asyncio.to_thread(
+                client.models.embed_content,
                 model=settings.embedding_model,
                 contents=text,
             )
@@ -55,7 +56,7 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
 
             if is_rate_limit and attempt < MAX_RETRIES:
                 logger.warning(f"Rate-limited (attempt {attempt}/{MAX_RETRIES}). Waiting {backoff:.0f}s before retry…")
-                time.sleep(backoff)
+                await asyncio.sleep(backoff)
                 backoff *= 2  # exponential backoff
                 continue
             else:
@@ -63,20 +64,42 @@ def _embed_single_with_retry(client, text: str) -> list[float]:
     return []  # safety return for type checker (unreachable)
 
 
-def _embed_with_retry(client, texts: list[str]) -> list[list[float]]:
+async def _embed_with_retry(client, texts: list[str]) -> list[list[float]]:
     """
     Generate embeddings for a batch of texts in parallel.
     The new google-genai SDK embed_content treats a list of strings as parts
     of a single request (returning 1 embedding), so we map over them concurrently.
     """
-    results = []
-    # Use max_workers=10 for reasonable parallel API calls to the embedding model
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(_embed_single_with_retry, client, text) for text in texts]
-        for future in futures:
-            results.append(future.result())
-            
-    return results
+    backoff = INITIAL_BACKOFF_S
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            # Single API call for the entire batch
+            response = await asyncio.to_thread(
+                client.models.embed_content,
+                model=settings.embedding_model,
+                contents=texts,
+            )
+            return [e.values for e in response.embeddings]
+
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+
+            if is_rate_limit and attempt < MAX_RETRIES:
+                logger.warning(
+                    f"Rate-limited on batch embed (attempt {attempt}/{MAX_RETRIES}). "
+                    f"Waiting {backoff:.0f}s before retry…"
+                )
+                await asyncio.sleep(backoff)
+                backoff *= 2
+                continue
+            else:
+                # Fallback: try sequential embedding
+                logger.warning(f"Batch embed failed, falling back to sequential: {e}")
+                return [await _embed_single_with_retry(client, text) for text in texts]
+
+    return []  # safety return for type checker (unreachable)
 
 
 def _detect_language(file_path: str) -> str:
@@ -85,7 +108,7 @@ def _detect_language(file_path: str) -> str:
     return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")
 
 
-def index_repository(
+async def index_repository(
     repo_id: str,
     file_profiles: list[dict[str, Any]],
     clone_path: str,
@@ -125,7 +148,7 @@ def index_repository(
     total_chunks_attempted = 0
     total_chunks_inserted = 0
 
-    def flush_batch():
+    async def flush_batch():
         nonlocal current_batch_texts, current_batch_metadata
         nonlocal total_chunks_attempted, total_chunks_inserted
 
@@ -137,7 +160,7 @@ def index_repository(
 
         try:
             # Generate embeddings (with retry on rate-limit)
-            embeddings = _embed_with_retry(client, current_batch_texts)
+            embeddings = await _embed_with_retry(client, current_batch_texts)
 
             ids = [m["id"] for m in current_batch_metadata]
             repo_ids = [m["repo_id"] for m in current_batch_metadata]
@@ -161,7 +184,7 @@ def index_repository(
                 embeddings,
             ]
 
-            collection.insert(insert_data)
+            await asyncio.to_thread(collection.insert, insert_data)
             total_chunks_inserted += batch_len
             logger.info(f"  Inserted {batch_len} chunks (Total: {total_chunks_inserted}/{total_chunks_attempted})")
 
@@ -233,12 +256,12 @@ def index_repository(
             )
 
             if len(current_batch_texts) >= BATCH_SIZE:
-                flush_batch()
+                await flush_batch()
                 # No inter-batch delay needed — rate limits are handled
                 # per-API-call in _embed_with_retry via exponential backoff
 
     # Flush remaining
-    flush_batch()
+    await flush_batch()
 
     lost = total_chunks_attempted - total_chunks_inserted
     summary = f"Finished indexing for {repo_id}: {total_chunks_inserted}/{total_chunks_attempted} chunks inserted"
