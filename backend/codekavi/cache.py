@@ -301,6 +301,11 @@ class AnalysisCache:
             logger.warning(f"Supabase SET RAW failed for {repo_id}: {e}")
 
     def _supabase_get(self, repo_id: str) -> dict | None:
+        # L-08: a genuine query error and a real cache miss both return None
+        # here. Accepted trade-off — every caller already treats a L3 miss as
+        # "fall through to re-analysis", so a distinct exception type for the
+        # error case wouldn't change control flow, only add a rarely-useful
+        # distinction. The warning log below is the observability signal.
         sb = self._get_supabase()
         if not sb:
             return None
