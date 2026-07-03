@@ -198,8 +198,6 @@ FILENAME_LANGUAGE_MAP = {
     "Vagrantfile": "Ruby",
     "Procfile": "Procfile",
     ".gitignore": "Git Config",
-    ".env": "Environment",
-    ".env.example": "Environment",
     "docker-compose.yml": "Docker Compose",
     "docker-compose.yaml": "Docker Compose",
     "requirements.txt": "Python (pip)",
