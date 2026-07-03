@@ -27,12 +27,11 @@ from collections.abc import Callable
 from typing import Any
 
 import tree_sitter_javascript as tsjs
-import tree_sitter_python as tspy
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser, Query
 
+from codekavi.pipeline_models import DepGraph, FileEntry
 from codekavi.utils import BoundedContentCache
-from codekavi.pipeline_models import FileEntry, DepGraph
 
 # Languages are immutable and safe to share across threads.
 JS_LANGUAGE = Language(tsjs.language(), "javascript")
@@ -208,20 +207,29 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
     The raw file contains <template> and <style> blocks which are NOT valid
     JavaScript — feeding those directly to a JS tree-sitter parser produces
     an error tree and zero imports. To handle these correctly:
-      1. Extract the content between <script> ...</script> tags.
-      2. If <script lang="ts"> or <script lang="tsx"> is present, use the
-         TypeScript language/query; otherwise use JavaScript.
+      1. Extract the content of EVERY <script> ...</script> block. Vue 3 SFCs
+         commonly ship both a plain <script> (e.g. for `defineComponent`
+         options) and a <script setup> block — using only the first (M-18)
+         silently drops imports declared in the second.
+      2. Concatenate all script bodies into one source before parsing. If ANY
+         block declares lang="ts" (or "typescript"), parse the combined
+         source as TypeScript; otherwise use JavaScript.
       3. If no <script> block is found, fall back to passing the raw source
          to the JS parser (some .vue/.svelte files are pure JS/component-syntax
          with inline scripts).
     """
-    script_match = re.search(r"<script\b([^>]*)>(.*?)</script>", source, re.DOTALL | re.IGNORECASE)
+    script_matches = list(re.finditer(r"<script\b([^>]*)>(.*?)</script>", source, re.DOTALL | re.IGNORECASE))
 
-    if script_match:
-        attrs = script_match.group(1).lower()
-        script_body = script_match.group(2)
-        is_ts = ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or ('lang="typescript"' in attrs)
-        return _extract_js_ts_imports_with_source(filepath, script_body, repo_root, is_ts=is_ts)
+    if script_matches:
+        is_ts = False
+        bodies = []
+        for m in script_matches:
+            attrs = m.group(1).lower()
+            bodies.append(m.group(2))
+            if ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or ('lang="typescript"' in attrs):
+                is_ts = True
+        combined_body = "\n".join(bodies)
+        return _extract_js_ts_imports_with_source(filepath, combined_body, repo_root, is_ts=is_ts)
 
     # No <script> block — fall back to parsing raw source as JS
     return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=False)
