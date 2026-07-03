@@ -34,3 +34,9 @@ class VectorStoreError(CodeKaviError):
     """Exception raised when vector database operations fail."""
 
     pass
+
+
+class IndexingError(CodeKaviError):
+    """Exception raised when embedding/chunk data is misaligned or fails to persist."""
+
+    pass
