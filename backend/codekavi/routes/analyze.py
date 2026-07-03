@@ -22,12 +22,12 @@ from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
 
 def safe_cleanup(path: str):
+    """Best-effort repo cleanup. Logs a warning on failure instead of raising."""
     from codekavi.cloner import cleanup_repo
-    import logging
     try:
-        safe_cleanup(path)
+        cleanup_repo(path)
     except Exception as e:
-        logging.getLogger(__name__).warning(f"Failed to cleanup repo {path}: {e}")
+        logging.getLogger(__name__).warning(f"Failed to cleanup repo at {path}: {e}")
 
 from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
@@ -803,6 +803,10 @@ async def cleanup(
     await _run_sync(cache.delete, repo_id)
     await _run_sync(cache.delete_session, repo_id)
     if clone_path:
-        await _run_sync(cleanup_repo, clone_path)
+        try:
+            await _run_sync(cleanup_repo, clone_path)
+        except Exception as e:
+            logger.warning(f"cleanup_repo failed for {repo_id} at {clone_path}: {e}")
+            return {"success": True, "message": f"Repo {repo_id} data cleared (disk cleanup failed: {e})."}
         return {"success": True, "message": f"Repo {repo_id} cleaned up."}
     raise HTTPException(status_code=404, detail="Session not found")

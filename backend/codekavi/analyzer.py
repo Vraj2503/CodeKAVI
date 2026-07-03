@@ -162,8 +162,17 @@ def _resolve_python_module(
     if _exists(py_path):
         return os.path.relpath(py_path, repo_root).replace("\\", "/")
 
-    # Check: module (directory with __init__.py in subdir — already covered)
-    if os.path.isdir(candidate_base):
+    # Check: module (directory with __init__.py)
+    # Guard the isdir call: if known_files is set we can infer a directory
+    # exists by checking if any known file starts with the candidate prefix.
+    is_dir = False
+    if known_files is not None:
+        prefix = os.path.relpath(candidate_base, repo_root).replace("\\", "/") + "/"
+        is_dir = any(p.startswith(prefix) for p in known_files)
+    else:
+        is_dir = os.path.isdir(candidate_base)
+
+    if is_dir:
         init = os.path.join(candidate_base, "__init__.py")
         if _exists(init):
             return os.path.relpath(init, repo_root).replace("\\", "/")
@@ -212,10 +221,12 @@ def _extract_js_ts_imports(
     concurrent /analyze requests don't race on shared parser state.
     """
     is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
-    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=is_ts)
+    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=is_ts, known_files=known_files)
 
 
-def _extract_js_ts_imports_with_source(filepath: str, source: str, repo_root: str, is_ts: bool) -> list[dict]:
+def _extract_js_ts_imports_with_source(
+    filepath: str, source: str, repo_root: str, is_ts: bool, known_files: set[str] | None = None
+) -> list[dict]:
     """Shared JS/TS extraction that picks the right language and a per-call Parser."""
     imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
@@ -238,7 +249,7 @@ def _extract_js_ts_imports_with_source(filepath: str, source: str, repo_root: st
             if name == "path":
                 raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
-                resolved = _resolve_js_path(raw_path, file_dir, repo_root)
+                resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
                 imports.append(
                     {
                         "raw": raw_path,
@@ -252,7 +263,7 @@ def _extract_js_ts_imports_with_source(filepath: str, source: str, repo_root: st
             if name == "path":
                 raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
-                resolved = _resolve_js_path(raw_path, file_dir, repo_root)
+                resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
                 imports.append(
                     {
                         "raw": raw_path,
@@ -564,13 +575,19 @@ def analyze_dependencies(
             continue
 
         # Read file ONCE and cache (skip caching large notebooks to save memory)
+        # Sprint 2 T2: use pre-loaded content from traverser when available to
+        # skip a disk read entirely.
         try:
             max_size = MAX_NOTEBOOK_SIZE_BYTES if rel_path.endswith(".ipynb") else MAX_FILE_SIZE_BYTES
-            file_size = os.path.getsize(abs_path)
-            if file_size > max_size:
-                continue
-            with open(abs_path, encoding="utf-8", errors="ignore") as f:
-                source = f.read()
+            if "content" in file_info and file_info["content"] is not None:
+                # Traverser pre-loaded the content — use it directly
+                source = file_info["content"]
+            else:
+                file_size = os.path.getsize(abs_path)
+                if file_size > max_size:
+                    continue
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
+                    source = f.read()
             if not rel_path.endswith(".ipynb"):
                 content_cache[rel_path] = source[:4096]
         except (OSError, UnicodeDecodeError):
