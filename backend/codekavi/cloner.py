@@ -164,9 +164,15 @@ def _read_head_sha(clone_path: str) -> str:
 
 
 def cleanup_repo(clone_path: str) -> None:
-    """Remove a previously cloned repository."""
+    """Remove a previously cloned repository.
+
+    L-06: raises on deletion failure instead of silently swallowing it via
+    ignore_errors=True — a leaked clone directory should be observable. Both
+    callers (routes/analyze.py's safe_cleanup() and the /cleanup route)
+    already catch and log a warning, so this can't surface as a 500.
+    """
     if os.path.exists(clone_path):
-        shutil.rmtree(clone_path, ignore_errors=True)
+        shutil.rmtree(clone_path)
 
 
 def cleanup_old_repos(max_age_hours: int = MAX_REPO_AGE_HOURS) -> None:
