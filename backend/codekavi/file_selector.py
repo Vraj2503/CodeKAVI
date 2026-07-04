@@ -101,6 +101,13 @@ class SmartFileSelector:
             if len(selected) >= self.MAX_FILES:
                 break
             if tokens_used + item["estimated_tokens"] > self.MAX_TOTAL_TOKENS:
+                if not selected:
+                    # L-12: the single highest-scored file must never be
+                    # dropped entirely just because it overflows the budget —
+                    # include a budget-sized head slice instead of skipping
+                    # past it to fill the context with smaller, lesser files.
+                    selected.append({**item, "truncated": True, "estimated_tokens": self.MAX_TOTAL_TOKENS})
+                    break
                 continue  # skip this file, try the next (smaller) one
             selected.append(item)
             tokens_used += item["estimated_tokens"]
