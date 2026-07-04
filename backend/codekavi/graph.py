@@ -282,7 +282,11 @@ def export_dot(graph_json: dict, title: str = "CodeKavi Dependency Graph") -> st
 
 def _dot_escape(s: str) -> str:
     """Escape special characters for DOT format."""
-    return s.replace('"', '\\"').replace("\\", "\\\\")
+    # L-11: backslashes must be escaped BEFORE quotes. Escaping in the
+    # original quote-then-backslash order takes a literal `"` and turns it
+    # into `\"` — an escaped backslash followed by a live, unescaped quote —
+    # producing malformed/injectable DOT output.
+    return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
 # ─────────────────────────────────────────────
