@@ -207,6 +207,43 @@ class Message:
     content: str
 
 
+def _record_llm_usage(user_id: str | None, provider: str, tokens: int, latency_ms: int) -> None:
+    """T4.1 — record usage against TokenTracker (best-effort, never raises).
+
+    T4.3 — adjacent: emit tokens + cost metrics to the Prometheus counters.
+    Shared by both GroqProvider and GeminiProvider so every ``generate()``/
+    ``complete()`` call path attributes usage to the real caller instead of
+    silently recording ``user_id=None`` (M-22).
+    """
+    if not tokens:
+        return
+    try:
+        from codekavi.quota import get_token_tracker
+
+        tracker = get_token_tracker()
+        tracker.record(user_id=user_id, provider=provider, tokens=tokens)
+        cost = tracker.estimate_cost_usd(provider, tokens)
+        try:
+            from codekavi.metrics import record_llm_usage
+
+            record_llm_usage(provider=provider, tokens=tokens, cost_usd=cost)
+        except Exception as em:  # metric path is best-effort
+            logger.debug(f"metrics emit skipped: {em}")
+        logger.info(
+            f"llm_usage provider={provider} tokens={tokens} cost_usd={cost:.6f} "
+            f"latency_ms={latency_ms} user_id={user_id or 'anon'}",
+            extra={
+                "stage": "llm_usage",
+                "token_count": tokens,
+                "estimated_cost_usd": cost,
+                "duration_ms": latency_ms,
+                "provider": provider,
+            },
+        )
+    except Exception as e:  # never break the user-facing call
+        logger.debug(f"quota record skipped: {e}")
+
+
 # ─────────────────────────────────────────────
 # Groq provider (DEFAULT for generation)
 # ─────────────────────────────────────────────
@@ -256,37 +293,7 @@ class GroqProvider:
 
     @staticmethod
     def _record_usage(user_id: str | None, provider: str, tokens: int, latency_ms: int) -> None:
-        """T4.1 — record usage against TokenTracker (best-effort, never raises).
-
-        T4.3 — adjacent: emit tokens + cost metrics to the Prometheus counters.
-        """
-        if not tokens:
-            return
-        try:
-            from codekavi.quota import get_token_tracker
-
-            tracker = get_token_tracker()
-            tracker.record(user_id=user_id, provider=provider, tokens=tokens)
-            cost = tracker.estimate_cost_usd(provider, tokens)
-            try:
-                from codekavi.metrics import record_llm_usage
-
-                record_llm_usage(provider=provider, tokens=tokens, cost_usd=cost)
-            except Exception as em:  # metric path is best-effort
-                logger.debug(f"metrics emit skipped: {em}")
-            logger.info(
-                f"llm_usage provider={provider} tokens={tokens} cost_usd={cost:.6f} "
-                f"latency_ms={latency_ms} user_id={user_id or 'anon'}",
-                extra={
-                    "stage": "llm_usage",
-                    "token_count": tokens,
-                    "estimated_cost_usd": cost,
-                    "duration_ms": latency_ms,
-                    "provider": provider,
-                },
-            )
-        except Exception as e:  # never break the user-facing call
-            logger.debug(f"quota record skipped: {e}")
+        _record_llm_usage(user_id=user_id, provider=provider, tokens=tokens, latency_ms=latency_ms)
 
     # ─────────────────────────────────────────
     # Sync interface (backward-compatible with Explainer)
@@ -376,20 +383,14 @@ class GroqProvider:
     # Uses asyncio.sleep — non-blocking, proper async retry.
     # ─────────────────────────────────────────
 
-    async def generate(
+    async def _generate_core(
         self,
         system_prompt: str,
         user_prompt: str,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-        json_mode: bool = False,
-    ) -> str:
-        """
-        ASYNC method for the orchestrator. Non-blocking.
-
-        Wraps the sync Groq SDK call in run_in_executor.
-        Retries with asyncio.sleep — keeps the event loop responsive.
-        """
+        temperature: float,
+        max_tokens: int,
+    ) -> tuple[str, dict, int]:
+        """Shared retry/breaker logic for generate(). Returns (content, usage, latency_ms)."""
         # T4.2 — breaker check before any network I/O.
         rejected = self._rejected_by_breaker()
         if rejected is not None:
@@ -419,13 +420,14 @@ class GroqProvider:
                     ),
                 )
                 self._breaker.record_success()
-                # T4.1 — record usage if the API returned token counts.
                 usage_obj = getattr(response, "usage", None)
-                tokens = int(getattr(usage_obj, "total_tokens", 0) or 0) if usage_obj else 0
+                usage = {
+                    "prompt_tokens": int(getattr(usage_obj, "prompt_tokens", 0) or 0) if usage_obj else 0,
+                    "completion_tokens": int(getattr(usage_obj, "completion_tokens", 0) or 0) if usage_obj else 0,
+                    "total_tokens": int(getattr(usage_obj, "total_tokens", 0) or 0) if usage_obj else 0,
+                }
                 latency_ms = int((asyncio.get_event_loop().time() - start_ts) * 1000)
-                if tokens:
-                    self._record_usage(user_id=None, provider=self.name, tokens=tokens, latency_ms=latency_ms)
-                return response.choices[0].message.content or ""
+                return response.choices[0].message.content or "", usage, latency_ms
             except Exception as e:
                 err_str = str(e)
                 is_rate_limit = "429" in err_str or "rate limit" in err_str.lower()
@@ -449,7 +451,49 @@ class GroqProvider:
 
                 raise ProviderError(f"Groq API call failed in generate(): {e}", detail=err_str) from e
 
-        return ""  # unreachable
+        return "", {}, 0  # unreachable
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        user_id: str | None = None,
+    ) -> str:
+        """
+        ASYNC method for the orchestrator. Non-blocking.
+
+        Wraps the sync Groq SDK call in run_in_executor.
+        Retries with asyncio.sleep — keeps the event loop responsive.
+        """
+        content, usage, latency_ms = await self._generate_core(system_prompt, user_prompt, temperature, max_tokens)
+        tokens = usage.get("total_tokens", 0)
+        if tokens:
+            _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)
+        return content
+
+    async def generate_with_usage(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        user_id: str | None = None,
+    ) -> tuple[str, dict]:
+        """Like generate(), but also returns the provider's real token usage.
+
+        M-22/L-13 — routes that need to attribute usage to a user and report
+        real (not estimated) token counts should call this instead of
+        ``generate()``, which silently drops usage after recording it.
+        """
+        content, usage, latency_ms = await self._generate_core(system_prompt, user_prompt, temperature, max_tokens)
+        tokens = usage.get("total_tokens", 0)
+        if tokens:
+            _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)
+        return content, usage
 
     async def generate_stream(
         self,
@@ -656,19 +700,15 @@ class GeminiProvider:
     # Async interface (for orchestrator)
     # ─────────────────────────────────────────
 
-    async def generate(
+    async def _generate_core(
         self,
         system_prompt: str,
         user_prompt: str,
-        temperature: float = 0.3,
-        max_tokens: int = 4096,
-        json_mode: bool = False,
-    ) -> str:
-        """
-        ASYNC method for the orchestrator. Non-blocking.
-
-        Wraps the sync SDK call in run_in_executor.
-        """
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool,
+    ) -> tuple[str, dict, int]:
+        """Shared logic for generate(). Returns (content, usage, latency_ms)."""
         # T4.2 — breaker check before any network I/O.
         rejected = self._rejected_by_breaker()
         if rejected is not None:
@@ -696,9 +736,19 @@ class GeminiProvider:
 
         loop = asyncio.get_running_loop()
         try:
+            start_ts = asyncio.get_event_loop().time()
             response = await loop.run_in_executor(current_io_executor.get(None), _sync_call)
             self._breaker.record_success()
-            return response.text or ""
+            latency_ms = int((asyncio.get_event_loop().time() - start_ts) * 1000)
+            usage = {}
+            um = getattr(response, "usage_metadata", None)
+            if um:
+                usage = {
+                    "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                    "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                    "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                }
+            return response.text or "", usage, latency_ms
         except Exception as e:
             logger.error(f"Gemini API error in generate(): {e}")
             err_str = str(e)
@@ -711,6 +761,46 @@ class GeminiProvider:
             from codekavi.exceptions import ProviderError
 
             raise ProviderError(f"Gemini API call failed in generate(): {e}", detail=err_str) from e
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        user_id: str | None = None,
+    ) -> str:
+        """
+        ASYNC method for the orchestrator. Non-blocking.
+
+        Wraps the sync SDK call in run_in_executor.
+        """
+        content, usage, latency_ms = await self._generate_core(
+            system_prompt, user_prompt, temperature, max_tokens, json_mode
+        )
+        tokens = usage.get("total_tokens", 0)
+        if tokens:
+            _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)
+        return content
+
+    async def generate_with_usage(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 4096,
+        json_mode: bool = False,
+        user_id: str | None = None,
+    ) -> tuple[str, dict]:
+        """Like generate(), but also returns the provider's real token usage (M-22/L-13)."""
+        content, usage, latency_ms = await self._generate_core(
+            system_prompt, user_prompt, temperature, max_tokens, json_mode
+        )
+        tokens = usage.get("total_tokens", 0)
+        if tokens:
+            _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)
+        return content, usage
 
     async def generate_stream(
         self,
