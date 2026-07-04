@@ -80,6 +80,17 @@ async def index_repository(
 
         try:
             embeddings = await cf_client.embed_texts(current_batch_texts)
+            # M-23: insert_data below zips embeddings against metadata
+            # positionally with no length check — if Cloudflare returns
+            # fewer/misordered vectors, chunks get stored against the wrong
+            # embeddings and RAG silently cites the wrong source lines.
+            # Fail the whole batch loudly instead so it's counted as lost.
+            if len(embeddings) != batch_len:
+                from codekavi.exceptions import IndexingError
+
+                raise IndexingError(
+                    f"embedding count {len(embeddings)} != texts {batch_len} for {repo_id}"
+                )
             provider_name = "cloudflare"
 
             ids = [m["id"] for m in current_batch_metadata]
@@ -106,10 +117,17 @@ async def index_repository(
                 embeddings,
             ]
 
-            await asyncio.to_thread(collection.insert, insert_data)
-            total_chunks_inserted += batch_len
+            mr = await asyncio.to_thread(collection.insert, insert_data)
+            # M-14: don't assume a full insert just because insert() didn't
+            # raise — a partial insert (fewer primary_keys than rows sent)
+            # would otherwise silently count as "N/N inserted".
+            verified = len(getattr(mr, "primary_keys", []) or [])
+            inserted = verified or batch_len
+            total_chunks_inserted += inserted
+            if verified and verified != batch_len:
+                logger.warning(f"Partial insert for {repo_id}: {verified}/{batch_len} rows persisted")
             logger.info(
-                f"  Inserted {batch_len} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})"
+                f"  Inserted {inserted} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})"
             )
 
         except Exception as e:
