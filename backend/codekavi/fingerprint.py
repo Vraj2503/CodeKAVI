@@ -114,12 +114,6 @@ class FileFingerprint:
     functions: list[FunctionFingerprint] = field(default_factory=list)
     classes: list[ClassFingerprint] = field(default_factory=list)
     imports: list[ImportFingerprint] = field(default_factory=list)
-    content_hash: str
-    imports_hash: str = ""
-    exports_hash: str = ""
-    structure_hash: str = ""
-    change_type: str = "NONE"  # NONE / COSMETIC / STRUCTURAL
-    parse_error: bool = False
 
 
 def compute_file_hash(abs_path: str, content: str | None = None) -> str:
