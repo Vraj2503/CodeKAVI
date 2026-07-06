@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from codekavi.config import EXTENSION_LANGUAGE_MAP
+from codekavi.config import detect_language
 from codekavi.config import detect_layer as _detect_layer
 from codekavi.settings import settings
 from codekavi.vectorstore import zilliz_client
@@ -24,89 +24,7 @@ MAX_RETRIES = 6  # Retry attempts on transient / rate-limit errors
 INITIAL_BACKOFF_S = 20  # Start at 20s; doubles each attempt on 429
 
 
-def create_genai_client():
-    api_key = settings.gemini_api_key
-    if not api_key:
-        return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        logger.error(f"Error initializing GenAI client: {e}")
-        return None
-
-
-async def _embed_single_with_retry(client, text: str) -> list[float]:
-    """
-    Call Gemini embed_content for a single text with exponential backoff on rate-limit (429) errors.
-    """
-    backoff = INITIAL_BACKOFF_S
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = await asyncio.to_thread(
-                client.models.embed_content,
-                model=settings.embedding_model,
-                contents=text,
-            )
-            return response.embeddings[0].values
-
-        except Exception as e:
-            err_str = str(e)
-            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-
-            if is_rate_limit and attempt < MAX_RETRIES:
-                logger.warning(f"Rate-limited (attempt {attempt}/{MAX_RETRIES}). Waiting {backoff:.0f}s before retry…")
-                await asyncio.sleep(backoff)
-                backoff *= 2  # exponential backoff
-                continue
-            else:
-                raise  # non-retryable or exhausted retries
-    return []  # safety return for type checker (unreachable)
-
-
-async def _embed_with_retry(client, texts: list[str]) -> list[list[float]]:
-    """
-    Generate embeddings for a batch of texts in parallel.
-    The new google-genai SDK embed_content treats a list of strings as parts
-    of a single request (returning 1 embedding), so we map over them concurrently.
-    """
-    backoff = INITIAL_BACKOFF_S
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            # Single API call for the entire batch
-            response = await asyncio.to_thread(
-                client.models.embed_content,
-                model=settings.embedding_model,
-                contents=texts,
-            )
-            return [e.values for e in response.embeddings]
-
-        except Exception as e:
-            err_str = str(e)
-            is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-
-            if is_rate_limit and attempt < MAX_RETRIES:
-                logger.warning(
-                    f"Rate-limited on batch embed (attempt {attempt}/{MAX_RETRIES}). "
-                    f"Waiting {backoff:.0f}s before retry…"
-                )
-                await asyncio.sleep(backoff)
-                backoff *= 2
-                continue
-            else:
-                # Fallback: try sequential embedding
-                logger.warning(f"Batch embed failed, falling back to sequential: {e}")
-                return [await _embed_single_with_retry(client, text) for text in texts]
-
-    return []  # safety return for type checker (unreachable)
-
-
-def _detect_language(file_path: str) -> str:
-    """Detect language from file extension using the shared config map."""
-    _, ext = os.path.splitext(file_path)
-    return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")
-
+from codekavi.embedding import CloudflareEmbedding
 
 async def index_repository(
     repo_id: str,
@@ -126,9 +44,10 @@ async def index_repository(
         logger.error(f"Failed to setup Zilliz collection: {e}")
         return False
 
-    client = create_genai_client()
-    if not client:
-        logger.warning("GenAI client not available. Skipping indexing.")
+    try:
+        cf_client = CloudflareEmbedding()
+    except ValueError as e:
+        logger.warning(f"Embedding configuration missing: {e}. Skipping indexing.")
         return False
 
     # Clear old data for this repo
@@ -159,8 +78,8 @@ async def index_repository(
         total_chunks_attempted += batch_len
 
         try:
-            # Generate embeddings (with retry on rate-limit)
-            embeddings = await _embed_with_retry(client, current_batch_texts)
+            embeddings = await cf_client.embed_texts(current_batch_texts)
+            provider_name = "cloudflare"
 
             ids = [m["id"] for m in current_batch_metadata]
             repo_ids = [m["repo_id"] for m in current_batch_metadata]
@@ -170,6 +89,7 @@ async def index_repository(
             layers = [m["layer"] for m in current_batch_metadata]
             start_lines = [m["start_line"] for m in current_batch_metadata]
             end_lines = [m["end_line"] for m in current_batch_metadata]
+            providers = [provider_name] * batch_len
 
             insert_data = [
                 ids,
@@ -181,12 +101,13 @@ async def index_repository(
                 start_lines,
                 end_lines,
                 current_batch_texts,
+                providers,
                 embeddings,
             ]
 
             await asyncio.to_thread(collection.insert, insert_data)
             total_chunks_inserted += batch_len
-            logger.info(f"  Inserted {batch_len} chunks (Total: {total_chunks_inserted}/{total_chunks_attempted})")
+            logger.info(f"  Inserted {batch_len} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})")
 
         except Exception as e:
             logger.error(f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}")
@@ -198,20 +119,41 @@ async def index_repository(
 
     # 3. Process each file
     for profile in file_profiles:
-        file_path = profile["path"]
-        role = profile.get("role_label", "Unknown")
+        p_dict = profile.model_dump() if hasattr(profile, "model_dump") else profile
+        file_path = p_dict["path"]
+        role = p_dict.get("role_label", "Unknown")
 
         abs_path = os.path.join(clone_path, file_path)
         if not os.path.exists(abs_path):
+            logger.warning(f"File skipped in indexer: path {abs_path} does not exist.")
             continue
 
         try:
-            with open(abs_path, encoding="utf-8") as f:
+            with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-        except Exception:
+                
+            if file_path.endswith(".ipynb"):
+                try:
+                    import json
+                    nb_data = json.loads(content)
+                    extracted_lines = []
+                    for cell in nb_data.get("cells", []):
+                        if cell.get("cell_type") in ("code", "markdown"):
+                            source = cell.get("source", [])
+                            if isinstance(source, list):
+                                extracted_lines.extend(source)
+                            else:
+                                extracted_lines.append(source)
+                    content = "\n".join(extracted_lines)
+                except Exception as e:
+                    logger.warning(f"Failed to parse notebook {file_path}, falling back to raw text: {e}")
+                    
+        except Exception as e:
+            logger.warning(f"File skipped in indexer: failed to read {abs_path}: {e}")
             continue
 
         if not content.strip():
+            logger.warning(f"File skipped in indexer: content is empty for {file_path}")
             continue
 
         chunks = text_splitter.split_text(content)
@@ -248,7 +190,7 @@ async def index_repository(
                     "repo_id": repo_id[:64],
                     "file_path": file_path[:512],
                     "role": role[:64],
-                    "language": _detect_language(file_path)[:64],
+                    "language": detect_language(file_path)[:64],
                     "layer": _detect_layer(file_path)[:32],
                     "start_line": start_line,
                     "end_line": end_line,

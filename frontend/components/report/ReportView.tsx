@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, CheckCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -86,12 +86,7 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
     [repoId, startStream]
   );
 
-  // Auto-start deterministic tour on mount
-  useEffect(() => {
-    if (!hasStarted && !isStreaming && repoId && !needsReanalysis) {
-      handleGenerate("", true);
-    }
-  }, [hasStarted, isStreaming, repoId, needsReanalysis, handleGenerate]);
+  // Let the user manually generate instead of auto-starting
 
   const openModal = useCallback(() => {
     setIsModalOpen(true);
@@ -116,7 +111,7 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
           </div>
 
           {/* Generate / Stop / Regenerate button */}
-          {!isStreaming && !isComplete && hasStarted && (
+          {!isStreaming && !isComplete && (
             <button
               onClick={openModal}
               className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
@@ -176,6 +171,27 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
         </div>
       )}
 
+      {!hasStarted && !isStreaming && !needsReanalysis && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
+          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-6">
+            <Sparkles size={40} className="text-muted-foreground" />
+          </div>
+          <h2 className="text-2xl font-bold text-foreground mb-2">
+            Ready to Generate Report
+          </h2>
+          <p className="text-muted-foreground max-w-md mb-8">
+            Click the button below to generate a comprehensive, AI-powered explanation of this repository's architecture, dependencies, and data flow.
+          </p>
+          <button
+            onClick={openModal}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
+          >
+            <Sparkles size={16} />
+            Generate Report
+          </button>
+        </div>
+      )}
+
 
 
       {/* Sections */}
@@ -201,6 +217,24 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
             </motion.div>
           );
         })}
+
+        {/* Dynamic / Fallback Sections (ordered by completion) */}
+        {completedSections
+          .filter((name) => !sectionOrder.includes(name as any))
+          .map((name) => {
+            const section = sections.get(name);
+            if (!section) return null;
+            return (
+              <motion.div
+                key={name}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+              >
+                <SectionRenderer section={section} />
+              </motion.div>
+            );
+          })}
       </div>
 
       {/* Completion toast */}

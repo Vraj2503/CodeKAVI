@@ -34,6 +34,10 @@ def _make_serializable(obj: Any) -> Any:
         return {k: _make_serializable(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_make_serializable(item) for item in obj]
+    if hasattr(obj, "model_dump"):
+        return _make_serializable(obj.model_dump())
+    if hasattr(obj, "dict"):
+        return _make_serializable(obj.dict())
     return obj
 
 
@@ -269,22 +273,30 @@ class AnalysisCache:
         if not sb:
             return
         try:
-            # We must parse json_str back to dict because Supabase Python client 
-            # uses JSON serialization internally, and passing a string to a JSONB 
-            # column would double-encode it. 
-            # (Wait, actually to avoid serialization completely we could use raw HTTP,
-            # but for now we fall back to dict to satisfy the supabase-py client).
-            # We'll just load it. This avoids the _make_serializable cost anyway.
-            # If the user wants raw, we load.
-            sb.table("analysis_cache").upsert(
-                {
-                    "repo_id": repo_id,
-                    "repo_name": repo_name,
-                    "owner": owner,
-                    "result_json": json.loads(json_str),
-                    "updated_at": "now()",
-                }
-            ).execute()
+            # Use raw HTTP via httpx to avoid json.loads and supabase-py's internal json.dumps,
+            # saving significant CPU on 10MB+ payloads.
+            import httpx
+            
+            url = f"{settings.supabase_url}/rest/v1/analysis_cache"
+            headers = {
+                "apikey": settings.supabase_service_key,
+                "Authorization": f"Bearer {settings.supabase_service_key}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            }
+            
+            # Construct the payload string manually to embed the raw json_str
+            import json
+            payload_str = (
+                f'{{"repo_id": {json.dumps(repo_id)}, '
+                f'"repo_name": {json.dumps(repo_name)}, '
+                f'"owner": {json.dumps(owner)}, '
+                f'"result_json": {json_str}}}'
+            )
+            
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(url, headers=headers, content=payload_str)
+                response.raise_for_status()
         except Exception as e:
             logger.warning(f"Supabase SET RAW failed for {repo_id}: {e}")
 

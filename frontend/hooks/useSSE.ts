@@ -179,6 +179,22 @@ export function useSSE(callbacks: SSECallbacks) {
               case "tree":
                 callbacksRef.current.onTree?.(parsed);
                 break;
+              case "fallback":
+                const fallbackData = parsed as any;
+                if (fallbackData.tour && Array.isArray(fallbackData.tour)) {
+                  fallbackData.tour.forEach((stop: any, index: number) => {
+                    const section = {
+                      name: stop.file || `stop-${index}`,
+                      title: stop.file || "Tour Stop",
+                      content: `**Role:** ${stop.role_label || stop.role}\n\n**Importance:** ${stop.importance}\n\n${stop.description || "No description provided."}`,
+                    };
+                    if (stop.connections && stop.connections.length > 0) {
+                      section.content += `\n\n**Connections:**\n` + stop.connections.map((c: any) => `- \`${c}\``).join("\n");
+                    }
+                    callbacksRef.current.onSection?.(section);
+                  });
+                }
+                break;
               case "section":
                 callbacksRef.current.onSection?.(parsed as any);
                 break;

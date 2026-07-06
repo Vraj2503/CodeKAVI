@@ -8,11 +8,14 @@ Endpoints:
     DELETE /cleanup/{repo_id}   — Remove a previously cloned repo.
 """
 
+import asyncio
+import hashlib
 import json
 import logging
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from codekavi.analyzer import analyze_dependencies
@@ -46,6 +49,8 @@ from codekavi.session import ensure_repo_loaded, save_analysis
 from codekavi.settings import settings
 from codekavi.traverser import traverse_repo
 from codekavi.utils import BoundedContentCache
+from codekavi.pipeline_models import RepoData, FileEntry, DepGraph, FileProfile
+from codekavi.fingerprint import ChangeClassification
 from codekavi.utils import run_sync as _run_sync
 from codekavi.nn_extractor import extract_all_models
 
@@ -152,17 +157,18 @@ async def analyze(
 
         # Build initial content cache from traverser
         content_cache_dict = {}
-        for f in repo_data.get("files", []):
-            if "content" in f:
-                content_cache_dict[f["path"]] = f.pop("content")
+        for f in repo_data.files:
+            if f.content is not None:
+                content_cache_dict[f.path] = f.content
+                f.content = None
 
         # Fingerprint check for incremental analysis
         from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
-        fingerprints, has_structural = await _run_sync(
-            compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"], content_cache_dict, executor_type='cpu'
+        fingerprints, change_class = await _run_sync(
+            compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
         )
 
-        if not has_structural:
+        if change_class == ChangeClassification.SKIP:
             try:
                 cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                 if cached_result:
@@ -173,7 +179,7 @@ async def analyze(
                         "repo_name": clone_info["repo_name"],
                         "owner": clone_info["owner"],
                         "github_url": github_url,
-                        **cached_result.get("repo_data", repo_data),
+                        **cached_result.get("repo_data", repo_data.model_dump()),
                         "dependencies": cached_result.get("dep_data", {}),
                         "file_profiles": cached_result.get("file_profiles", []),
                         "role_summary": cached_result.get("role_summary", {}),
@@ -185,36 +191,75 @@ async def analyze(
                     }
             except Exception as e:
                 logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
+                
+        elif change_class == ChangeClassification.PARTIAL_UPDATE:
+            try:
+                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
+                    logger.info(f"PARTIAL_UPDATE detected for {repo_id}. Merging changed files.")
+                    changed_paths = {path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")}
+                    deleted_paths = {path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints}
+                    
+                    partial_files = [f for f in repo_data.files if f.path in changed_paths]
+                    
+                    # Analyze ONLY changed files
+                    from codekavi.analyzer import analyze_dependencies, patch_dep_graph
+                    partial_dep = await _run_sync(
+                        analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
+                    )
+                    
+                    cached_dep_graph = DepGraph(**cached_result["dep_data"])
+                    known_files = {f.path for f in repo_data.files}
+                    
+                    dep_data = patch_dep_graph(
+                        cached_dep_graph, partial_dep, changed_paths, deleted_paths, known_files, clone_info["clone_path"], content_cache_dict
+                    )
+                    
+                    # We skip full dependency analysis in the next step by caching dep_data
+                    content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+                    for k, v in content_cache_dict.items():
+                        content_cache.cache[k] = v
+                        content_cache.current_bytes += len(v.encode('utf-8'))
+                    
+                else:
+                    logger.warning(f"PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
+            except Exception as e:
+                logger.warning(f"PARTIAL_UPDATE exception: {e}. Falling back to FULL_UPDATE.")
 
-        await _run_sync(save_fingerprints, repo_id, fingerprints)
+        await _run_sync(save_fingerprints, repo_id, clone_info["clone_path"], fingerprints)
 
         # Analyze dependencies and classify roles using a shared BoundedContentCache
         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
         # Pre-populate BoundedContentCache with already loaded content
         for k, v in content_cache_dict.items():
             content_cache.cache[k] = v
-            content_cache.current_size += len(v.encode('utf-8'))
+            content_cache.current_bytes += len(v.encode('utf-8'))
         
         start_time = time.perf_counter()
         try:
-            with analysis_stage_timer("analyzing"):
-                dep_data = await _run_sync(
-                    analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache, executor_type='cpu'
+            if change_class == ChangeClassification.PARTIAL_UPDATE and 'dep_data' in locals() and dep_data:
+                logger.info("Skipped full analyze_dependencies, using patched graph.")
+            else:
+                with analysis_stage_timer("analyzing"):
+                    dep_data = await _run_sync(
+                        analyze_dependencies, clone_info["clone_path"], repo_data.files, content_cache
+                    )
+                duration = (time.perf_counter() - start_time) * 1000
+                logger.info(
+                    f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
                 )
-            duration = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
-            )
         except Exception as e:
-            dep_data = {
-                "error": f"Dependency analysis failed: {e}",
-                "edges": [],
-                "adjacency": {},
-                "reverse_adjacency": {},
-                "entry_points": [],
-                "central_files": [],
-                "stats": {},
-            }
+            dep_data = DepGraph(
+                error=f"Dependency analysis failed: {e}",
+                edges=[],
+                adjacency={},
+                reverse_adjacency={},
+                file_imports={},
+                entry_points=[],
+                file_signals={},
+                central_files=[],
+                stats={},
+            )
 
         # Classify file roles
         start_time = time.perf_counter()
@@ -223,10 +268,9 @@ async def analyze(
                 file_profiles = await _run_sync(
                     classify_files,
                     clone_info["clone_path"],
-                    repo_data["files"],
+                    repo_data.files,
                     dep_data,
-                    content_cache=content_cache,
-                    executor_type='cpu'
+                    content_cache=content_cache
                 )
                 role_summary = summarize_roles(file_profiles)
             duration = (time.perf_counter() - start_time) * 1000
@@ -240,7 +284,7 @@ async def analyze(
 
         # NN Model Extraction (before content_cache is cleared)
         nn_models = []
-        ml_model_files = [fp for fp in file_profiles if fp.get("role") == "ml_model"]
+        ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
         if ml_model_files and content_cache:
             try:
                 nn_models = await extract_all_models(
@@ -256,30 +300,43 @@ async def analyze(
             content_cache.clear()
             del content_cache
 
-        # Build graph exports
+        # Export graphs
         start_time = time.perf_counter()
         try:
-            with analysis_stage_timer("graphing"):
-                graph_json = export_graph_json(dep_data, file_profiles, max_nodes=settings.graph_max_nodes)
-                mermaid_file = export_mermaid(graph_json)
-                module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-                cycles = detect_cycles(dep_data)
+            with analysis_stage_timer("exporting_graph"):
+                dep_data_dict = dep_data.model_dump()
+                file_profiles_dicts = [p.model_dump() for p in file_profiles]
+                repo_files_dicts = [f.model_dump() for f in repo_data.files]
+                
+                graph_json_future = _run_sync(export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes)
+                mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
+                module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
+                
+                graph_json, mermaid_code, module_graph = await asyncio.gather(
+                    graph_json_future, mermaid_future, module_graph_future
+                )
+                cycles_data = await _run_sync(detect_cycles, dep_data_dict)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
             )
         except Exception as e:
+            logger.warning(f"Graph export failed: {e}")
             graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-            mermaid_file = ""
+            mermaid_code = {"file_level": "", "module_level": ""}
             module_graph = {"error": f"Module graph failed: {e}"}
-            cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+            cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+            
+            dep_data_dict = dep_data.model_dump()
+            file_profiles_dicts = [p.model_dump() for p in file_profiles]
+            repo_files_dicts = [f.model_dump() for f in repo_data.files]
 
         # Smart file selection
         selector = SmartFileSelector()
         start_time = time.perf_counter()
         try:
             with analysis_stage_timer("selecting"):
-                selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+                selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage selecting completed in {duration:.2f}ms", extra={"stage": "selecting", "duration_ms": duration}
@@ -310,27 +367,25 @@ async def analyze(
 
         # Index repository for RAG in the background (prevents proxy timeouts)
         if settings.gemini_api_key and settings.zilliz_uri:
-            background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+            background_tasks.add_task(index_repository, repo_id, file_profiles_dicts, clone_info["clone_path"])
 
-        return {
+        final_result = {
             "success": True,
             "repo_id": repo_id,
             "repo_name": clone_info["repo_name"],
             "owner": clone_info["owner"],
             "github_url": github_url,
-            **repo_data,
-            "dependencies": dep_data,
-            "file_profiles": file_profiles,
+            **repo_data.model_dump(),
+            "dependencies": dep_data_dict,
+            "file_profiles": file_profiles_dicts,
             "role_summary": role_summary,
             "graph": graph_json,
             "module_graph": module_graph,
-            "cycles": cycles,
-            "mermaid": {
-                "file_level": mermaid_file,
-                "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
-            },
+            "cycles": cycles_data,
+            "mermaid": mermaid_code,
             "nn_models": nn_models,
         }
+        return final_result
     finally:
         repo_id_ctx.reset(token)
 
@@ -354,7 +409,7 @@ def _sse_event(
     payload = {"stage": stage, "progress": progress, "message": message, "seq": seq}
     if data is not None:
         payload["data"] = data
-    return f"id: {seq}\ndata: {json.dumps(payload)}\n\n"
+    return f"id: {seq}\ndata: {json.dumps(jsonable_encoder(payload))}\n\n"
 
 
 def _next_seq(counter_ref: list[int]) -> int:
@@ -471,11 +526,20 @@ async def analyze_stream(
                 yield _sse_event("error", 0, f"Failed to traverse repository: {e}", seq=_next_seq(seq_box))
                 return
 
+            # Build initial content cache from traverser
+            content_cache_dict = {}
+            for f in repo_data.files:
+                if f.content is not None:
+                    content_cache_dict[f.path] = f.content
+                    f.content = None
+
             # Fingerprint check for incremental analysis
             from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
-            fingerprints, has_structural = await _run_sync(compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data["files"])
+            fingerprints, change_class = await _run_sync(
+                compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
+            )
 
-            if not has_structural:
+            if change_class == ChangeClassification.SKIP:
                 try:
                     cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                     if cached_result:
@@ -486,37 +550,43 @@ async def analyze_stream(
                             "No structural changes. Using cached analysis!",
                             seq=_next_seq(seq_box),
                         )
-                        result = {
-                            "success": True,
-                            "repo_id": repo_id,
-                            "repo_name": clone_info["repo_name"],
-                            "owner": clone_info["owner"],
-                            "github_url": github_url,
-                            **cached_result.get("repo_data", repo_data),
-                            "dependencies": cached_result.get("dep_data", {}),
-                            "file_profiles": cached_result.get("file_profiles", []),
-                            "role_summary": cached_result.get("role_summary", {}),
-                            "graph": cached_result.get("graph_json", {}),
-                            "module_graph": cached_result.get("module_graph", {}),
-                            "cycles": {"has_cycles": False, "cycles": []},
-                            "mermaid": {"file_level": "", "module_level": ""}
-                        }
-                        # T2.4 — pre-compute the final seq BEFORE building the
-                        # payload so ``total_events`` matches the seq of this
-                        # event (the final event).
-                        final_seq = _next_seq(seq_box)
-                        yield _sse_event(
-                            "complete",
-                            100,
-                            "Analysis complete!",
-                            data={"total_events": final_seq, "result": result},
-                            seq=final_seq,
-                        )
                         return
                 except Exception as e:
                     logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
 
-            await _run_sync(save_fingerprints, repo_id, fingerprints)
+            elif change_class == ChangeClassification.PARTIAL_UPDATE:
+                try:
+                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                    if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
+                        logger.info(f"PARTIAL_UPDATE detected for {repo_id} in background. Merging changed files.")
+                        changed_paths = {path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")}
+                        deleted_paths = {path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints}
+                        
+                        partial_files = [f for f in repo_data.files if f.path in changed_paths]
+                        
+                        from codekavi.analyzer import analyze_dependencies, patch_dep_graph
+                        partial_dep = await _run_sync(
+                            analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
+                        )
+                        
+                        cached_dep_graph = DepGraph(**cached_result["dep_data"])
+                        known_files = {f.path for f in repo_data.files}
+                        
+                        dep_data = patch_dep_graph(
+                            cached_dep_graph, partial_dep, changed_paths, deleted_paths, known_files, clone_info["clone_path"], content_cache_dict
+                        )
+                        
+                        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+                        for k, v in content_cache_dict.items():
+                            content_cache.cache[k] = v
+                            content_cache.current_bytes += len(v.encode('utf-8'))
+                            
+                    else:
+                        logger.warning(f"PARTIAL_UPDATE background failed to load cache. Falling back to FULL_UPDATE.")
+                except Exception as e:
+                    logger.warning(f"PARTIAL_UPDATE background exception: {e}. Falling back to FULL_UPDATE.")
+
+            await _run_sync(save_fingerprints, repo_id, clone_info["clone_path"], fingerprints)
 
             # Stage 3: Analyzing dependencies
             if await request.is_disconnected():
@@ -525,28 +595,39 @@ async def analyze_stream(
                 return
 
             yield _sse_event("analyzing", 40, "Analyzing dependencies…", seq=_next_seq(seq_box))
-            content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+            
+            if 'content_cache' not in locals():
+                content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+                for k, v in content_cache_dict.items():
+                    content_cache.cache[k] = v
+                    content_cache.current_bytes += len(v.encode('utf-8'))
+                    
             start_time = time.perf_counter()
             try:
-                with analysis_stage_timer("analyzing"):
-                    dep_data = await _run_sync(
-                        analyze_dependencies, clone_info["clone_path"], repo_data["files"], content_cache
+                if change_class == ChangeClassification.PARTIAL_UPDATE and 'dep_data' in locals() and dep_data:
+                    logger.info("Skipped background full analyze_dependencies, using patched graph.")
+                else:
+                    with analysis_stage_timer("analyzing"):
+                        dep_data = await _run_sync(
+                            analyze_dependencies, clone_info["clone_path"], repo_data.files, content_cache
+                        )
+                    duration = (time.perf_counter() - start_time) * 1000
+                    logger.info(
+                        f"Stage analyzing completed in {duration:.2f}ms",
+                        extra={"stage": "analyzing", "duration_ms": duration},
                     )
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"Stage analyzing completed in {duration:.2f}ms",
-                    extra={"stage": "analyzing", "duration_ms": duration},
-                )
             except Exception as e:
-                dep_data = {
-                    "error": f"Dependency analysis failed: {e}",
-                    "edges": [],
-                    "adjacency": {},
-                    "reverse_adjacency": {},
-                    "entry_points": [],
-                    "central_files": [],
-                    "stats": {},
-                }
+                dep_data = DepGraph(
+                    error=f"Dependency analysis failed: {e}",
+                    edges=[],
+                    adjacency={},
+                    reverse_adjacency={},
+                    file_imports={},
+                    entry_points=[],
+                    file_signals={},
+                    central_files=[],
+                    stats={},
+                )
 
             # Stage 4: Classifying files
             if await request.is_disconnected():
@@ -554,16 +635,12 @@ async def analyze_stream(
                 safe_cleanup(clone_info["clone_path"])
                 return
 
-            yield _sse_event("classifying", 55, "Classifying file roles…", seq=_next_seq(seq_box))
+            yield _sse_event("analyzing", 60, "Classifying file roles…", seq=_next_seq(seq_box))
             start_time = time.perf_counter()
             try:
                 with analysis_stage_timer("classifying"):
                     file_profiles = await _run_sync(
-                        classify_files,
-                        clone_info["clone_path"],
-                        repo_data["files"],
-                        dep_data,
-                        content_cache=content_cache,
+                        classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
                     )
                     role_summary = summarize_roles(file_profiles)
                 duration = (time.perf_counter() - start_time) * 1000
@@ -575,9 +652,9 @@ async def analyze_stream(
                 file_profiles = []
                 role_summary = {"error": f"Classification failed: {e}"}
 
-            # NN Model Extraction (before content_cache is cleared)
+            # NN Model Extraction
             nn_models = []
-            ml_model_files = [fp for fp in file_profiles if fp.get("role") == "ml_model"]
+            ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
             if ml_model_files and content_cache:
                 try:
                     nn_models = await extract_all_models(
@@ -603,10 +680,18 @@ async def analyze_stream(
             start_time = time.perf_counter()
             try:
                 with analysis_stage_timer("graphing"):
-                    graph_json = export_graph_json(dep_data, file_profiles, max_nodes=settings.graph_max_nodes)
-                    mermaid_file = export_mermaid(graph_json)
-                    module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-                    cycles = detect_cycles(dep_data)
+                    dep_data_dict = dep_data.model_dump()
+                    file_profiles_dicts = [p.model_dump() for p in file_profiles]
+                    repo_files_dicts = [f.model_dump() for f in repo_data.files]
+                    
+                    graph_json_future = _run_sync(export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes)
+                    mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
+                    module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
+                    cycles_future = _run_sync(detect_cycles, dep_data_dict)
+                    
+                    graph_json, mermaid_code, module_graph, cycles_data = await asyncio.gather(
+                        graph_json_future, mermaid_future, module_graph_future, cycles_future
+                    )
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage graphing completed in {duration:.2f}ms",
@@ -614,9 +699,13 @@ async def analyze_stream(
                 )
             except Exception as e:
                 graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-                mermaid_file = ""
+                mermaid_code = {"file_level": "", "module_level": ""}
                 module_graph = {"error": f"Module graph failed: {e}"}
-                cycles = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+                cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+                
+                dep_data_dict = dep_data.model_dump()
+                file_profiles_dicts = [p.model_dump() for p in file_profiles]
+                repo_files_dicts = [f.model_dump() for f in repo_data.files]
 
             # Stage 6: Smart file selection
             if await request.is_disconnected():
@@ -629,7 +718,7 @@ async def analyze_stream(
             start_time = time.perf_counter()
             try:
                 with analysis_stage_timer("selecting"):
-                    selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+                    selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage selecting completed in {duration:.2f}ms",
@@ -671,15 +760,15 @@ async def analyze_stream(
                 "repo_name": clone_info["repo_name"],
                 "owner": clone_info["owner"],
                 "github_url": github_url,
-                **repo_data,
+                **repo_data.model_dump(),
                 "dependencies": dep_data,
                 "file_profiles": file_profiles,
                 "role_summary": role_summary,
                 "graph": graph_json,
                 "module_graph": module_graph,
-                "cycles": cycles,
+                "cycles": cycles_data,
                 "mermaid": {
-                    "file_level": mermaid_file,
+                    "file_level": mermaid_code,
                     "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
                 },
                 "nn_models": nn_models,
@@ -775,7 +864,7 @@ async def restore_repo(
     graph_json = result.get("graph_json", {})
     module_graph = result.get("module_graph", {})
 
-    return {
+    response_data = {
         "success": True,
         "repo_id": repo_id,
         "repo_name": result.get("repo_name", ""),
@@ -788,6 +877,20 @@ async def restore_repo(
         "module_graph": module_graph,
         "nn_models": result.get("nn_models", []),
     }
+
+    response_bytes = json.dumps(response_data, separators=(",", ":")).encode("utf-8")
+    etag = f'W/"{hashlib.md5(response_bytes).hexdigest()}"'
+
+    if request.headers.get("if-none-match") == etag:
+        from fastapi.responses import Response
+        return Response(status_code=304)
+
+    from fastapi.responses import Response
+    return Response(
+        content=response_bytes,
+        media_type="application/json",
+        headers={"ETag": etag, "Cache-Control": "private, max-age=300"}
+    )
 
 
 @router.delete("/cleanup/{repo_id}")

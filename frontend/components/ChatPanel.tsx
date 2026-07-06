@@ -250,7 +250,7 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.25 }}
                     className={cn(
-                      "flex w-full",
+                      "flex w-full min-w-0",
                       msg.role === "user" ? "justify-end" : "justify-start"
                     )}
                   >
@@ -261,21 +261,22 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                         msg.role === "assistant"
                           ? [
                               "w-full",
-                              "text-foreground prose dark:prose-invert max-w-none",
+                              "max-w-full overflow-x-auto",
+                              "text-foreground prose dark:prose-invert max-w-none break-words",
                               // Paragraph spacing
                               "prose-p:my-1",
                               // Headings — force foreground color
                               "prose-headings:text-foreground",
                               // Inline code
-                              "prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-medium prose-code:before:content-none prose-code:after:content-none",
+                              "prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-medium prose-code:before:content-none prose-code:after:content-none prose-code:break-words",
                               // Code blocks
-                              "prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30",
+                              "prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30 prose-pre:max-w-full prose-pre:overflow-x-auto",
                               // Bold text
                               "prose-strong:text-foreground",
                               // Links
-                              "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2",
+                              "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2 prose-a:break-all",
                             ].join(" ")
-                          : "bg-muted/60 border border-border/40 rounded-2xl px-5 py-3.5 text-foreground shadow-sm max-w-[85%]"
+                          : "bg-muted/60 border border-border/40 rounded-2xl px-5 py-3.5 text-foreground shadow-sm max-w-[85%] break-words"
                       )}
                     >
                       {msg.role === "assistant" ? (

@@ -6,6 +6,7 @@ Endpoints:
 """
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -17,10 +18,16 @@ from codekavi.llm.providers import Message
 from codekavi.quota import get_token_tracker
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ChatRequest
+from codekavi.exceptions import RateLimitError
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Sprint-4 / C4 — skip redundant ensure_repo_loaded calls.
+# Maps repo_id → timestamp of last successful validation.
+_validated_repos: dict[str, float] = {}
+_VALIDATION_TTL = 300  # seconds (5 minutes)
 
 
 # Keywords that signal a technical/architecture question
@@ -108,9 +115,25 @@ async def chat_repo(
             )
 
         # Verify repo exists in our cache (ensures we can serve other endpoints too)
-        from codekavi.session import ensure_repo_loaded
+        # Sprint-4 / C4: skip the full L1→L2→L3 cache walk when the repo
+        # was already validated recently and L1 still holds its data.
+        _skip_full_load = False
+        last_validated = _validated_repos.get(repo_id)
+        if last_validated is not None and (time.time() - last_validated) < _VALIDATION_TTL:
+            l1_result = cache._memory.get(repo_id)
+            if l1_result is not None:
+                result = l1_result
+                _skip_full_load = True
+                logger.debug("C4: skipped ensure_repo_loaded for %s (L1 hit, validated %.1fs ago)",
+                             repo_id, time.time() - last_validated)
 
-        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+        if not _skip_full_load:
+            from codekavi.session import ensure_repo_loaded
+
+            result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+            if result:
+                _validated_repos[repo_id] = time.time()
+
         if not result:
             raise HTTPException(
                 status_code=404, detail="Repo not found. Run /api/analyze first, or the repo may have expired."
@@ -120,18 +143,16 @@ async def chat_repo(
         query_lower = body.query.lower()
         is_technical = any(kw in query_lower for kw in _TECHNICAL_KEYWORDS)
 
-        # 2. Retrieve Context from Zilliz (blocking network I/O)
+        # 2. Retrieve Context from Zilliz (network I/O, now natively async)
         if is_technical:
-            results = await _run_sync(
-                zilliz_client.search,
+            results = await zilliz_client.search(
                 body.query,
                 repo_id,
                 limit=8,
                 layer_filter="exclude_frontend",
             )
         else:
-            results = await _run_sync(
-                zilliz_client.search,
+            results = await zilliz_client.search(
                 body.query,
                 repo_id,
                 limit=5,
@@ -205,21 +226,39 @@ async def chat_repo(
         )
 
         # 4. Call LLM
-        provider = get_provider("chat")
+        # Support multi-model: if user explicitly requests gemini, use it
+        if body.model and "gemini" in body.model.lower():
+            provider = get_provider("gemini")
+        else:
+            provider = get_provider("groq")
 
         messages = [Message(role="system", content=system_prompt), Message(role="user", content=body.query)]
 
-        response = await _run_sync(
-            provider.complete,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=2048,
-        )
+        try:
+            response = await _run_sync(
+                provider.complete,
+                messages=messages,
+                temperature=0.4,
+                max_tokens=2048,
+            )
+        except RateLimitError as e:
+            if provider.name == "groq":
+                logger.warning(f"Groq rate limit hit during chat, falling back to Gemini: {e}")
+                provider = get_provider("gemini")
+                response = await _run_sync(
+                    provider.complete,
+                    messages=messages,
+                    temperature=0.4,
+                    max_tokens=2048,
+                )
+            else:
+                raise
 
         return {
             "success": True,
             "repo_id": repo_id,
             "answer": response.content,
+            "provider_used": provider.name,
             "sources": [{"file_path": r["file_path"], "score": r["score"]} for r in results],
         }
 
@@ -228,3 +267,30 @@ async def chat_repo(
     except Exception as e:
         logger.error(f"Chat RAG error: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str, user_id: str = Depends(verify_supabase_token)):
+    """
+    Delete a chat session and all its messages.
+    Uses the backend service key to bypass frontend RLS if a DELETE policy is missing.
+    """
+    try:
+        from codekavi.settings import settings
+        from supabase import create_client, ClientOptions
+
+        options = ClientOptions(postgrest_client_timeout=10)
+        supabase = create_client(settings.supabase_url, settings.supabase_service_key, options=options)
+
+        # Delete the session only if it belongs to the authenticated user
+        result = supabase.table("sessions").delete().eq("id", session_id).eq("user_id", user_id).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Session not found or not owned by user.")
+        
+        return {"success": True, "message": "Session deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete session {session_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

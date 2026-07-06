@@ -222,7 +222,20 @@ export function FocusedVisualization({
                 className="w-full h-full"
                 ref={vizContainerRef}
               >
-                {renderVisualization(type, state.data.data)}
+                {isEmptyVisualization(type, state.data.data) ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-10 bg-card rounded-3xl border border-border/50 shadow-inner">
+                    <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
+                      <AlertCircle size={40} />
+                    </div>
+                    <h3 className="text-xl font-bold text-foreground mb-3">No Data Available</h3>
+                    <p className="text-sm text-muted-foreground text-center max-w-md">
+                      We couldn't generate a {config.label.toLowerCase()} for this repository. 
+                      There might not be enough relevant files or connections to visualize.
+                    </p>
+                  </div>
+                ) : (
+                  renderVisualization(type, state.data.data)
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -350,5 +363,23 @@ function renderVisualization(type: VizType, data: any) {
       return <NeuralNetworkViz data={data} />;
     default:
       return <p className="text-muted-foreground text-center py-12">Unknown visualization type: {type}</p>;
+  }
+}
+
+function isEmptyVisualization(type: VizType, data: any) {
+  if (!data) return true;
+  switch (type) {
+    case "dependencies":
+    case "architecture":
+    case "dataflow":
+      return !data.nodes || data.nodes.length === 0;
+    case "complexity":
+      return !data.children || data.children.length === 0;
+    case "mindmap":
+      return !data.root || !data.root.children || data.root.children.length === 0;
+    case "neural_network":
+      return !data.models || data.models.length === 0;
+    default:
+      return false;
   }
 }

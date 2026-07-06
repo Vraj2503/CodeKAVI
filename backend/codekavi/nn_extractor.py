@@ -84,7 +84,9 @@ def _compute_block_dims(
     MIN_DIM, MAX_DIM = 8.0, 80.0
     MIN_WIDTH, MAX_WIDTH = 1.5, 25.0
 
-    def _log_scale(val: float, lo: float, hi: float) -> float:
+    def _log_scale(val: Any, lo: float, hi: float) -> float:
+        if not isinstance(val, (int, float)):
+            return lo
         if val <= 0:
             return lo
         scaled = lo + (hi - lo) * (math.log2(val + 1) / math.log2(1024))

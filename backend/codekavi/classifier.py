@@ -30,8 +30,10 @@ Roles:
 import os
 import re
 from collections import defaultdict
+from typing import Any
 
 from codekavi.utils import BoundedContentCache
+from codekavi.pipeline_models import FileEntry, DepGraph, FileProfile
 
 # ─────────────────────────────────────────────
 # Filename pattern → role hints
@@ -363,10 +365,10 @@ def _content_signals(
 
 def classify_files(
     repo_root: str,
-    file_list: list[dict],
-    dep_data: dict,
+    file_list: list[FileEntry],
+    dep_data: DepGraph,
     content_cache: dict[str, str] | BoundedContentCache | None = None,
-) -> list[dict]:
+) -> list[FileProfile]:
     """
     Produce a rich profile for every file in the repo.
 
@@ -387,31 +389,43 @@ def classify_files(
           - importance_score:  numeric rank
           - tags:          list of descriptive tags
     """
-    adjacency = dep_data.get("adjacency", {})
-    reverse_adjacency = dep_data.get("reverse_adjacency", {})
-    entry_point_files = {ep["file"] for ep in dep_data.get("entry_points", [])}
-    entry_point_scores = {ep["file"]: ep["score"] for ep in dep_data.get("entry_points", [])}
+    adjacency = dep_data.adjacency or {}
+    reverse_adjacency = dep_data.reverse_adjacency or {}
+    entry_point_files = {ep.get("file") for ep in (dep_data.entry_points or []) if ep.get("file")}
+    entry_point_scores = {ep.get("file"): ep.get("score", 0) for ep in (dep_data.entry_points or []) if ep.get("file")}
 
-    # Pre-compute global stats for relative scoring
-    all_in_degrees = []
-    all_out_degrees = []
+    # Pre-compute global stats for relative scoring (single-pass aggregation)
+    max_in = 0
+    max_out = 0
+    sum_in = 0
+    sum_out = 0
+    count = 0
     for f in file_list:
-        p = f["path"]
-        all_in_degrees.append(len(reverse_adjacency.get(p, [])))
-        all_out_degrees.append(len(adjacency.get(p, [])))
+        p = f.path
+        ind = len(reverse_adjacency.get(p, []))
+        outd = len(adjacency.get(p, []))
+        if ind > max_in:
+            max_in = ind
+        if outd > max_out:
+            max_out = outd
+        sum_in += ind
+        sum_out += outd
+        count += 1
 
-    max_in = max(all_in_degrees) if all_in_degrees else 1
-    max_out = max(all_out_degrees) if all_out_degrees else 1
-    avg_in = sum(all_in_degrees) / len(all_in_degrees) if all_in_degrees else 0
-    avg_out = sum(all_out_degrees) / len(all_out_degrees) if all_out_degrees else 0
+    max_in = max_in if max_in > 0 else 1
+    max_out = max_out if max_out > 0 else 1
+    avg_in = sum_in / count if count else 0
+    avg_out = sum_out / count if count else 0
 
     profiles = []
 
     for file_info in file_list:
-        rel_path = file_info["path"]
+        rel_path = file_info.path
         basename = os.path.basename(rel_path)
         _, ext = os.path.splitext(basename)
         abs_path = os.path.join(repo_root, rel_path)
+        language = file_info.language
+        file_size = file_info.size
 
         in_degree = len(reverse_adjacency.get(rel_path, []))
         out_degree = len(adjacency.get(rel_path, []))
@@ -419,7 +433,7 @@ def classify_files(
         used_by = reverse_adjacency.get(rel_path, [])
 
         # Collect signals
-        precomputed = dep_data.get("file_signals", {}).get(rel_path)
+        precomputed = dep_data.file_signals.get(rel_path)
         signals = _content_signals(
             abs_path, ext, content_cache=content_cache, rel_path=rel_path, precomputed_signals=precomputed
         )
@@ -451,26 +465,25 @@ def classify_files(
         )
 
         profiles.append(
-            {
-                "path": rel_path,
-                "name": basename,
-                "language": file_info.get("language", "Unknown"),
-                "size": file_info.get("size", 0),
-                "size_formatted": file_info.get("size_formatted", ""),
-                "role": role,
-                "role_label": role_label,
-                "role_confidence": round(confidence, 2),
-                "depends_on": list(depends_on) if isinstance(depends_on, (list, set)) else depends_on,
-                "used_by": list(used_by) if isinstance(used_by, (list, set)) else used_by,
-                "in_degree": in_degree,
-                "out_degree": out_degree,
-                "importance_score": round(importance, 2),
-                "tags": tags,
-            }
+            FileProfile(
+                path=rel_path,
+                name=basename,
+                language=language,
+                size=file_size,
+                role=role,
+                role_label=role_label,
+                role_confidence=round(confidence, 2),
+                depends_on=list(depends_on) if isinstance(depends_on, (list, set)) else depends_on,
+                used_by=list(used_by) if isinstance(used_by, (list, set)) else used_by,
+                in_degree=in_degree,
+                out_degree=out_degree,
+                importance_score=round(importance, 2),
+                tags=tags,
+            )
         )
 
     # Sort by importance (highest first)
-    profiles.sort(key=lambda x: x["importance_score"], reverse=True)
+    profiles.sort(key=lambda x: x.importance_score, reverse=True)
 
     return profiles
 
@@ -727,22 +740,23 @@ def _is_ci_path(path: str) -> bool:
 # ─────────────────────────────────────────────
 
 
-def summarize_roles(profiles: list[dict]) -> dict:
+def summarize_roles(profiles: list[FileProfile]) -> dict:
     """
-    Produce a summary of role distribution across the repo.
+    Summarize the distribution of roles across the repo.
 
     Returns:
-        dict with:
-          - role_counts:      { role: count }
-          - role_distribution: { role: percentage }
-          - top_files:        top 10 most important files
+      - dict containing:
+          - total_files: int
+          - role_counts: dict[str, int]
+          - role_distribution: dict[str, float] (percentages)
+          - top_files:        list of most important files
           - dependency_hubs:  files with most connections
     """
     role_counts: dict[str, int] = defaultdict(int)
     total = len(profiles)
 
     for p in profiles:
-        role_counts[p["role"]] += 1
+        role_counts[p.role] += 1
 
     # Sort by count
     role_counts = dict(sorted(role_counts.items(), key=lambda x: x[1], reverse=True))
@@ -752,20 +766,20 @@ def summarize_roles(profiles: list[dict]) -> dict:
         role_distribution[role] = round((count / total) * 100, 1) if total > 0 else 0
 
     # Top files by importance
-    top_files = [{"file": p["path"], "role": p["role"], "importance": p["importance_score"]} for p in profiles[:10]]
+    top_files = [{"file": p.path, "role": p.role, "importance": p.importance_score} for p in profiles[:10]]
 
     # Dependency hubs (most total connections)
-    hubs = sorted(profiles, key=lambda x: x["in_degree"] + x["out_degree"], reverse=True)
+    hubs = sorted(profiles, key=lambda x: x.in_degree + x.out_degree, reverse=True)
     dependency_hubs = [
         {
-            "file": h["path"],
-            "role": h["role"],
-            "in_degree": h["in_degree"],
-            "out_degree": h["out_degree"],
-            "total_connections": h["in_degree"] + h["out_degree"],
+            "file": h.path,
+            "role": h.role,
+            "in_degree": h.in_degree,
+            "out_degree": h.out_degree,
+            "total_connections": h.in_degree + h.out_degree,
         }
         for h in hubs[:10]
-        if h["in_degree"] + h["out_degree"] > 0
+        if h.in_degree + h.out_degree > 0
     ]
 
     return {

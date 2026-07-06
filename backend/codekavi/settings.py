@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # API Keys & Credentials
     groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
     gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    cloudflare_account_id: str = Field(default="", validation_alias="CLOUDFLARE_ACCOUNT_ID")
+    cloudflare_api_token: str = Field(default="", validation_alias="CLOUDFLARE_API_TOKEN")
     zilliz_uri: str = Field(default="", validation_alias="ZILLIZ_URI")
     zilliz_api_key: str = Field(default="", validation_alias="ZILLIZ_API_KEY")
     # Use rediss:// scheme for TLS connections (required for production Redis

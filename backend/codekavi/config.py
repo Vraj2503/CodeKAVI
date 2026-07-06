@@ -235,7 +235,7 @@ MAX_PARALLEL_LLM_CALLS = 5
 # If you change this, ALL previously indexed repos must be re-analyzed
 # because the old vectors will be in a different embedding space.
 EMBEDDING_MODEL = "gemini-embedding-2"
-EMBEDDING_DIMENSION = 3072
+EMBEDDING_DIMENSION = 1024
 
 
 # ─────────────────────────────────────────────
@@ -269,3 +269,18 @@ def detect_layer(file_path: str) -> str:
 
 # ─────────────────────────────────────────────
 # Configuration Settings are now imported from codekavi.settings
+
+
+def detect_language(filepath: str) -> str:
+    """
+    Detect programming language from filename or extension.
+
+    Canonical implementation — imported by traverser, analyzer, and indexer.
+    Checks FILENAME_LANGUAGE_MAP first (e.g. Dockerfile, Makefile), then falls
+    back to EXTENSION_LANGUAGE_MAP, and finally returns "Unknown".
+    """
+    basename = os.path.basename(filepath)
+    if basename in FILENAME_LANGUAGE_MAP:
+        return FILENAME_LANGUAGE_MAP[basename]
+    _, ext = os.path.splitext(basename)
+    return EXTENSION_LANGUAGE_MAP.get(ext.lower(), "Unknown")

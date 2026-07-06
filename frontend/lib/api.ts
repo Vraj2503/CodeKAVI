@@ -385,7 +385,11 @@ export async function analyzeRepoStream(
           }
 
           if (event.stage === "complete" && event.data) {
-            finalData = event.data;
+            if (isStreamCompleteData(event.data)) {
+              finalData = event.data.result;
+            } else {
+              finalData = event.data as AnalyzeResponse;
+            }
           }
         } catch (e) {
           if (e instanceof SyntaxError) {

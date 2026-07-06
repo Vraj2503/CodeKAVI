@@ -132,6 +132,29 @@ export async function touchSession(sessionId: string): Promise<void> {
     .eq("id", sessionId);
 }
 
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  
+  try {
+    const res = await fetch(`/api/session/${sessionId}`, {
+      method: "DELETE",
+      headers: {
+        ...(token ? { "Authorization": `Bearer ${token}` } : {})
+      }
+    });
+    
+    if (!res.ok) {
+      console.error("Failed to delete session, status:", res.status);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("Failed to delete session via API:", error);
+    return false;
+  }
+}
+
 // ── Messages ──
 
 export async function getMessages(sessionId: string): Promise<ChatMessage[]> {

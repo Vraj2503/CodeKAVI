@@ -2,8 +2,12 @@ import ast
 import hashlib
 import json
 import os
-from dataclasses import asdict, dataclass
+import subprocess
+from dataclasses import asdict, dataclass, field
+from enum import Enum
 from typing import Any
+
+from codekavi.pipeline_models import FileEntry
 
 import tree_sitter_javascript as tsjs
 import tree_sitter_typescript as tsts
@@ -64,9 +68,47 @@ _LANG_BY_EXT = {
 }
 
 
+class ChangeClassification(str, Enum):
+    SKIP = "SKIP"
+    PARTIAL_UPDATE = "PARTIAL_UPDATE"
+    ARCHITECTURE_UPDATE = "ARCHITECTURE_UPDATE"
+    FULL_UPDATE = "FULL_UPDATE"
+
+
+@dataclass
+class FunctionFingerprint:
+    name: str
+    params: list[str]
+    exported: bool
+    line_count: int
+
+
+@dataclass
+class ClassFingerprint:
+    name: str
+    methods: list[str]
+    exported: bool
+    line_count: int
+
+
+@dataclass
+class ImportFingerprint:
+    source: str
+    specifiers: list[str]
+
+
 @dataclass
 class FileFingerprint:
     path: str
+    content_hash: str
+    imports_hash: str = ""
+    exports_hash: str = ""
+    structure_hash: str = ""
+    change_type: str = "NONE"  # NONE / COSMETIC / STRUCTURAL
+    parse_error: bool = False
+    functions: list[FunctionFingerprint] = field(default_factory=list)
+    classes: list[ClassFingerprint] = field(default_factory=list)
+    imports: list[ImportFingerprint] = field(default_factory=list)
     content_hash: str
     imports_hash: str = ""
     exports_hash: str = ""
@@ -162,6 +204,10 @@ def _python_structure_signature(source: str) -> dict:
     imports: list[str] = []
     exports: list[str] = []
     declarations: list[str] = []
+    
+    enriched_imports: list[ImportFingerprint] = []
+    enriched_functions: list[FunctionFingerprint] = []
+    enriched_classes: list[ClassFingerprint] = []
 
     # Track top-level `__all__` if present (the conventional export list).
     body = getattr(tree, "body", [])
@@ -170,24 +216,41 @@ def _python_structure_signature(source: str) -> dict:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.append(alias.name)
+                enriched_imports.append(ImportFingerprint(source=alias.name, specifiers=[]))
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 imports.append(node.module)
             exports.extend(a.name for a in node.names)
+            if node.module:
+                enriched_imports.append(ImportFingerprint(source=node.module, specifiers=[a.name for a in node.names]))
         elif isinstance(node, ast.FunctionDef):
             args = [a.arg for a in node.args.args if a.arg]
             declarations.append(f"def:{node.name}({','.join(args)})")
+            enriched_functions.append(FunctionFingerprint(
+                name=node.name, params=args, exported=False,
+                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
+            ))
         elif isinstance(node, ast.AsyncFunctionDef):
             args = [a.arg for a in node.args.args if a.arg]
             declarations.append(f"adef:{node.name}({','.join(args)})")
+            enriched_functions.append(FunctionFingerprint(
+                name=node.name, params=args, exported=False,
+                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
+            ))
         elif isinstance(node, ast.ClassDef):
             declarations.append(f"class:{node.name}")
+            methods = []
             for stmt in node.body:
                 if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     args = [a.arg for a in stmt.args.args if a.arg]
                     declarations.append(
                         f"method:{node.name}.{stmt.name}({','.join(args)})"
                     )
+                    methods.append(stmt.name)
+            enriched_classes.append(ClassFingerprint(
+                name=node.name, methods=methods, exported=False,
+                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
+            ))
 
     if not isinstance(body, list):
         body = []
@@ -206,6 +269,9 @@ def _python_structure_signature(source: str) -> dict:
         "exports_hash": _hash_sorted(exports),
         "structure_hash": _hash_python_signature(declarations),
         "parse_error": False,
+        "functions": enriched_functions,
+        "classes": enriched_classes,
+        "imports": enriched_imports,
     }
 
 
@@ -232,6 +298,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     imports: list[str] = []
     exports: list[str] = []
     declarations: list[str] = []
+    raw_imports: list[dict] = []
 
     def _each(pairs: list[tuple[Any, str]] | dict[Any, str]):
         if isinstance(pairs, dict):
@@ -239,20 +306,55 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
         else:
             yield from pairs
 
+    enriched_imports: list[ImportFingerprint] = []
+    enriched_functions: list[FunctionFingerprint] = []
+    enriched_classes: list[ClassFingerprint] = []
+    
+    # We will build a simple map of classes to their methods to assemble ClassFingerprint
+    class_methods = {}
+    current_class = None
+
     for node, name in _each(captures):
         text = node.text.decode("utf-8", errors="ignore")
         if name == "import_path" or name == "export_from_path":
             imports.append(text)
+            raw_imports.append({"raw": text, "line": node.start_point[0] + 1})
+            enriched_imports.append(ImportFingerprint(source=text, specifiers=[]))
         elif name == "export_name":
             exports.append(text)
-        elif name in {"fn_name", "class_name", "method_name", "var_name"}:
-            declarations.append(f"{name}:{text}")
+        elif name == "fn_name":
+            declarations.append(f"fn_name:{text}")
+            enriched_functions.append(FunctionFingerprint(
+                name=text, params=[], exported=False,
+                line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1
+            ))
+        elif name == "class_name":
+            declarations.append(f"class_name:{text}")
+            current_class = text
+            class_methods[current_class] = []
+            enriched_classes.append(ClassFingerprint(
+                name=text, methods=[], exported=False,
+                line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1
+            ))
+        elif name == "method_name":
+            declarations.append(f"method_name:{text}")
+            if current_class and current_class in class_methods:
+                class_methods[current_class].append(text)
+                for cls in enriched_classes:
+                    if cls.name == current_class:
+                        cls.methods.append(text)
+        elif name == "var_name":
+            declarations.append(f"var_name:{text}")
 
     return {
         "imports_hash": _hash_sorted(imports),
         "exports_hash": _hash_sorted(exports),
         "structure_hash": _hash_sorted(declarations),
         "parse_error": False,
+        "raw_imports": raw_imports,
+        "functions": enriched_functions,
+        "classes": enriched_classes,
+        "imports": enriched_imports,
     }
 
 
@@ -268,6 +370,12 @@ def load_fingerprints(repo_id: str) -> dict[str, FileFingerprint]:
             data = json.load(f)
             result: dict[str, FileFingerprint] = {}
             for k, v in data.items():
+                if "functions" in v:
+                    v["functions"] = [FunctionFingerprint(**f) if isinstance(f, dict) else f for f in v["functions"]]
+                if "classes" in v:
+                    v["classes"] = [ClassFingerprint(**c) if isinstance(c, dict) else c for c in v["classes"]]
+                if "imports" in v:
+                    v["imports"] = [ImportFingerprint(**i) if isinstance(i, dict) else i for i in v["imports"]]
                 result[k] = FileFingerprint(**v)
             return result
     except (json.JSONDecodeError, OSError, TypeError):
@@ -277,16 +385,30 @@ def load_fingerprints(repo_id: str) -> dict[str, FileFingerprint]:
         return {}
 
 
-def save_fingerprints(repo_id: str, fingerprints: dict[str, FileFingerprint]) -> None:
-    """Save fingerprints to disk."""
+def _get_git_commit(repo_root: str) -> str:
+    try:
+        res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True, check=True)
+        return res.stdout.strip()
+    except Exception:
+        return ""
+
+
+def save_fingerprints(repo_id: str, repo_root: str, fingerprints: dict[str, FileFingerprint]) -> None:
+    """Save fingerprints and current commit hash to disk."""
     cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".codekavi-fingerprints")
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{repo_id}.json")
+    commit_path = os.path.join(cache_dir, f"{repo_id}.commit")
 
     try:
         with open(cache_path, "w", encoding="utf-8") as f:
             data = {k: asdict(v) for k, v in fingerprints.items()}
             json.dump(data, f)
+            
+        commit = _get_git_commit(repo_root)
+        if commit:
+            with open(commit_path, "w", encoding="utf-8") as f:
+                f.write(commit)
     except OSError:
         pass
 
@@ -294,9 +416,10 @@ def save_fingerprints(repo_id: str, fingerprints: dict[str, FileFingerprint]) ->
 def compare_and_classify_repo(
     repo_id: str,
     repo_root: str,
-    current_files: list[dict],
+    current_files: list[FileEntry],
     content_cache: dict[str, str] | None = None,
-) -> tuple[dict[str, FileFingerprint], bool]:
+    executor_type: str | None = None,
+) -> tuple[dict[str, FileFingerprint], ChangeClassification]:
     """
     Compute fingerprints for current_files, compare with cached, and classify.
 
@@ -309,14 +432,15 @@ def compare_and_classify_repo(
 
     Returns:
       - dict of updated FileFingerprints
-      - has_structural_changes (bool) — true if any file is STRUCTURAL or new
+      - ChangeClassification indicating the extent of the update required
     """
     cached = load_fingerprints(repo_id)
     updated: dict[str, FileFingerprint] = {}
-    has_structural = False
+    structural_count = 0
+    total_files = len(current_files)
 
     for f_info in current_files:
-        rel_path = f_info["path"]
+        rel_path = f_info.path
         abs_path = os.path.join(repo_root, rel_path)
         content = content_cache.get(rel_path) if content_cache else None
 
@@ -340,6 +464,9 @@ def compare_and_classify_repo(
                     (getattr(prev, "parse_error", False) or (prev.imports_hash == "" and prev.structure_hash == ""))
                 )
                 
+                if "raw_imports" in sig:
+                    f_info.raw_imports = sig["raw_imports"]
+
                 if is_unsupported_or_error:
                     change_type = "COSMETIC"
                 elif (
@@ -354,11 +481,14 @@ def compare_and_classify_repo(
                     change_type = "COSMETIC"
                 else:
                     change_type = "STRUCTURAL"
-                    has_structural = True
+                    structural_count += 1
         else:
             sig = compute_structure_signature(rel_path, abs_path, source=content)
             change_type = "STRUCTURAL"
-            has_structural = True
+            structural_count += 1
+            
+            if "raw_imports" in sig:
+                f_info.raw_imports = sig["raw_imports"]
 
         updated[rel_path] = FileFingerprint(
             path=rel_path,
@@ -368,6 +498,19 @@ def compare_and_classify_repo(
             structure_hash=sig["structure_hash"],
             change_type=change_type,
             parse_error=sig.get("parse_error", False),
+            functions=sig.get("functions", []),
+            classes=sig.get("classes", []),
+            imports=sig.get("imports", []),
         )
 
-    return updated, has_structural
+    # Determine ChangeClassification
+    if structural_count == 0:
+        classification = ChangeClassification.SKIP
+    elif structural_count >= 30 or (total_files > 0 and structural_count / total_files > 0.5):
+        classification = ChangeClassification.FULL_UPDATE
+    elif structural_count >= 10:
+        classification = ChangeClassification.ARCHITECTURE_UPDATE
+    else:
+        classification = ChangeClassification.PARTIAL_UPDATE
+
+    return updated, classification

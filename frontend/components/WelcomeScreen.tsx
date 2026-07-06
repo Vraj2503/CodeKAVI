@@ -14,6 +14,7 @@ import {
   X,
   Sparkles,
   LogOut,
+  Trash2,
 } from "lucide-react";
 import { AnimatedInput } from "./ui/AnimatedInput";
 import SpotlightBackground from "./ui/spotlight-background";
@@ -23,7 +24,7 @@ import ThemeSwitch from "./ui/theme-switch";
 import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
 import { type AnalyzeResponse } from "@/lib/api";
-import { createSession, getSessions, type Session } from "@/lib/sessions";
+import { createSession, getSessions, deleteSession, type Session } from "@/lib/sessions";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
@@ -157,6 +158,21 @@ export function WelcomeScreen() {
     router.replace("/login");
   };
 
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // prevent card click
+    try {
+      const success = await deleteSession(sessionId);
+      if (success) {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        toast.success("Chat deleted successfully");
+      } else {
+        toast.error("Failed to delete chat");
+      }
+    } catch (err) {
+      toast.error("An error occurred");
+    }
+  };
+
   return (
     <>
       {/* Full-screen analysis progress overlay */}
@@ -253,7 +269,9 @@ export function WelcomeScreen() {
             {/* Session cards */}
             <AnimatePresence>
               {sessions.map((session, i) => (
-                <motion.button
+                <motion.div
+                  role="button"
+                  tabIndex={0}
                   key={session.id}
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -267,15 +285,24 @@ export function WelcomeScreen() {
                     "flex flex-col justify-between"
                   )}
                 >
-                  <div>
-                    <p className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">
-                      {session.owner}/{session.repo_name}
-                    </p>
-                    {topLangs(session.languages) && (
-                      <p className="text-xs text-muted-foreground mt-1.5 truncate">
-                        {topLangs(session.languages)}
+                  <div className="flex justify-between items-start">
+                    <div className="min-w-0 pr-2">
+                      <p className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">
+                        {session.owner}/{session.repo_name}
                       </p>
-                    )}
+                      {topLangs(session.languages) && (
+                        <p className="text-xs text-muted-foreground mt-1.5 truncate">
+                          {topLangs(session.languages)}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteSession(session.id, e)}
+                      className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
+                      title="Delete chat"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -288,7 +315,7 @@ export function WelcomeScreen() {
                       {session.message_count || 0}
                     </span>
                   </div>
-                </motion.button>
+                </motion.div>
               ))}
             </AnimatePresence>
           </div>

@@ -401,7 +401,7 @@ class GroqProvider:
 
         from typing import Any
 
-        from codekavi.utils import current_executor
+        from codekavi.utils import current_io_executor
 
         messages: list[Any] = []
         if system_prompt:
@@ -414,7 +414,7 @@ class GroqProvider:
             try:
                 start_ts = asyncio.get_event_loop().time()
                 response = await loop.run_in_executor(
-                    current_executor.get(None),
+                    current_io_executor.get(None),
                     lambda: self._client.chat.completions.create(
                         model=self.model_name,
                         messages=messages,
@@ -488,9 +488,9 @@ class GroqProvider:
                 stream=True,
             )
 
-        from codekavi.utils import current_executor
+        from codekavi.utils import current_io_executor
 
-        executor = current_executor.get(None)
+        executor = current_io_executor.get(None)
 
         loop = asyncio.get_running_loop()
         try:
@@ -678,7 +678,7 @@ class GeminiProvider:
         if rejected is not None:
             raise rejected
 
-        from codekavi.utils import current_executor
+        from codekavi.utils import current_io_executor
 
         config_kwargs: dict = {
             "temperature": temperature,
@@ -700,7 +700,7 @@ class GeminiProvider:
 
         loop = asyncio.get_running_loop()
         try:
-            response = await loop.run_in_executor(current_executor.get(None), _sync_call)
+            response = await loop.run_in_executor(current_io_executor.get(None), _sync_call)
             self._breaker.record_success()
             return response.text or ""
         except Exception as e:
@@ -748,9 +748,9 @@ class GeminiProvider:
                 config=config,
             )
 
-        from codekavi.utils import current_executor
+        from codekavi.utils import current_io_executor
 
-        executor = current_executor.get(None)
+        executor = current_io_executor.get(None)
 
         loop = asyncio.get_running_loop()
         try:
@@ -785,25 +785,19 @@ class GeminiProvider:
 _provider_cache: dict[str, GroqProvider | GeminiProvider] = {}
 
 
-def get_provider(task: str = "chat") -> GroqProvider:
+def get_provider(provider_name_or_task: str = "groq") -> GroqProvider | GeminiProvider:
     """
-    Returns GroqProvider by default for all generation tasks.
-    Gemini is only used for embeddings (via indexer.py / vectorstore.py directly).
-
-    Args:
-        task: Task type hint (e.g. "chat", "overview", "viz_data").
-              Currently unused but reserved for future model routing.
-
-    Returns:
-        A cached GroqProvider instance (process-level singleton).
-        The GroqProvider and GeminiProvider classes are intentionally stateless —
-        they hold only the API client and model name, no per-request state.
+    Returns the requested LLM provider instance.
+    Defaults to GroqProvider for all legacy generation tasks.
     """
-    from typing import cast
-
+    if provider_name_or_task == "gemini":
+        if "gemini" not in _provider_cache:
+            _provider_cache["gemini"] = GeminiProvider()
+        return _provider_cache["gemini"]
+        
     if "groq" not in _provider_cache:
         _provider_cache["groq"] = GroqProvider()
-    return cast(GroqProvider, _provider_cache["groq"])
+    return _provider_cache["groq"]
 
 
 def validate_providers() -> None:

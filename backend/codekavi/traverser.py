@@ -13,24 +13,10 @@ from codekavi.config import (
     IGNORED_FILES,
     MAX_FILE_SIZE_BYTES,
     MAX_NOTEBOOK_SIZE_BYTES,
+    detect_language,
 )
+from codekavi.pipeline_models import RepoData, FileEntry
 
-
-def _detect_language(filepath: str) -> str:
-    """Detect file language from its name or extension."""
-    basename = os.path.basename(filepath)
-
-    # Check special filenames first
-    if basename in FILENAME_LANGUAGE_MAP:
-        return FILENAME_LANGUAGE_MAP[basename]
-
-    # Check extension
-    _, ext = os.path.splitext(basename)
-    ext = ext.lower()
-    if ext in EXTENSION_LANGUAGE_MAP:
-        return EXTENSION_LANGUAGE_MAP[ext]
-
-    return "Unknown"
 
 
 def _should_ignore_dir(dirname: str) -> bool:
@@ -79,7 +65,7 @@ def _format_size(size_bytes: int) -> str:
         return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
-def traverse_repo(clone_path: str) -> dict:
+def traverse_repo(clone_path: str) -> RepoData:
     """
     Walk through the cloned repo and collect metadata for all relevant files.
     Builds both the flat file list and the hierarchical tree in a single pass.
@@ -150,7 +136,7 @@ def traverse_repo(clone_path: str) -> dict:
                 )
                 continue
 
-            language = _detect_language(f_path)
+            language = detect_language(f_path)
             languages[language] = languages.get(language, 0) + 1
             total_size += file_size
             
@@ -165,18 +151,17 @@ def traverse_repo(clone_path: str) -> dict:
                 except Exception:
                     pass
 
-            file_entry = {
-                "path": rel_path,
-                "name": f_name,
-                "extension": os.path.splitext(f_name)[1].lower(),
-                "language": language,
-                "size": file_size,
-                "size_formatted": _format_size(file_size),
-                "depth": rel_path.count(os.sep),
-                "mtime": stat_res.st_mtime,
-            }
-            if content is not None:
-                file_entry["content"] = content
+            file_entry = FileEntry(
+                path=rel_path,
+                name=f_name,
+                extension=os.path.splitext(f_name)[1].lower(),
+                language=language,
+                size=file_size,
+                size_formatted=_format_size(file_size),
+                depth=rel_path.count(os.sep),
+                mtime=stat_res.st_mtime,
+                content=content,
+            )
                 
             all_files.append(file_entry)
 
@@ -196,12 +181,12 @@ def traverse_repo(clone_path: str) -> dict:
     tree = _walk_tree(clone_path)
     sorted_languages = dict(sorted(languages.items(), key=lambda x: x[1], reverse=True))
 
-    return {
-        "total_files": len(all_files),
-        "total_size": total_size,
-        "total_size_formatted": _format_size(total_size),
-        "languages": sorted_languages,
-        "tree": tree,
-        "files": all_files,
-        "skipped_files": skipped_files,
-    }
+    return RepoData(
+        total_files=len(all_files),
+        total_size=total_size,
+        total_size_formatted=_format_size(total_size),
+        languages=sorted_languages,
+        tree=tree,
+        files=all_files,
+        skipped_files=skipped_files,
+    )

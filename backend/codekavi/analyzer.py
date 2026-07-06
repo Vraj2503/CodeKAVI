@@ -26,8 +26,12 @@ from collections.abc import Callable
 from typing import Any
 
 import tree_sitter_javascript as tsjs
+import tree_sitter_python as tspy
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser
+
+from codekavi.utils import BoundedContentCache
+from codekavi.pipeline_models import FileEntry, DepGraph
 
 # Initialize Tree-sitter languages and queries (immutable, safe to share across threads).
 # Parsers are NOT global because Tree-sitter Parsers mutate internal state on parse()
@@ -67,11 +71,6 @@ except ModuleNotFoundError:
         MAX_NOTEBOOK_SIZE_BYTES,
     )
     from settings import settings  # type: ignore[no-redef]
-
-try:
-    from codekavi.utils import BoundedContentCache
-except ModuleNotFoundError:
-    from utils import BoundedContentCache  # type: ignore[no-redef]
 
 
 # ─────────────────────────────────────────────
@@ -207,7 +206,7 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
 
 
 def _extract_js_ts_imports(
-    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None
+    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None, raw_imports_cache: list[dict] | None = None
 ) -> list[dict]:
     """
     Extract JS/TS imports using tree-sitter AST. Handles:
@@ -221,15 +220,32 @@ def _extract_js_ts_imports(
     concurrent /analyze requests don't race on shared parser state.
     """
     is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
-    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=is_ts, known_files=known_files)
+    return _extract_js_ts_imports_with_source(
+        filepath, source, repo_root, is_ts=is_ts, known_files=known_files, raw_imports_cache=raw_imports_cache
+    )
 
 
 def _extract_js_ts_imports_with_source(
-    filepath: str, source: str, repo_root: str, is_ts: bool, known_files: set[str] | None = None
+    filepath: str, source: str, repo_root: str, is_ts: bool, known_files: set[str] | None = None, raw_imports_cache: list[dict] | None = None
 ) -> list[dict]:
     """Shared JS/TS extraction that picks the right language and a per-call Parser."""
     imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
+
+    if raw_imports_cache is not None:
+        for item in raw_imports_cache:
+            raw_path = item["raw"]
+            line = item["line"]
+            resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
+            imports.append(
+                {
+                    "raw": raw_path,
+                    "resolved": resolved,
+                    "line": line,
+                    "type": "import",
+                }
+            )
+        return imports
 
     language = TS_LANGUAGE if is_ts else JS_LANGUAGE
     query = TS_QUERY if is_ts else JS_QUERY
@@ -528,9 +544,10 @@ def _detect_language(filepath: str) -> str:
 
 def analyze_dependencies(
     repo_root: str,
-    file_list: list[dict],
+    file_list: list[FileEntry],
     content_cache: BoundedContentCache | None = None,
-) -> dict:
+    executor_type: str | None = None,
+) -> DepGraph:
     """
     Analyze all files in the repo and build a full dependency graph.
 
@@ -549,7 +566,7 @@ def analyze_dependencies(
           - stats:              { total_edges, resolved_edges, unresolved_edges }
     """
     # All file paths in the repo (relative)
-    known_files = {f["path"] for f in file_list}
+    known_files = {f.path for f in file_list}
 
     edges: list[dict[str, Any]] = []  # { source, target, ... }
     adjacency: dict[str, set] = defaultdict(set)  # file -> imports
@@ -566,8 +583,8 @@ def analyze_dependencies(
     unresolved_count = 0
 
     for file_info in file_list:
-        rel_path = file_info["path"]
-        language = file_info["language"]
+        rel_path = file_info.path
+        language = file_info.language
         abs_path = os.path.join(repo_root, rel_path)
 
         extractor = _EXTRACTORS.get(language)
@@ -579,9 +596,9 @@ def analyze_dependencies(
         # skip a disk read entirely.
         try:
             max_size = MAX_NOTEBOOK_SIZE_BYTES if rel_path.endswith(".ipynb") else MAX_FILE_SIZE_BYTES
-            if "content" in file_info and file_info["content"] is not None:
+            if file_info.content is not None:
                 # Traverser pre-loaded the content — use it directly
-                source = file_info["content"]
+                source = file_info.content
             else:
                 file_size = os.path.getsize(abs_path)
                 if file_size > max_size:
@@ -595,7 +612,10 @@ def analyze_dependencies(
 
         # Extract imports
         if extractor in (_extract_python_imports, _extract_js_ts_imports):
-            imports = extractor(abs_path, source, repo_root, known_files=known_files)
+            if extractor == _extract_js_ts_imports:
+                imports = extractor(abs_path, source, repo_root, known_files=known_files, raw_imports_cache=file_info.raw_imports)
+            else:
+                imports = extractor(abs_path, source, repo_root, known_files=known_files)
         elif extractor == _extract_ipynb_imports:
             # Need to patch ipynb too since it calls python extractor
             imports = extractor(abs_path, source, repo_root, known_files=known_files)
@@ -633,20 +653,93 @@ def analyze_dependencies(
         content_cache.clear()
         del content_cache
 
-    return {
-        "edges": edges,
-        "adjacency": {k: sorted(v) for k, v in adjacency.items()},
-        "reverse_adjacency": {k: sorted(v) for k, v in reverse_adjacency.items()},
-        "file_imports": {k: v for k, v in file_imports.items() if v},
-        "entry_points": entry_points,
-        "file_signals": {k: list(v) for k, v in file_signals.items()},
-        "central_files": central_files,
-        "stats": {
-            "total_edges": resolved_count + unresolved_count,
+    return DepGraph(
+        edges=edges,
+        adjacency=dict(adjacency),
+        reverse_adjacency=dict(reverse_adjacency),
+        file_imports=dict(file_imports),
+        entry_points=entry_points,
+        file_signals=file_signals,
+        central_files=central_files,
+        stats={
+            "total_edges": len(edges),
             "resolved_edges": resolved_count,
             "unresolved_edges": unresolved_count,
         },
-    }
+    )
+
+
+def patch_dep_graph(
+    old_graph: DepGraph,
+    partial_graph: DepGraph,
+    changed_paths: set[str],
+    deleted_paths: set[str],
+    known_files: set[str],
+    repo_root: str,
+    content_cache: Any
+) -> DepGraph:
+    """
+    Merge a partial dependency graph (from changed files) into an existing full graph.
+    Re-computes global stats like entry points and central files.
+    """
+    new_edges = []
+    # Retain old edges that do NOT originate from a changed/deleted file, and do not target a deleted file.
+    for edge in old_graph.edges:
+        src = edge["source"]
+        tgt = edge["target"]
+        if src in changed_paths or src in deleted_paths or tgt in deleted_paths:
+            continue
+        new_edges.append(edge)
+        
+    # Append the new edges from the partial analysis
+    new_edges.extend(partial_graph.edges)
+    
+    adjacency: dict[str, set] = defaultdict(set)
+    reverse_adjacency: dict[str, set] = defaultdict(set)
+    resolved_count = 0
+    
+    for edge in new_edges:
+        src = edge["source"]
+        tgt = edge["target"]
+        adjacency[src].add(tgt)
+        reverse_adjacency[tgt].add(src)
+        resolved_count += 1
+        
+    file_imports = dict(old_graph.file_imports)
+    for path in changed_paths:
+        if path in partial_graph.file_imports:
+            file_imports[path] = partial_graph.file_imports[path]
+        else:
+            file_imports.pop(path, None)
+            
+    for path in deleted_paths:
+        file_imports.pop(path, None)
+        
+    # Recompute global stats
+    entry_points, file_signals = _detect_entry_points(
+        repo_root, known_files, adjacency, reverse_adjacency, content_cache
+    )
+    central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
+    
+    # Unresolved edges estimate (keep old + partial, subtract deleted - rough estimate)
+    # A true unresolved_count would require re-parsing or storing unresolved per file, 
+    # but this is mostly for telemetry.
+    unresolved_count = old_graph.stats.get("unresolved_edges", 0)
+    
+    return DepGraph(
+        edges=new_edges,
+        adjacency=dict(adjacency),
+        reverse_adjacency=dict(reverse_adjacency),
+        file_imports=file_imports,
+        entry_points=entry_points,
+        file_signals=file_signals,
+        central_files=central_files,
+        stats={
+            "total_edges": len(new_edges),
+            "resolved_edges": resolved_count,
+            "unresolved_edges": unresolved_count,
+        },
+    )
 
 
 # ─────────────────────────────────────────────

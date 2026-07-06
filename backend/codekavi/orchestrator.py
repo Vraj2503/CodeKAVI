@@ -93,7 +93,7 @@ class ExplanationOrchestrator:
                 "architecture", "architecture", self._prompt_architecture(file_contents)
             ),
             "components": self._gen("components", "components", self._prompt_components(file_contents)),
-            "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents, graph_data)),
+            "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents)),
         }
         async for ev in self._run_batch(batch_2, 40, 75):
             yield ev
@@ -297,7 +297,7 @@ class ExplanationOrchestrator:
                 import_lines.append(f"- `{src}` imports `{t}`")
         if not import_lines:
             # Fall back to adjacency if complete_imports is empty for any reason
-            dep_graph = graph_data.get("adjacency", {})
+            dep_graph = self.analysis.get("adjacency", {})
             for src, targets in list(dep_graph.items())[:20]:
                 target_list = targets if isinstance(targets, list) else [targets]
                 for t in target_list[:3]:
@@ -343,7 +343,7 @@ class ExplanationOrchestrator:
         )
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3500}
 
-    def _prompt_dataflow(self, file_contents: dict, graph_data: dict) -> dict:
+    def _prompt_dataflow(self, file_contents: dict) -> dict:
         entry_points = self.analysis.get("entry_points", [])[:3]
         entry_code = ""
         for ep in entry_points:
@@ -359,7 +359,7 @@ class ExplanationOrchestrator:
             for t in target_list[:3]:
                 import_lines.append(f"- `{src}` imports `{t}`")
         if not import_lines:
-            dep_graph = graph_data.get("adjacency", {})
+            dep_graph = self.analysis.get("adjacency", {})
             for src, targets in list(dep_graph.items())[:20]:
                 target_list = targets if isinstance(targets, list) else [targets]
                 for t in target_list[:3]:
@@ -390,13 +390,13 @@ class ExplanationOrchestrator:
 
         if not import_lines:
             # Graceful fallback when complete_imports isn't populated
-            dep_graph = graph_data.get("adjacency", {})
+            dep_graph = self.analysis.get("adjacency", {})
             for src, targets in list(dep_graph.items())[:25]:
                 target_list = targets if isinstance(targets, list) else [targets]
                 for t in target_list[:3]:
                     import_lines.append(f"- `{src}` → `{t}`")
 
-        central = graph_data.get("central_files", [])[:10]
+        central = self.analysis.get("central_files", [])[:10]
         central_lines = [
             f"- `{c.get('file', '')}` (in: {c.get('in_degree', 0)}, out: {c.get('out_degree', 0)})" for c in central
         ]

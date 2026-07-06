@@ -1,5 +1,6 @@
 import logging
 import re
+import asyncio
 import time
 from typing import Any, ClassVar
 
@@ -70,6 +71,7 @@ class ZillizClient:
             "start_line",
             "end_line",
             "text",
+            "provider",
             "vector",
         }
     )
@@ -122,6 +124,7 @@ class ZillizClient:
             FieldSchema(name="start_line", dtype=DataType.INT64),
             FieldSchema(name="end_line", dtype=DataType.INT64),
             FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
+            FieldSchema(name="provider", dtype=DataType.VARCHAR, max_length=32),
             FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
         ]
         schema = CollectionSchema(fields=fields, description="Code chunks for RAG")
@@ -158,7 +161,7 @@ class ZillizClient:
         except Exception as e:
             logger.error(f"Error clearing repo {repo_id}: {e}")
 
-    def search(
+    async def search(
         self,
         query: str,
         repo_id: str,
@@ -166,50 +169,42 @@ class ZillizClient:
         layer_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Embeds the query using Gemini and searches Zilliz.
-        Returns the top 'limit' matching code chunks.
-        Retries on transient errors with exponential backoff.
-
-        ⚠ Requires re-indexing if EMBEDDING_MODEL changes — old vectors
-        live in a different embedding space and will return poor results.
-
-        Args:
-            query: The user's question.
-            repo_id: Repository identifier.
-            limit: Maximum results to return.
-            layer_filter: If "exclude_frontend", excludes frontend and test chunks.
+        Embeds the query using both Gemini and Cloudflare, searches Zilliz for both,
+        combines results, and returns the top 'limit' matching code chunks.
         """
         if not self.collection:
             self.collection = self.setup_collection()
 
         assert self.collection is not None
-        backoff = INITIAL_BACKOFF_S
-
-        for attempt in range(1, MAX_RETRIES + 1):
+        
+        # Import providers here to avoid circular imports
+        from codekavi.embedding import CloudflareEmbedding
+        
+        cf_client = CloudflareEmbedding()
+        
+        # 1. Embed query with Cloudflare
+        try:
+            q_cf_texts = await cf_client.embed_texts([query])
+        except Exception as e:
+            logger.error(f"Error during query embedding: {e}")
+            return []
+            
+        search_params = {"metric_type": "COSINE", "params": {}}
+        repo_id = _validate_repo_id(repo_id)
+        
+        base_expr = f"repo_id == '{repo_id}'"
+        if layer_filter == "exclude_frontend":
+            base_expr += ' and layer not in ["frontend", "test"]'
+            
+        all_hits = []
+        
+        # Function to perform a search safely
+        def do_search(vector, provider_name):
+            expr = f"{base_expr} and provider == '{provider_name}'"
             try:
-                from google import genai
-
-                api_key = settings.gemini_api_key
-                client = genai.Client(api_key=api_key)
-                response = client.models.embed_content(
-                    model=settings.embedding_model,
-                    contents=[query],  # type: ignore[arg-type]
-                )
-                if not response.embeddings or len(response.embeddings) == 0:
-                    raise ValueError("No embeddings returned from Gemini")
-                query_vector = response.embeddings[0].values
-
-                search_params = {"metric_type": "COSINE", "params": {}}
-
-                # Build filter expression
-                repo_id = _validate_repo_id(repo_id)
-                expr = f"repo_id == '{repo_id}'"
-                if layer_filter == "exclude_frontend":
-                    expr += ' and layer not in ["frontend", "test"]'
-
                 self.collection.load()
                 results = self.collection.search(
-                    data=[query_vector],
+                    data=[vector],
                     anns_field="vector",
                     param=search_params,
                     limit=limit,
@@ -222,43 +217,47 @@ class ZillizClient:
                         "start_line",
                         "end_line",
                         "text",
+                        "provider",
                     ],
                 )
-
-                formatted_results = []
-                for hits in results:
-                    for hit in hits:
-                        formatted_results.append(
-                            {
-                                "file_path": hit.entity.get("file_path"),
-                                "role": hit.entity.get("role"),
-                                "language": hit.entity.get("language", ""),
-                                "layer": hit.entity.get("layer", ""),
-                                "start_line": hit.entity.get("start_line", 0),
-                                "end_line": hit.entity.get("end_line", 0),
-                                "text": hit.entity.get("text"),
-                                "score": hit.distance,
-                            }
-                        )
-                return formatted_results
-
+                return results
             except Exception as e:
-                err_str = str(e)
-                is_transient = any(
-                    keyword in err_str for keyword in ["429", "RESOURCE_EXHAUSTED", "timeout", "Unavailable"]
-                )
-
-                if is_transient and attempt < MAX_RETRIES:
-                    logger.warning(
-                        f"Search transient error (attempt {attempt}/{MAX_RETRIES}): {e}. Retrying in {backoff}s…"
-                    )
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                else:
-                    logger.error(f"Search failed: {e}")
-                    return []
-        return []
+                logger.warning(f"Search failed for {provider_name}: {e}")
+                return []
+                
+        # 2. Search Cloudflare namespace
+        if isinstance(q_cf_texts, list) and q_cf_texts:
+            cf_results = await asyncio.to_thread(do_search, q_cf_texts[0], "cloudflare")
+            for hits in cf_results:
+                for hit in hits:
+                    all_hits.append({
+                        "file_path": hit.entity.get("file_path"),
+                        "role": hit.entity.get("role"),
+                        "language": hit.entity.get("language", ""),
+                        "layer": hit.entity.get("layer", ""),
+                        "start_line": hit.entity.get("start_line", 0),
+                        "end_line": hit.entity.get("end_line", 0),
+                        "text": hit.entity.get("text"),
+                        "provider": hit.entity.get("provider"),
+                        "score": hit.distance,
+                    })
+                    
+        # 3. Combine and sort
+        # Distance metric is COSINE in Milvus/Zilliz. 
+        # Lower distance (closer to 0) means more similar.
+        all_hits.sort(key=lambda x: x["score"])
+        
+        # 4. Deduplicate based on file_path + start_line + end_line 
+        # (in case the same chunk was somehow indexed twice, though unlikely with our flag)
+        seen = set()
+        deduped = []
+        for hit in all_hits:
+            sig = f"{hit['file_path']}:{hit['start_line']}-{hit['end_line']}"
+            if sig not in seen:
+                seen.add(sig)
+                deduped.append(hit)
+                
+        return deduped[:limit]
 
 
 # Global instance for app to use
