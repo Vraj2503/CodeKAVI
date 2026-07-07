@@ -18,6 +18,7 @@ calls become no-ops — code paths stay functional.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -49,15 +50,33 @@ def _import_prometheus() -> bool:
 # ─────────────────────────────────────────────────────────────────────
 
 _metrics: dict[str, Any] = {}
+_metrics_lock = threading.Lock()
 
 
 def _ensure(name: str, factory) -> Any:
-    """Return a cached metric by name, creating it via ``factory`` on first use."""
+    """Return a cached metric by name, creating it via ``factory`` on first use.
+
+    L-03: the check-and-create was unguarded, so two threads racing to build
+    the same metric could both call ``factory()`` — Prometheus's global
+    registry rejects a second registration of the same metric name, and the
+    resulting error was then silently swallowed (at debug level) by every
+    caller, forever, on every subsequent request. Guard with a lock, and
+    surface a construction failure as a single warning instead of retrying
+    (and re-swallowing) it on every call.
+    """
     if name in _metrics:
         return _metrics[name]
-    metric = factory()
-    _metrics[name] = metric
-    return metric
+    with _metrics_lock:
+        if name in _metrics:
+            return _metrics[name]
+        try:
+            metric = factory()
+        except Exception as e:
+            logger.warning(f"Failed to construct metric {name!r}: {e}")
+            _metrics[name] = None
+            raise
+        _metrics[name] = metric
+        return metric
 
 
 def _build_llm_duration() -> Any:
