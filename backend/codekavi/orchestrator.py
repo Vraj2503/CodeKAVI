@@ -52,6 +52,7 @@ class ExplanationOrchestrator:
         self.selected_files = selected_files
         self.depth = depth
         self.sections_completed = 0
+        self.sections_failed = 0
         self.total_sections = 8
 
     async def run(self) -> AsyncIterator[dict]:
@@ -127,13 +128,16 @@ class ExplanationOrchestrator:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=60.0)
 
                 if not done and pending:
-                    # Timeout reached
+                    # Timeout reached — a timed-out section is a failure, not
+                    # a completion (L-05): count it under sections_failed so
+                    # progress reporting can't claim "8/8" when some sections
+                    # never actually finished.
                     logger.warning(f"Timeout generating sections: {[task_to_name[p] for p in pending]}")
                     for task in pending:
                         if not task.done():
                             task.cancel()
                             name = task_to_name[task]
-                            self.sections_completed += 1
+                            self.sections_failed += 1
                             done_count += 1
                             yield {"type": "warning", "data": {"section": name, "message": "Generation timed out."}}
 
@@ -154,11 +158,15 @@ class ExplanationOrchestrator:
 
                 for task in done:
                     name = task_to_name[task]
-                    self.sections_completed += 1
                     done_count += 1
-                    progress = p_start + int((done_count / total) * (p_end - p_start))
                     try:
                         result = task.result()
+                        # L-05: only count as completed once result() has
+                        # actually succeeded — previously this incremented
+                        # unconditionally before the try, so a raised
+                        # exception still counted as "done".
+                        self.sections_completed += 1
+                        progress = p_start + int((done_count / total) * (p_end - p_start))
                         yield {"type": "section", "data": {"name": name, **result}}
                         yield self._progress(
                             progress,
@@ -166,6 +174,8 @@ class ExplanationOrchestrator:
                             f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})",
                         )
                     except Exception as e:
+                        self.sections_failed += 1
+                        progress = p_start + int((done_count / total) * (p_end - p_start))
                         logger.error(f"Section {name} failed: {e}")
                         yield {"type": "warning", "data": {"section": name, "message": str(e)[:200]}}
         finally:
@@ -478,6 +488,21 @@ class ExplanationOrchestrator:
     # Code snippet extraction
     # ─────────────────────────────────────────
 
+    def _within_repo(self, candidate: str) -> bool:
+        """M-16: reject any resolved path that escapes ``self.repo_path``.
+
+        Defense-in-depth — callers already filter matches against the
+        curated ``selected_set`` first, but this mirrors the containment
+        check already applied in analyzer.py so a malicious backticked path
+        from the LLM (e.g. `` `../../../../etc/passwd` ``) can never resolve
+        to a read outside the clone.
+        """
+        real_root = os.path.realpath(self.repo_path)
+        try:
+            return os.path.commonpath([os.path.realpath(candidate), real_root]) == real_root
+        except ValueError:
+            return False
+
     def _extract_snippets(self, response: str) -> list[dict]:
         """Extract code snippets referenced in the LLM response by matching backtick-wrapped file paths."""
         from typing import Any
@@ -518,6 +543,8 @@ class ExplanationOrchestrator:
 
             # Read actual file content from disk
             abs_path = os.path.join(self.repo_path, match)
+            if not self._within_repo(abs_path):
+                continue
             try:
                 with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     code = f.read(2000)
@@ -630,7 +657,7 @@ class ExplanationOrchestrator:
                 {
                     "id": file_path,
                     "label": os.path.basename(file_path),
-                    "type": "entry_point" if depth == 0 else self._detect_layer(file_path),
+                    "type": "entry_point" if depth == 0 else detect_layer(file_path),
                 }
             )
             targets = adjacency.get(file_path, [])
@@ -689,10 +716,6 @@ class ExplanationOrchestrator:
 
         return {"nodes": nodes, "edges": edges}
 
-    def _detect_layer(self, path: str) -> str:
-        """Delegate to canonical detect_layer in config.py."""
-        return detect_layer(path)
-
     # ─────────────────────────────────────────
     # Helper methods
     # ─────────────────────────────────────────
@@ -715,6 +738,8 @@ class ExplanationOrchestrator:
             # Handle both dict (from SmartFileSelector) and plain string formats
             file_path = item["path"] if isinstance(item, dict) else item
             abs_path = os.path.join(self.repo_path, file_path)
+            if not self._within_repo(abs_path):
+                continue
             try:
                 with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     contents[file_path] = f.read(12000)
