@@ -58,6 +58,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     """
     FastAPI middleware that generates/propagates a Request ID.
     Attaches the ID as a header on the response.
+
+    L-02 (accepted trade-off): BaseHTTPMiddleware runs the downstream app via
+    Starlette's anyio task-group wrapping, which can lose contextvars
+    continuity for a StreamingResponse body emitted after call_next()
+    returns — so request_id_ctx may not tag every SSE chunk's log lines for
+    /analyze/stream and /explain/*/stream. A pure-ASGI middleware would fix
+    this but touches every request path; not worth the blast radius for a
+    request-id log tag. repo_id_ctx (set explicitly inside each stream
+    generator) is unaffected since it's (re)set from within the same task
+    that emits the chunks.
     """
 
     async def dispatch(self, request: Request, call_next):
