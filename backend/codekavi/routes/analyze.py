@@ -23,6 +23,7 @@ from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
+from codekavi.routes._errors import internal_error, scrub_message
 
 
 def safe_cleanup(path: str):
@@ -86,13 +87,15 @@ async def analyze(
 
     start_time = time.perf_counter()
     try:
+        # L-09: clone_repo() blocks on git subprocess I/O, not CPU, so it
+        # runs on the io executor (_run_sync's default) rather than the
+        # separate cpu executor reserved for parsing/analysis work.
         with analysis_stage_timer("cloning"):
             clone_info = await _run_sync(clone_repo, github_url)
         duration = (time.perf_counter() - start_time) * 1000
         logger.info(f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration})
     except Exception as e:
-        message = getattr(e, "message", str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to clone repository: {message}") from e
+        raise internal_error(e, context="clone failed") from e
 
     repo_id = clone_info["repo_id"]
     token = repo_id_ctx.set(repo_id)
@@ -158,7 +161,7 @@ async def analyze(
             )
         except Exception as e:
             safe_cleanup(clone_info["clone_path"])
-            raise HTTPException(status_code=500, detail=f"Failed to traverse repository: {e}") from e
+            raise internal_error(e, context="traverse failed") from e
 
         # Build initial content cache from traverser
         content_cache_dict = {}
@@ -391,7 +394,10 @@ async def analyze(
             await _run_sync(cache.register_signature, signature, repo_id)
 
         # Index repository for RAG in the background (prevents proxy timeouts)
-        if settings.gemini_api_key and settings.zilliz_uri:
+        # L-15: gate on the credentials indexing actually uses (Cloudflare
+        # embeddings + Zilliz), not gemini_api_key — otherwise we schedule an
+        # index task that is guaranteed to no-op when Cloudflare creds are unset.
+        if settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri:
             background_tasks.add_task(
                 task_registry.wrap(index_repository), repo_id, file_profiles_dicts, clone_info["clone_path"]
             )
@@ -524,7 +530,7 @@ async def analyze_stream(
                 f"Stage cloning completed in {duration:.2f}ms", extra={"stage": "cloning", "duration_ms": duration}
             )
         except Exception as e:
-            message = getattr(e, "message", str(e))
+            message = scrub_message(e, context="stream clone failed")
             yield _sse_event("error", 0, f"Failed to clone repository: {message}", seq=_next_seq(seq_box))
             return
 
@@ -551,7 +557,8 @@ async def analyze_stream(
                 )
             except Exception as e:
                 safe_cleanup(clone_info["clone_path"])
-                yield _sse_event("error", 0, f"Failed to traverse repository: {e}", seq=_next_seq(seq_box))
+                message = scrub_message(e, context="stream traverse failed")
+                yield _sse_event("error", 0, f"Failed to traverse repository: {message}", seq=_next_seq(seq_box))
                 return
 
             # Build initial content cache from traverser
@@ -795,7 +802,8 @@ async def analyze_stream(
             )
 
             # Stage 7: Indexing (embedding) — move to background task
-            if settings.gemini_api_key and settings.zilliz_uri:
+            # L-15: gate on the credentials indexing actually uses.
+            if settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri:
                 background_tasks.add_task(
                     task_registry.wrap(index_repository), repo_id, file_profiles, clone_info["clone_path"]
                 )
@@ -866,7 +874,7 @@ async def get_graph(
     try:
         result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
+        raise internal_error(e, context="get_graph: failed to load repo") from e
 
     if not result:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
@@ -905,7 +913,7 @@ async def restore_repo(
     try:
         result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to restore repo: {e}") from e
+        raise internal_error(e, context="restore_repo: failed to load repo") from e
 
     if not result:
         raise HTTPException(status_code=404, detail="Repo not found or expired. Please re-analyze.")
