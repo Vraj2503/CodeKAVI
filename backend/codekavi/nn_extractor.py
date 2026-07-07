@@ -392,16 +392,19 @@ def _extract_module_class(
     if not layers:
         return None
 
-    # 2. Parse forward() to determine execution order & detect skip connections
+    # 2. Parse forward() (or Keras call()) to determine execution order &
+    # detect skip connections.
     if forward_method:
         _extract_forward_connections(forward_method, layer_order, connections, layers)
     else:
-        # Fallback: assume sequential order from __init__
+        # M-02: no forward()/call() method to trace execution from — this is
+        # unverified declaration order, not a confirmed execution graph, so
+        # label it accordingly rather than asserting "sequential".
         for i in range(len(layer_order)):
             from_id = "input" if i == 0 else layer_order[i - 1]
-            connections.append({"from_id": from_id, "to_id": layer_order[i], "type": "sequential"})
+            connections.append({"from_id": from_id, "to_id": layer_order[i], "type": "sequential-unverified"})
         if layer_order:
-            connections.append({"from_id": layer_order[-1], "to_id": "output", "type": "sequential"})
+            connections.append({"from_id": layer_order[-1], "to_id": "output", "type": "sequential-unverified"})
 
     total_params = sum(l.get("param_count", 0) or 0 for l in layers)
 
@@ -426,9 +429,9 @@ def _extract_forward_connections(
     connections: list[dict],
     layers: list[dict],
 ) -> None:
-    """Analyze forward() to extract layer execution order and skip connections."""
-    # Simple approach: track variable assignments in forward()
-    # x = self.conv1(x) → conv1 follows previous assignment
+    """Analyze forward()/call() to extract layer execution order and skip connections."""
+    # Simple approach: track variable assignments and the terminal return in
+    # forward()/call(): x = self.conv1(x) → conv1 follows previous assignment.
     call_sequence: list[str] = []
 
     for node in ast.walk(forward_node):
@@ -442,6 +445,16 @@ def _extract_forward_connections(
                         layer_name = call_name.split("self.")[-1]
                         if layer_name in layer_order:
                             call_sequence.append(layer_name)
+        elif isinstance(node, ast.Return) and isinstance(node.value, ast.Call):
+            # M-02: `return self.layer(x)` is an extremely common terminal
+            # statement (e.g. ResNet-style `return self.fc(x)`) and was
+            # previously invisible here since only Assign was matched — the
+            # last-applied layer silently vanished from the execution chain.
+            call_name = _get_call_name(node.value)
+            if call_name and call_name.startswith("self."):
+                layer_name = call_name.split("self.")[-1]
+                if layer_name in layer_order and (not call_sequence or call_sequence[-1] != layer_name):
+                    call_sequence.append(layer_name)
 
     # Build connections from call sequence
     if call_sequence:
@@ -458,12 +471,15 @@ def _extract_forward_connections(
         # last layer -> output
         connections.append({"from_id": call_sequence[-1], "to_id": "output", "type": "sequential"})
     else:
-        # Fallback: sequential from layer_order
+        # M-02: forward()/call() didn't yield any recognizable self.layer(x)
+        # calls (e.g. dynamic/loop-based execution) — fall back to
+        # declaration order but label it unverified rather than asserting a
+        # confirmed sequential architecture.
         for i in range(len(layer_order)):
             from_id = "input" if i == 0 else layer_order[i - 1]
-            connections.append({"from_id": from_id, "to_id": layer_order[i], "type": "sequential"})
+            connections.append({"from_id": from_id, "to_id": layer_order[i], "type": "sequential-unverified"})
         if layer_order:
-            connections.append({"from_id": layer_order[-1], "to_id": "output", "type": "sequential"})
+            connections.append({"from_id": layer_order[-1], "to_id": "output", "type": "sequential-unverified"})
 
 
 # ─────────────────────────────────────────────
