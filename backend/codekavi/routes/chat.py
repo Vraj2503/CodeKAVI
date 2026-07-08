@@ -19,6 +19,7 @@ from codekavi.quota import get_token_tracker
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ChatRequest
 from codekavi.exceptions import RateLimitError
+from codekavi.routes._errors import internal_error
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
@@ -272,8 +273,7 @@ async def chat_repo(
     except HTTPException:
         raise  # Re-raise our own HTTP exceptions (400, 404, 503)
     except Exception as e:
-        logger.error(f"Chat RAG error: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise internal_error(e, context="Chat RAG error") from e
 
 
 @router.delete("/session/{session_id}")
@@ -299,5 +299,4 @@ async def delete_session(session_id: str, user_id: str = Depends(verify_supabase
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete session {session_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise internal_error(e, context=f"Failed to delete session {session_id}") from e
