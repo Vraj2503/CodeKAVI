@@ -23,6 +23,7 @@ from codekavi.exceptions import ProviderError, RateLimitError
 from codekavi.limiter import per_minute
 from codekavi.orchestrator import ExplanationOrchestrator
 from codekavi.quota import get_token_tracker
+from codekavi.routes._errors import internal_error, scrub_message
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ExplainFileRequest, ExplainRequest
 from codekavi.session import ensure_repo_loaded
@@ -95,7 +96,7 @@ async def explain_repo(
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
+        raise internal_error(e, context="explain: failed to load repo") from e
 
     if not result or not clone_path:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
@@ -220,7 +221,7 @@ async def explain_single_file(
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
+        raise internal_error(e, context="explain: failed to load repo") from e
 
     if not result or not clone_path:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
@@ -238,7 +239,7 @@ async def explain_single_file(
         raise HTTPException(status_code=404, detail=f"File not found: {body.file_path}")
 
     explainer = _get_explainer(model=body.model)
-    repo_name = os.path.basename(clone_path).rsplit("_", 1)[0]
+    repo_name = result.get("repo_name", os.path.basename(clone_path).rsplit("_", 1)[0])
 
     file_result = await explainer.explain_file(profile, clone_path, repo_name)
 
@@ -273,7 +274,7 @@ async def explain_repo_stream(
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
+        raise internal_error(e, context="explain: failed to load repo") from e
 
     if not result or not clone_path:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
@@ -325,8 +326,7 @@ async def explain_repo_stream(
                 f"data: {json.dumps({'seq': seq, 'fallback': True, 'fallback_reason': str(e)[:200], 'tour': tour})}\n\n"
             )
         except Exception as e:
-            logger.error(f"SSE stream error for {repo_id}: {e}")
-            message = getattr(e, "message", str(e))
+            message = scrub_message(e, context=f"SSE stream error for {repo_id}")
             seq += 1
             yield f"event: error\nid: {seq}\ndata: {json.dumps({'seq': seq, 'message': message})}\n\n"
         finally:
