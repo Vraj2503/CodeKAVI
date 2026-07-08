@@ -90,8 +90,7 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
 
             content_cache = BoundedContentCache(settings.max_content_cache_bytes)
             for k, v in content_cache_dict.items():
-                content_cache.cache[k] = v
-                content_cache.current_bytes += len(v.encode("utf-8"))
+                content_cache[k] = v
 
             try:
                 dep_data = analyze_dependencies(clone_path, repo_data["files"], content_cache)
