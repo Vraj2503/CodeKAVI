@@ -24,6 +24,7 @@ from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.config import detect_layer as _detect_layer
 from codekavi.limiter import per_minute
+from codekavi.routes._errors import internal_error
 from codekavi.routes.dependencies import get_cache
 from codekavi.session import ensure_repo_loaded
 from codekavi.settings import settings
@@ -41,7 +42,7 @@ async def _load_repo(repo_id: str, cache: AnalysisCache):
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load repo: {e}") from e
+        raise internal_error(e, context="visualize: failed to load repo") from e
 
     if not result:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
@@ -304,6 +305,22 @@ async def visualize_mindmap(
     classification = result.get("file_profiles", [])
 
     if body.use_llm:
+        # M-22: this branch makes a real (billed) LLM call — gate it on the
+        # same per-user daily quota every other LLM route enforces. Without
+        # this, /visualize/mindmap?use_llm=true was a fully quota-free path.
+        from codekavi.quota import get_token_tracker
+
+        tracker = get_token_tracker()
+        if not tracker.check_quota(user_id):
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "quota_exceeded",
+                    "message": "Daily LLM token quota exceeded. Please retry tomorrow.",
+                    "remaining_tokens": tracker.get_remaining(user_id),
+                },
+            )
+
         # LLM-enhanced mind map — only when explicitly requested
         from codekavi.llm.providers import get_provider
 
@@ -322,12 +339,15 @@ async def visualize_mindmap(
         )
 
         try:
-            response = await provider.generate(
+            # M-22: pass user_id so usage is attributed to the real caller
+            # instead of silently recording as user_id=None.
+            response, _usage = await provider.generate_with_usage(
                 system_prompt="You are a code analyst. Return ONLY valid JSON.",
                 user_prompt=prompt,
                 temperature=0.2,
                 max_tokens=2000,
                 json_mode=True,
+                user_id=user_id,
             )
             parsed = json.loads(response)
             root = parsed.get("root", parsed.get("visualization", {}))
@@ -397,6 +417,22 @@ async def explain_visualization(
     """
     result, _clone_path = await _load_repo(body.repo_id, cache)
 
+    # M-22: this endpoint is LLM-only (no static fallback) yet never gated
+    # on the per-user daily quota — mirror the check every other LLM route
+    # enforces (chat.py, explain.py).
+    from codekavi.quota import get_token_tracker
+
+    tracker = get_token_tracker()
+    if not tracker.check_quota(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": "Daily LLM token quota exceeded. Please retry tomorrow.",
+                "remaining_tokens": tracker.get_remaining(user_id),
+            },
+        )
+
     api_key = settings.gemini_api_key
     if not api_key:
         raise HTTPException(
@@ -425,7 +461,10 @@ async def explain_visualization(
         raise HTTPException(status_code=400, detail=f"Unknown visualization type: {viz_type}")
 
     try:
-        response = await provider.generate(
+        # M-22/L-13: thread user_id through so usage is attributed correctly,
+        # and use generate_with_usage() to get the provider's real token
+        # count instead of a fabricated word-count estimate.
+        response, usage = await provider.generate_with_usage(
             system_prompt=(
                 "You are a senior software architect. Explain the visualization data "
                 "in 3-5 concise paragraphs. Highlight key patterns, risks, and recommendations. "
@@ -434,14 +473,15 @@ async def explain_visualization(
             user_prompt=prompt,
             temperature=0.3,
             max_tokens=2000,
+            user_id=user_id,
         )
         return {
             "explanation": response,
-            "tokens_used": len(response.split()) * 2,  # rough estimate
-            "model": "gemini",
+            "tokens_used": usage.get("total_tokens", 0),
+            "model": provider.name,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Explanation failed: {e}") from e
+        raise internal_error(e, context="explain_visualization: generation failed") from e
 
 
 def _explain_prompt_dependencies(analysis: dict) -> str:
