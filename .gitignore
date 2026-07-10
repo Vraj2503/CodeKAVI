@@ -44,6 +44,12 @@ supabase_migrations/
 .codekavi-fingerprints/
 Task.md
 
+# Sprint planning / audit notes (local only)
+Issues.md
+Sprint1.md
+Sprint2.md
+Sprints.md
+
 Tools-to-Design-or-Visualize-Architecture-of-Neural-Network/
 
 .claude/
