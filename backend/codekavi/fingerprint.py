@@ -7,6 +7,11 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - fcntl is POSIX-only
+    fcntl = None
+
 from codekavi.pipeline_models import FileEntry
 
 import tree_sitter_javascript as tsjs
@@ -123,7 +128,7 @@ def compute_file_hash(abs_path: str, content: str | None = None) -> str:
     If content is provided, hash the whole content string directly.
     """
     if content is not None:
-        return hashlib.md5(content.encode('utf-8', errors='ignore')).hexdigest()
+        return hashlib.md5(content.encode("utf-8", errors="ignore")).hexdigest()
     try:
         with open(abs_path, "rb") as f:
             head = f.read(8192)
@@ -137,7 +142,6 @@ def compute_file_hash(abs_path: str, content: str | None = None) -> str:
         return hashlib.md5(head + tail).hexdigest()
     except OSError:
         return ""
-
 
 
 def _hash_sorted(values: list[str]) -> str:
@@ -204,7 +208,7 @@ def _python_structure_signature(source: str) -> dict:
     imports: list[str] = []
     exports: list[str] = []
     declarations: list[str] = []
-    
+
     enriched_imports: list[ImportFingerprint] = []
     enriched_functions: list[FunctionFingerprint] = []
     enriched_classes: list[ClassFingerprint] = []
@@ -220,37 +224,51 @@ def _python_structure_signature(source: str) -> dict:
         elif isinstance(node, ast.ImportFrom):
             if node.module:
                 imports.append(node.module)
-            exports.extend(a.name for a in node.names)
-            if node.module:
                 enriched_imports.append(ImportFingerprint(source=node.module, specifiers=[a.name for a in node.names]))
         elif isinstance(node, ast.FunctionDef):
             args = [a.arg for a in node.args.args if a.arg]
             declarations.append(f"def:{node.name}({','.join(args)})")
-            enriched_functions.append(FunctionFingerprint(
-                name=node.name, params=args, exported=False,
-                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
-            ))
+            enriched_functions.append(
+                FunctionFingerprint(
+                    name=node.name,
+                    params=args,
+                    exported=False,
+                    line_count=node.end_lineno - node.lineno
+                    if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno
+                    else 1,
+                )
+            )
         elif isinstance(node, ast.AsyncFunctionDef):
             args = [a.arg for a in node.args.args if a.arg]
             declarations.append(f"adef:{node.name}({','.join(args)})")
-            enriched_functions.append(FunctionFingerprint(
-                name=node.name, params=args, exported=False,
-                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
-            ))
+            enriched_functions.append(
+                FunctionFingerprint(
+                    name=node.name,
+                    params=args,
+                    exported=False,
+                    line_count=node.end_lineno - node.lineno
+                    if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno
+                    else 1,
+                )
+            )
         elif isinstance(node, ast.ClassDef):
             declarations.append(f"class:{node.name}")
             methods = []
             for stmt in node.body:
                 if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     args = [a.arg for a in stmt.args.args if a.arg]
-                    declarations.append(
-                        f"method:{node.name}.{stmt.name}({','.join(args)})"
-                    )
+                    declarations.append(f"method:{node.name}.{stmt.name}({','.join(args)})")
                     methods.append(stmt.name)
-            enriched_classes.append(ClassFingerprint(
-                name=node.name, methods=methods, exported=False,
-                line_count=node.end_lineno - node.lineno if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno else 1
-            ))
+            enriched_classes.append(
+                ClassFingerprint(
+                    name=node.name,
+                    methods=methods,
+                    exported=False,
+                    line_count=node.end_lineno - node.lineno
+                    if hasattr(node, "end_lineno") and hasattr(node, "lineno") and node.end_lineno and node.lineno
+                    else 1,
+                )
+            )
 
     if not isinstance(body, list):
         body = []
@@ -309,7 +327,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     enriched_imports: list[ImportFingerprint] = []
     enriched_functions: list[FunctionFingerprint] = []
     enriched_classes: list[ClassFingerprint] = []
-    
+
     # We will build a simple map of classes to their methods to assemble ClassFingerprint
     class_methods = {}
     current_class = None
@@ -324,18 +342,26 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
             exports.append(text)
         elif name == "fn_name":
             declarations.append(f"fn_name:{text}")
-            enriched_functions.append(FunctionFingerprint(
-                name=text, params=[], exported=False,
-                line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1
-            ))
+            enriched_functions.append(
+                FunctionFingerprint(
+                    name=text,
+                    params=[],
+                    exported=False,
+                    line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1,
+                )
+            )
         elif name == "class_name":
             declarations.append(f"class_name:{text}")
             current_class = text
             class_methods[current_class] = []
-            enriched_classes.append(ClassFingerprint(
-                name=text, methods=[], exported=False,
-                line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1
-            ))
+            enriched_classes.append(
+                ClassFingerprint(
+                    name=text,
+                    methods=[],
+                    exported=False,
+                    line_count=node.end_point[0] - node.start_point[0] if hasattr(node, "end_point") else 1,
+                )
+            )
         elif name == "method_name":
             declarations.append(f"method_name:{text}")
             if current_class and current_class in class_methods:
@@ -393,6 +419,29 @@ def _get_git_commit(repo_root: str) -> str:
         return ""
 
 
+def _atomic_write_json(path: str, data: Any) -> None:
+    """
+    Write JSON to `path` without ever exposing a partially-written or
+    torn file to concurrent readers.
+
+    Writes to a `.tmp` sibling first, flocking it for the duration of the
+    write so concurrent writers serialize instead of interleaving, then
+    atomically replaces the destination via os.replace().
+    """
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    os.replace(tmp_path, path)
+
+
 def save_fingerprints(repo_id: str, repo_root: str, fingerprints: dict[str, FileFingerprint]) -> None:
     """Save fingerprints and current commit hash to disk."""
     cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".codekavi-fingerprints")
@@ -401,14 +450,23 @@ def save_fingerprints(repo_id: str, repo_root: str, fingerprints: dict[str, File
     commit_path = os.path.join(cache_dir, f"{repo_id}.commit")
 
     try:
-        with open(cache_path, "w", encoding="utf-8") as f:
-            data = {k: asdict(v) for k, v in fingerprints.items()}
-            json.dump(data, f)
-            
+        data = {k: asdict(v) for k, v in fingerprints.items()}
+        _atomic_write_json(cache_path, data)
+
         commit = _get_git_commit(repo_root)
         if commit:
-            with open(commit_path, "w", encoding="utf-8") as f:
-                f.write(commit)
+            commit_tmp_path = f"{commit_path}.tmp"
+            with open(commit_tmp_path, "w", encoding="utf-8") as f:
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    f.write(commit)
+                    f.flush()
+                    os.fsync(f.fileno())
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            os.replace(commit_tmp_path, commit_path)
     except OSError:
         pass
 
@@ -458,12 +516,11 @@ def compare_and_classify_repo(
                 }
             else:
                 sig = compute_structure_signature(rel_path, abs_path, source=content)
-                
-                is_unsupported_or_error = (
-                    sig.get("parse_error", False) and
-                    (getattr(prev, "parse_error", False) or (prev.imports_hash == "" and prev.structure_hash == ""))
+
+                is_unsupported_or_error = sig.get("parse_error", False) and (
+                    getattr(prev, "parse_error", False) or (prev.imports_hash == "" and prev.structure_hash == "")
                 )
-                
+
                 if "raw_imports" in sig:
                     f_info.raw_imports = sig["raw_imports"]
 
@@ -486,7 +543,7 @@ def compare_and_classify_repo(
             sig = compute_structure_signature(rel_path, abs_path, source=content)
             change_type = "STRUCTURAL"
             structural_count += 1
-            
+
             if "raw_imports" in sig:
                 f_info.raw_imports = sig["raw_imports"]
 

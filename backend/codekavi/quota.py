@@ -46,6 +46,7 @@ class TokenTracker:
         self._lock = threading.Lock()
         self._memory: dict[str, int] = defaultdict(int)
         self._memory_global: int = 0
+        self._memory_global_providers: dict[str, int] = defaultdict(int)
         self._redis = self._try_connect_redis()
 
     # ── backend plumbing ──────────────────────────────────────────────
@@ -74,6 +75,10 @@ class TokenTracker:
         today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         return f"{_REDIS_KEY_PREFIX}{today}:{_GLOBAL_KEY}"
 
+    def _today_global_provider_key(self, provider: str) -> str:
+        today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        return f"{_REDIS_KEY_PREFIX}{today}:{_GLOBAL_KEY}:{provider}"
+
     # ── public API ────────────────────────────────────────────────────
 
     def record(self, user_id: str | None, provider: str, tokens: int, direction: str = "total") -> None:
@@ -88,8 +93,10 @@ class TokenTracker:
             direction:  "prompt" / "completion" / "total". Used by the metrics
                         layer; quota accounting always uses the absolute count.
 
-        Increments both the user's bucket and the global bucket. Always
-        succeeds — quota tracking is best-effort and never breaks a request.
+        Increments the user's bucket, the global token bucket, and the
+        global per-provider bucket (needed to compute actual USD spend
+        rather than a blended-average estimate). Always succeeds — quota
+        tracking is best-effort and never breaks a request.
         """
         if not tokens or tokens <= 0:
             return
@@ -101,6 +108,8 @@ class TokenTracker:
                     pipe.expire(self._today_key(user_id), _QUOTA_TTL_SECONDS)
                 pipe.incrby(self._today_global_key(), tokens)
                 pipe.expire(self._today_global_key(), _QUOTA_TTL_SECONDS)
+                pipe.incrby(self._today_global_provider_key(provider), tokens)
+                pipe.expire(self._today_global_provider_key(provider), _QUOTA_TTL_SECONDS)
                 pipe.execute()
                 return
             except Exception as e:
@@ -111,6 +120,7 @@ class TokenTracker:
             if user_id:
                 self._memory[self._today_key(user_id)] += tokens
             self._memory_global += tokens
+            self._memory_global_providers[provider] += tokens
 
     def check_quota(self, user_id: str | None) -> bool:
         """
@@ -125,37 +135,16 @@ class TokenTracker:
 
         used = self.get_used(user_id)
         if used > settings.daily_user_token_quota:
-            logger.warning(
-                f"User {user_id} exceeded daily token quota: "
-                f"{used} > {settings.daily_user_token_quota}"
-            )
+            logger.warning(f"User {user_id} exceeded daily token quota: {used} > {settings.daily_user_token_quota}")
             return False
 
-        # Global bucket is in tokens; the spend limit is in USD, so convert.
-        # Use a flat average cost (groq-tier) as a conservative lower bound.
-        global_used_tokens = self.get_global_used()
-        if global_used_tokens <= 0:
-            return True
-        # Average cost across configured providers as a rough USD estimate.
-        # Per-provider precision isn't needed for a coarse circuit-breaker.
-        avg_cost = self._avg_cost_per_1k_tokens()
-        global_used_usd = (global_used_tokens / 1000.0) * avg_cost
+        global_used_usd = self.get_global_used_usd()
         if global_used_usd > settings.global_daily_spend_limit_usd:
             logger.warning(
-                f"Global daily spend exceeded: ${global_used_usd:.4f} > "
-                f"${settings.global_daily_spend_limit_usd:.2f}"
+                f"Global daily spend exceeded: ${global_used_usd:.4f} > ${settings.global_daily_spend_limit_usd:.2f}"
             )
             return False
         return True
-
-    def _avg_cost_per_1k_tokens(self) -> float:
-        """Mean cost per 1k tokens over all configured providers (USD)."""
-        from codekavi.settings import settings
-
-        costs = list(settings.cost_per_1k_tokens_usd.values())
-        if not costs:
-            return 0.0
-        return sum(costs) / len(costs)
 
     def get_used(self, user_id: str | None) -> int:
         """Return tokens consumed today by ``user_id`` (0 for None)."""
@@ -182,10 +171,7 @@ class TokenTracker:
         return max(0, settings.daily_user_token_quota - used)
 
     def get_global_used(self) -> float:
-        """Return global spend in USD today (or in tokens, depending on config)."""
-        # NOTE: global_daily_spend_limit_usd is currently compared against an
-        # absolute token count for simplicity. Production deployments should
-        # migrate this to ``sum(estimate_cost_usd(...))`` across both buckets.
+        """Return total tokens (all providers) consumed globally today."""
         if self._redis is not None:
             try:
                 val = self._redis.get(self._today_global_key())
@@ -194,6 +180,34 @@ class TokenTracker:
                 pass
         with self._lock:
             return float(self._memory_global)
+
+    def get_global_used_usd(self) -> float:
+        """
+        Return actual global spend in USD today, summed per-provider
+        (tokens x that provider's per-1k rate) rather than a blended
+        average — a blended mean underestimates spend whenever an
+        expensive provider carries a disproportionate share of traffic,
+        which can keep the hard cap from tripping when it should.
+        """
+        from codekavi.settings import settings
+
+        total_usd = 0.0
+        for provider, per_1k in settings.cost_per_1k_tokens_usd.items():
+            tokens = self._get_global_provider_used(provider)
+            if tokens > 0:
+                total_usd += (tokens / 1000.0) * per_1k
+        return total_usd
+
+    def _get_global_provider_used(self, provider: str) -> int:
+        """Return tokens consumed globally today by ``provider``."""
+        if self._redis is not None:
+            try:
+                val = self._redis.get(self._today_global_provider_key(provider))
+                return int(val) if val else 0
+            except Exception:
+                pass
+        with self._lock:
+            return self._memory_global_providers.get(provider, 0)
 
     def estimate_cost_usd(self, provider: str, tokens: int) -> float:
         """Compute USD cost for ``tokens`` against the provider's pricing tier."""
@@ -211,6 +225,7 @@ class TokenTracker:
         with self._lock:
             self._memory.clear()
             self._memory_global = 0
+            self._memory_global_providers.clear()
         if self._redis is not None:
             try:
                 today = datetime.now(tz=UTC).strftime("%Y-%m-%d")

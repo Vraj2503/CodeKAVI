@@ -7,6 +7,7 @@ of raw in-memory dicts.
 
 import logging
 import os
+import threading
 
 from codekavi.cache import AnalysisCache
 from codekavi.config import CLONE_BASE_DIR
@@ -14,6 +15,12 @@ from codekavi.settings import settings
 from codekavi.utils import BoundedContentCache
 
 logger = logging.getLogger(__name__)
+
+# H-05: coordinates concurrent re-analysis requests for the same repo_id so
+# only one background re-analysis thread runs at a time (overlapping threads
+# would race on the same clone_path and cache.set() writes).
+_reanalysis_lock = threading.Lock()
+_reanalysis_in_progress: set[str] = set()
 
 
 def find_clone_path_by_repo_id(repo_id: str) -> str | None:
@@ -67,25 +74,25 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
     def _bg_reanalyze():
         try:
             logger.info(f"Re-analyzing repo {repo_id} from disk: {clone_path}")
-            
+
             from codekavi.analyzer import analyze_dependencies
             from codekavi.classifier import classify_files, summarize_roles
             from codekavi.file_selector import SmartFileSelector
             from codekavi.graph import build_module_graph, export_graph_json
             from codekavi.traverser import traverse_repo
-            
+
             repo_data = traverse_repo(clone_path)
             # Create content_cache_dict for pre-population
             content_cache_dict = {}
             for f in repo_data.get("files", []):
                 if "content" in f:
                     content_cache_dict[f["path"]] = f.pop("content")
-                    
+
             content_cache = BoundedContentCache(settings.max_content_cache_bytes)
             for k, v in content_cache_dict.items():
                 content_cache.cache[k] = v
-                content_cache.current_bytes += len(v.encode('utf-8'))
-                
+                content_cache.current_bytes += len(v.encode("utf-8"))
+
             try:
                 dep_data = analyze_dependencies(clone_path, repo_data["files"], content_cache)
                 file_profiles = classify_files(
@@ -97,17 +104,17 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
             finally:
                 content_cache.clear()
                 del content_cache
-                
+
             role_summary = summarize_roles(file_profiles)
             graph_json = export_graph_json(dep_data, file_profiles)
             module_graph = build_module_graph(dep_data, file_profiles, depth=1)
-            
+
             selector = SmartFileSelector()
             selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
-            
+
             repo_dir = os.path.basename(clone_path)
             repo_name, _, _ = repo_dir.rpartition("_")
-            
+
             result = {
                 "repo_name": repo_name,
                 "owner": "",
@@ -118,22 +125,35 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
                 "graph_json": graph_json,
                 "module_graph": module_graph,
                 "selected_files": selected_files,
-                "clone_path": clone_path, # Cache clone_path in result
+                "clone_path": clone_path,  # Cache clone_path in result
             }
-            
+
             cache.set(repo_id, result)
             cache.set_session_path(repo_id, clone_path)
-            
+
         except Exception as e:
             logger.error(f"Re-analysis failed for {repo_id}: {e}", exc_info=True)
+        finally:
+            with _reanalysis_lock:
+                _reanalysis_in_progress.discard(repo_id)
 
-    import threading
-    threading.Thread(target=_bg_reanalyze, daemon=True).start()
+    # H-05: only start a re-analysis thread if one isn't already running for
+    # this repo_id. Concurrent requests for the same repo piggyback on the
+    # in-flight run instead of spawning overlapping writers.
+    with _reanalysis_lock:
+        already_running = repo_id in _reanalysis_in_progress
+        if not already_running:
+            _reanalysis_in_progress.add(repo_id)
+
+    if not already_running:
+        threading.Thread(target=_bg_reanalyze, daemon=True).start()
 
     from fastapi import HTTPException
+
     raise HTTPException(status_code=202, detail={"status": "re-analyzing"})
 
     # (Synchronous block replaced by the async thread above)
+
 
 def save_analysis(repo_id: str, clone_path: str, result: dict, cache: AnalysisCache) -> None:
     """

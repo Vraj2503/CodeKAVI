@@ -16,7 +16,7 @@ from codekavi.config import (
     detect_language,
 )
 from codekavi.pipeline_models import RepoData, FileEntry
-
+from codekavi.settings import settings
 
 
 def _should_ignore_dir(dirname: str) -> bool:
@@ -74,9 +74,14 @@ def traverse_repo(clone_path: str) -> RepoData:
     languages: dict[str, int] = {}
     total_size = 0
     skipped_files: list[dict] = []
+    # H-14: cap total pre-loaded content bytes at the same bound the downstream
+    # BoundedContentCache enforces, so traversal of large monorepos (e.g. 10k+
+    # small files) can't pile up hundreds of MB of file content in RepoData.files
+    # before it ever reaches the bounded cache.
+    preloaded_content_bytes = 0
 
     def _walk_tree(current_path: str) -> list[dict]:
-        nonlocal total_size
+        nonlocal total_size, preloaded_content_bytes
         entries = []
         dirs = []
         files = []
@@ -115,7 +120,7 @@ def traverse_repo(clone_path: str) -> RepoData:
         for f_name, f_path, stat_res in files:
             rel_path = os.path.relpath(f_path, clone_path)
             file_size = stat_res.st_size
-            
+
             skip_reason = _get_skip_reason(f_path, file_size)
             if skip_reason:
                 skipped_files.append(
@@ -139,13 +144,18 @@ def traverse_repo(clone_path: str) -> RepoData:
             language = detect_language(f_path)
             languages[language] = languages.get(language, 0) + 1
             total_size += file_size
-            
-            # Read content if file is < 100KB to prevent subsequent disk reads
+
+            # Read content if file is < 100KB to prevent subsequent disk reads,
+            # but only while the running total stays within the same byte
+            # budget the BoundedContentCache enforces downstream (H-14) —
+            # otherwise a monorepo with thousands of small files can OOM the
+            # worker before content is ever handed to the bounded cache.
             content = None
-            if file_size < 100 * 1024:
+            if file_size < 100 * 1024 and preloaded_content_bytes + file_size <= settings.max_content_cache_bytes:
                 try:
                     with open(f_path, "r", encoding="utf-8") as f_obj:
                         content = f_obj.read()
+                    preloaded_content_bytes += file_size
                 except UnicodeDecodeError:
                     pass
                 except Exception:
@@ -162,7 +172,7 @@ def traverse_repo(clone_path: str) -> RepoData:
                 mtime=stat_res.st_mtime,
                 content=content,
             )
-                
+
             all_files.append(file_entry)
 
             entries.append(

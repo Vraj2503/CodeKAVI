@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.exceptions import ProviderError, RateLimitError
-from codekavi.limiter import limiter
+from codekavi.limiter import per_minute
 from codekavi.orchestrator import ExplanationOrchestrator
 from codekavi.quota import get_token_tracker
 from codekavi.routes.dependencies import get_cache
@@ -78,8 +78,7 @@ def _enforce_user_quota(user_id: str | None) -> int:
     return remaining
 
 
-@router.post("/explain/{repo_id}")
-@limiter.limit("5/minute")
+@router.post("/explain/{repo_id}", dependencies=[Depends(per_minute(5))])
 async def explain_repo(
     request: Request,
     repo_id: str,
@@ -207,8 +206,7 @@ async def explain_repo(
     }
 
 
-@router.post("/explain/file/{repo_id}")
-@limiter.limit("5/minute")
+@router.post("/explain/file/{repo_id}", dependencies=[Depends(per_minute(5))])
 async def explain_single_file(
     request: Request,
     repo_id: str,
@@ -261,8 +259,7 @@ async def explain_single_file(
 # ─────────────────────────────────────────
 
 
-@router.post("/explain/{repo_id}/stream")
-@limiter.limit("5/minute")
+@router.post("/explain/{repo_id}/stream", dependencies=[Depends(per_minute(5))])
 async def explain_repo_stream(
     request: Request,
     repo_id: str,
@@ -287,9 +284,7 @@ async def explain_repo_stream(
         token = repo_id_ctx.set(repo_id)
 
         if getattr(body, "use_tour", False):
-            tour = generate_deterministic_tour(
-                result.get("dep_data", {}), result.get("file_profiles", [])
-            )
+            tour = generate_deterministic_tour(result.get("dep_data", {}), result.get("file_profiles", []))
             seq = 1
             yield (
                 f"event: fallback\nid: {seq}\n"
@@ -323,9 +318,7 @@ async def explain_repo_stream(
             # stream errors mid-flight. Emit a deterministic-tour fallback so
             # the client still gets a usable response (zero LLM cost).
             logger.warning(f"Explain stream fell back to deterministic tour for {repo_id}: {e}")
-            tour = generate_deterministic_tour(
-                result.get("dep_data", {}), result.get("file_profiles", [])
-            )
+            tour = generate_deterministic_tour(result.get("dep_data", {}), result.get("file_profiles", []))
             seq += 1
             yield (
                 f"event: fallback\nid: {seq}\n"

@@ -85,13 +85,11 @@ class ExplanationOrchestrator:
             yield ev
 
         # Rate-limit pause: stay safely under Groq's 30 RPM
-        await asyncio.sleep(3)
+        await asyncio.sleep(settings.orchestrator_batch_delay_s)
 
         # ── BATCH 2 — 3 sections in parallel ──
         batch_2 = {
-            "architecture": self._gen(
-                "architecture", "architecture", self._prompt_architecture(file_contents)
-            ),
+            "architecture": self._gen("architecture", "architecture", self._prompt_architecture(file_contents)),
             "components": self._gen("components", "components", self._prompt_components(file_contents)),
             "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents)),
         }
@@ -99,14 +97,12 @@ class ExplanationOrchestrator:
             yield ev
 
         # Rate-limit pause: stay safely under Groq's 30 RPM
-        await asyncio.sleep(3)
+        await asyncio.sleep(settings.orchestrator_batch_delay_s)
 
         # ── BATCH 3 — 2 sections in parallel ──
         batch_3 = {
             "patterns": self._gen("patterns", "patterns", self._prompt_patterns(file_contents)),
-            "mindmap": self._gen(
-                "mindmap", "mindmap_data", self._prompt_mindmap(file_contents), json_mode=True
-            ),
+            "mindmap": self._gen("mindmap", "mindmap_data", self._prompt_mindmap(file_contents), json_mode=True),
         }
         async for ev in self._run_batch(batch_3, 75, 95):
             yield ev
@@ -129,7 +125,7 @@ class ExplanationOrchestrator:
         try:
             while pending:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=60.0)
-                
+
                 if not done and pending:
                     # Timeout reached
                     logger.warning(f"Timeout generating sections: {[task_to_name[p] for p in pending]}")
@@ -140,7 +136,7 @@ class ExplanationOrchestrator:
                             self.sections_completed += 1
                             done_count += 1
                             yield {"type": "warning", "data": {"section": name, "message": "Generation timed out."}}
-                            
+
                             # Provide deterministic fallback
                             viz_data = self._auto_viz(name)
                             yield {
@@ -152,7 +148,7 @@ class ExplanationOrchestrator:
                                     "code_snippets": [],
                                     "visualization_type": self._viz_type(name),
                                     "visualization_data": viz_data,
-                                }
+                                },
                             }
                     break
 
@@ -223,11 +219,10 @@ class ExplanationOrchestrator:
                 response = parsed.get("content", "")
             except json.JSONDecodeError:
                 viz_data = None
-                response = "" # Prevent raw JSON string from being shown to the user
+                response = ""  # Prevent raw JSON string from being shown to the user
 
         if viz_data is None:
             viz_data = self._auto_viz(name)
-
 
         section = {
             "title": self._title(name),

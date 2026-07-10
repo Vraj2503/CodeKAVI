@@ -23,42 +23,75 @@ logger = logging.getLogger(__name__)
 
 _LAYER_CATEGORIES: dict[str, str] = {
     # Convolution
-    "Conv1d": "convolution", "Conv2d": "convolution", "Conv3d": "convolution",
-    "ConvTranspose1d": "convolution", "ConvTranspose2d": "convolution",
+    "Conv1d": "convolution",
+    "Conv2d": "convolution",
+    "Conv3d": "convolution",
+    "ConvTranspose1d": "convolution",
+    "ConvTranspose2d": "convolution",
     "ConvTranspose3d": "convolution",
     # Pooling
-    "MaxPool1d": "pooling", "MaxPool2d": "pooling", "MaxPool3d": "pooling",
-    "AvgPool1d": "pooling", "AvgPool2d": "pooling", "AvgPool3d": "pooling",
-    "AdaptiveAvgPool1d": "pooling", "AdaptiveAvgPool2d": "pooling",
+    "MaxPool1d": "pooling",
+    "MaxPool2d": "pooling",
+    "MaxPool3d": "pooling",
+    "AvgPool1d": "pooling",
+    "AvgPool2d": "pooling",
+    "AvgPool3d": "pooling",
+    "AdaptiveAvgPool1d": "pooling",
+    "AdaptiveAvgPool2d": "pooling",
     "AdaptiveMaxPool2d": "pooling",
     # Dense / Linear
-    "Linear": "dense", "Dense": "dense", "LazyLinear": "dense",
+    "Linear": "dense",
+    "Dense": "dense",
+    "LazyLinear": "dense",
     # Normalization
-    "BatchNorm1d": "normalization", "BatchNorm2d": "normalization",
-    "BatchNorm3d": "normalization", "LayerNorm": "normalization",
-    "GroupNorm": "normalization", "InstanceNorm1d": "normalization",
+    "BatchNorm1d": "normalization",
+    "BatchNorm2d": "normalization",
+    "BatchNorm3d": "normalization",
+    "LayerNorm": "normalization",
+    "GroupNorm": "normalization",
+    "InstanceNorm1d": "normalization",
     "InstanceNorm2d": "normalization",
     # Activation
-    "ReLU": "activation", "LeakyReLU": "activation", "PReLU": "activation",
-    "GELU": "activation", "ELU": "activation", "Sigmoid": "activation",
-    "Tanh": "activation", "Softmax": "activation", "LogSoftmax": "activation",
-    "SiLU": "activation", "Mish": "activation", "Hardswish": "activation",
+    "ReLU": "activation",
+    "LeakyReLU": "activation",
+    "PReLU": "activation",
+    "GELU": "activation",
+    "ELU": "activation",
+    "Sigmoid": "activation",
+    "Tanh": "activation",
+    "Softmax": "activation",
+    "LogSoftmax": "activation",
+    "SiLU": "activation",
+    "Mish": "activation",
+    "Hardswish": "activation",
     # Dropout
-    "Dropout": "dropout", "Dropout2d": "dropout", "Dropout3d": "dropout",
+    "Dropout": "dropout",
+    "Dropout2d": "dropout",
+    "Dropout3d": "dropout",
     "AlphaDropout": "dropout",
     # Recurrent
-    "LSTM": "recurrent", "GRU": "recurrent", "RNN": "recurrent",
-    "LSTMCell": "recurrent", "GRUCell": "recurrent",
+    "LSTM": "recurrent",
+    "GRU": "recurrent",
+    "RNN": "recurrent",
+    "LSTMCell": "recurrent",
+    "GRUCell": "recurrent",
     # Attention / Transformer
-    "MultiheadAttention": "attention", "TransformerEncoder": "attention",
-    "TransformerDecoder": "attention", "TransformerEncoderLayer": "attention",
-    "TransformerDecoderLayer": "attention", "Transformer": "attention",
+    "MultiheadAttention": "attention",
+    "TransformerEncoder": "attention",
+    "TransformerDecoder": "attention",
+    "TransformerEncoderLayer": "attention",
+    "TransformerDecoderLayer": "attention",
+    "Transformer": "attention",
     # Embedding
-    "Embedding": "embedding", "EmbeddingBag": "embedding",
+    "Embedding": "embedding",
+    "EmbeddingBag": "embedding",
     # Reshape
-    "Flatten": "other", "Unflatten": "other",
+    "Flatten": "other",
+    "Unflatten": "other",
     # Keras-specific
-    "Input": "other", "Concatenate": "other", "Add": "other",
+    "Input": "other",
+    "Concatenate": "other",
+    "Add": "other",
 }
 
 # PyTorch nn module names for matching
@@ -254,7 +287,7 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
                     k2 = ks * ks if isinstance(ks, int) else ks
                     return int(ic * oc * k2 + oc * bias)
                 elif layer_type == "Conv3d":
-                    k3 = ks ** 3 if isinstance(ks, int) else ks
+                    k3 = ks**3 if isinstance(ks, int) else ks
                     return int(ic * oc * k3 + oc * bias)
         elif layer_type in ("Linear", "Dense"):
             inf = params.get("in_features", params.get("units", 0))
@@ -298,8 +331,9 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
 def _extract_module_class(
     class_node: ast.ClassDef,
     file_path: str,
+    framework: str = "pytorch",
 ) -> dict | None:
-    """Extract a neural network architecture from an nn.Module subclass."""
+    """Extract a neural network architecture from an nn.Module or Keras Model subclass."""
     layers: list[dict] = []
     layer_order: list[str] = []
     connections: list[dict] = []
@@ -312,6 +346,10 @@ def _extract_module_class(
             if item.name == "__init__":
                 init_method = item
             elif item.name == "forward":
+                # PyTorch execution graph
+                forward_method = item
+            elif item.name == "call" and forward_method is None:
+                # Keras subclassed models define call() instead of forward()
                 forward_method = item
 
     if not init_method:
@@ -337,16 +375,18 @@ def _extract_module_class(
                         block_dims = _compute_block_dims(layer_type, params, None)
 
                         layer_id = target.attr
-                        layers.append({
-                            "id": layer_id,
-                            "type": layer_type,
-                            "category": category,
-                            "params": params,
-                            "output_shape": None,
-                            "param_count": param_count,
-                            "activation": None,
-                            "block_dims": block_dims,
-                        })
+                        layers.append(
+                            {
+                                "id": layer_id,
+                                "type": layer_type,
+                                "category": category,
+                                "params": params,
+                                "output_shape": None,
+                                "param_count": param_count,
+                                "activation": None,
+                                "block_dims": block_dims,
+                            }
+                        )
                         layer_order.append(layer_id)
 
     if not layers:
@@ -369,7 +409,7 @@ def _extract_module_class(
         "name": class_node.name,
         "file": file_path,
         "line": class_node.lineno,
-        "framework": "pytorch",
+        "framework": framework,
         "type": "class",
         "total_params": total_params if total_params > 0 else None,
         "input_shape": None,
@@ -408,11 +448,13 @@ def _extract_forward_connections(
         # input -> first layer
         connections.append({"from_id": "input", "to_id": call_sequence[0], "type": "sequential"})
         for i in range(1, len(call_sequence)):
-            connections.append({
-                "from_id": call_sequence[i - 1],
-                "to_id": call_sequence[i],
-                "type": "sequential",
-            })
+            connections.append(
+                {
+                    "from_id": call_sequence[i - 1],
+                    "to_id": call_sequence[i],
+                    "type": "sequential",
+                }
+            )
         # last layer -> output
         connections.append({"from_id": call_sequence[-1], "to_id": "output", "type": "sequential"})
     else:
@@ -451,16 +493,18 @@ def _extract_sequential(
                 block_dims = _compute_block_dims(layer_type, params, None)
 
                 layer_id = f"layer_{i}"
-                layers.append({
-                    "id": layer_id,
-                    "type": layer_type,
-                    "category": category,
-                    "params": params,
-                    "output_shape": None,
-                    "param_count": param_count,
-                    "activation": None,
-                    "block_dims": block_dims,
-                })
+                layers.append(
+                    {
+                        "id": layer_id,
+                        "type": layer_type,
+                        "category": category,
+                        "params": params,
+                        "output_shape": None,
+                        "param_count": param_count,
+                        "activation": None,
+                        "block_dims": block_dims,
+                    }
+                )
 
     if not layers:
         return None
@@ -520,7 +564,8 @@ def extract_models_from_source(
                     base_name = base.id
 
                 if base_name and (base_name in _NN_MODULES or base_name in _KERAS_MODELS or base_name == "Module"):
-                    model = _extract_module_class(node, file_path)
+                    framework = "keras" if base_name in _KERAS_MODELS else "pytorch"
+                    model = _extract_module_class(node, file_path, framework=framework)
                     if model and len(model["layers"]) >= 2:  # Minimum 2 layers to be meaningful
                         models.append(model)
                     break
@@ -530,8 +575,7 @@ def extract_models_from_source(
             if isinstance(node.value, ast.Call):
                 call_name = _get_call_name(node.value)
                 if call_name and any(
-                    call_name.endswith(s)
-                    for s in ("Sequential", "nn.Sequential", "keras.Sequential")
+                    call_name.endswith(s) for s in ("Sequential", "nn.Sequential", "keras.Sequential")
                 ):
                     # Get model name from assignment target
                     model_name = "SequentialModel"
@@ -545,9 +589,7 @@ def extract_models_from_source(
                     ):
                         model_name = node.targets[0].attr
 
-                    model = _extract_sequential(
-                        node.value, file_path, node.lineno, model_name
-                    )
+                    model = _extract_sequential(node.value, file_path, node.lineno, model_name)
                     if model and len(model["layers"]) >= 2:
                         models.append(model)
 

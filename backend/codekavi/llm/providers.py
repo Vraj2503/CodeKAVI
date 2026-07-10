@@ -34,8 +34,8 @@ dotenv.load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Retry config for 429 rate-limit errors
-_MAX_RETRIES = 3
 _RETRY_DELAYS = [5, 15, 30]  # seconds between retries
+_MAX_RETRIES = len(_RETRY_DELAYS)  # derived so the two can never drift out of sync
 
 # Provider specific ThreadPoolExecutor removed. We use the global ContextVar-based executor.
 
@@ -132,9 +132,7 @@ class CircuitBreaker:
             if previous == "half_open":
                 # trial failed — back to open for another full timeout
                 self._state = "open"
-                logger.warning(
-                    f"Circuit breaker[{self.name}] re-opened after half-open trial failure"
-                )
+                logger.warning(f"Circuit breaker[{self.name}] re-opened after half-open trial failure")
                 self._emit_transition(previous, self._state)
                 return
             if self._failures >= self.failure_threshold:
@@ -169,9 +167,7 @@ class CircuitBreaker:
         """Caller MUST hold ``self._lock``. Promote open→half_open once the timeout elapses."""
         if self._state == "open" and (time.time() - self._last_failure_time) > self.reset_timeout:
             self._state = "half_open"
-            logger.info(
-                f"Circuit breaker[{self.name}] half-open after {self.reset_timeout}s — admitting one trial"
-            )
+            logger.info(f"Circuit breaker[{self.name}] half-open after {self.reset_timeout}s — admitting one trial")
 
 
 # Module-level breakers, one per provider. Shared across all provider
@@ -794,7 +790,7 @@ def get_provider(provider_name_or_task: str = "groq") -> GroqProvider | GeminiPr
         if "gemini" not in _provider_cache:
             _provider_cache["gemini"] = GeminiProvider()
         return _provider_cache["gemini"]
-        
+
     if "groq" not in _provider_cache:
         _provider_cache["groq"] = GroqProvider()
     return _provider_cache["groq"]
@@ -806,6 +802,12 @@ def validate_providers() -> None:
 
     # Skip during testing to avoid hitting live APIs
     if os.environ.get("PYTEST_CURRENT_TEST"):
+        return
+
+    # M-07 — these are real, billed LLM calls; only run when explicitly
+    # opted in, so cold starts don't burn untracked spend by default.
+    if not settings.validate_providers_on_startup:
+        logger.info("Skipping LLM provider connectivity check (VALIDATE_PROVIDERS_ON_STARTUP=false).")
         return
 
     logger.info("Verifying LLM providers connectivity...")

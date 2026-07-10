@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.config import detect_layer as _detect_layer
-from codekavi.limiter import limiter
+from codekavi.limiter import per_minute
 from codekavi.routes.dependencies import get_cache
 from codekavi.session import ensure_repo_loaded
 from codekavi.settings import settings
@@ -54,8 +54,7 @@ async def _load_repo(repo_id: str, cache: AnalysisCache):
 # ─────────────────────────────────────────
 
 
-@router.get("/visualize/dependencies/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/visualize/dependencies/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_dependencies(
     request: Request,
     repo_id: str,
@@ -140,8 +139,7 @@ async def visualize_dependencies(
 # ─────────────────────────────────────────
 
 
-@router.get("/visualize/complexity/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/visualize/complexity/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_complexity(
     request: Request,
     repo_id: str,
@@ -175,8 +173,7 @@ async def visualize_complexity(
 # ─────────────────────────────────────────
 
 
-@router.get("/visualize/architecture/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_architecture(
     request: Request,
     repo_id: str,
@@ -234,8 +231,7 @@ async def visualize_architecture(
 # ─────────────────────────────────────────
 
 
-@router.get("/visualize/dataflow/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/visualize/dataflow/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_dataflow(
     request: Request,
     repo_id: str,
@@ -292,8 +288,7 @@ class MindmapRequest(BaseModel):
     use_llm: bool = False
 
 
-@router.post("/visualize/mindmap/{repo_id}")
-@limiter.limit("5/minute")
+@router.post("/visualize/mindmap/{repo_id}", dependencies=[Depends(per_minute(5))])
 async def visualize_mindmap(
     request: Request,
     repo_id: str,
@@ -387,8 +382,7 @@ class ExplainVizRequest(BaseModel):
     repo_id: str
 
 
-@router.post("/explain/visualization/{viz_type}")
-@limiter.limit("5/minute")
+@router.post("/explain/visualization/{viz_type}", dependencies=[Depends(per_minute(5))])
 async def explain_visualization(
     request: Request,
     viz_type: str,
@@ -507,8 +501,7 @@ def _explain_prompt_mindmap(classification: list) -> str:
 # ─────────────────────────────────────────
 
 
-@router.get("/visualize/nn/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/visualize/nn/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_neural_network(
     request: Request,
     repo_id: str,
@@ -535,4 +528,3 @@ async def visualize_neural_network(
             "count": len(nn_models),
         },
     }
-

@@ -9,9 +9,6 @@ import shutil
 import subprocess
 import time
 import uuid
-from typing import Any, cast
-
-from git import Repo
 
 from codekavi.config import CLONE_BASE_DIR
 from codekavi.repo_source import RepoSourceInfo
@@ -73,17 +70,27 @@ def clone_repo(github_url: str) -> dict:
         shutil.rmtree(clone_path)
 
     try:
-        clone_kwargs = {
-            "depth": 1,
-            "env": {
-                "GIT_HTTP_LOW_SPEED_LIMIT": "1000",  # bytes/sec min
-                "GIT_HTTP_LOW_SPEED_TIME": "30",  # seconds before timeout
-            },
-        }
-        if os.name != "nt":
-            clone_kwargs["kill_after_timeout"] = CLONE_TIMEOUT_S
+        # Clone via a raw subprocess (not GitPython's Repo.clone_from) so the
+        # timeout is enforced uniformly on every platform — GitPython's
+        # kill_after_timeout raises GitCommandError if passed on Windows at
+        # all, so a stuck clone there would otherwise hang the worker forever.
+        clone_env = os.environ.copy()
+        clone_env["GIT_HTTP_LOW_SPEED_LIMIT"] = "1000"  # bytes/sec min
+        clone_env["GIT_HTTP_LOW_SPEED_TIME"] = "30"  # seconds before timeout
 
-        Repo.clone_from(parsed["clone_url"], clone_path, **cast(Any, clone_kwargs))
+        try:
+            subprocess.run(
+                ["git", "clone", "--depth", "1", parsed["clone_url"], clone_path],
+                env=clone_env,
+                timeout=CLONE_TIMEOUT_S,
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"git clone timed out after {CLONE_TIMEOUT_S}s") from e
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.decode("utf-8", errors="ignore") if e.stderr else str(e)
+            raise RuntimeError(f"git clone failed: {stderr}") from e
 
         # Enforce file count and size limits
         total_size = 0

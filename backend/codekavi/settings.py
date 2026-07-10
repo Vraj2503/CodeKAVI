@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     supabase_url: str = Field(default="", validation_alias="SUPABASE_URL")
     supabase_service_key: str = Field(default="", validation_alias="SUPABASE_SERVICE_KEY")
     supabase_jwt_secret: str = Field(default="", validation_alias="SUPABASE_JWT_SECRET")
+    # Supabase issues "authenticated" as the aud claim for logged-in users by
+    # default. Validated on every token (see auth.py) to prevent tokens minted
+    # for a different Supabase project/audience from being accepted here.
+    supabase_audience: str = Field(default="authenticated", validation_alias="SUPABASE_AUDIENCE")
 
     # Optional/CORS Config
     cors_origins: str = Field(default="http://localhost:3000", validation_alias="CORS_ORIGINS")
@@ -45,6 +49,10 @@ class Settings(BaseSettings):
     max_content_cache_bytes: int = Field(default=10 * 1024 * 1024, validation_alias="MAX_CONTENT_CACHE_BYTES")  # 10MB
     repo_size_limit_bytes: int = Field(default=100 * 1024 * 1024, validation_alias="REPO_SIZE_LIMIT_BYTES")  # 100MB
     repo_file_limit: int = Field(default=2000, validation_alias="REPO_FILE_LIMIT")  # 2000 files
+
+    # H-02 — bounded wait on shutdown for in-flight BackgroundTasks (e.g.
+    # save_analysis, index_repository) before the shared executors are drained.
+    background_task_drain_timeout_s: float = Field(default=30.0, validation_alias="BACKGROUND_TASK_DRAIN_TIMEOUT_S")
 
     # T2.3 — graph export & viz caps
     # export_graph_json() caps connected nodes at this many (collapses surplus
@@ -67,6 +75,14 @@ class Settings(BaseSettings):
     # output. Default OFF — production should set to true once observability
     # confirms the cost model is right.
     enforce_token_quota: bool = Field(default=False, validation_alias="ENFORCE_TOKEN_QUOTA")
+    # M-07 — validate_providers() makes real (billed) LLM calls at startup.
+    # Default OFF so cold starts (including scale-to-zero/CI) don't burn
+    # untracked spend; opt in explicitly per-environment.
+    validate_providers_on_startup: bool = Field(default=False, validation_alias="VALIDATE_PROVIDERS_ON_STARTUP")
+    # M-08 — pause between orchestrator batches to stay under the LLM
+    # provider's RPM limit (Groq's free tier is 30 RPM). Configurable so
+    # deployments on higher-tier quotas don't eat a fixed 6s tax per report.
+    orchestrator_batch_delay_s: float = Field(default=3.0, validation_alias="ORCHESTRATOR_BATCH_DELAY_S")
     # Cost per 1k tokens by provider. Used by TokenTracker to populate
     # ``estimated_cost_usd`` in log records. Order-of-magnitude figures —
     # actual Groq/Gemini pricing varies by tier.

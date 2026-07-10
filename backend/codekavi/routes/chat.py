@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
-from codekavi.limiter import limiter
+from codekavi.limiter import per_minute
 from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
 from codekavi.quota import get_token_tracker
@@ -62,8 +62,7 @@ _TECHNICAL_KEYWORDS = [
 ]
 
 
-@router.post("/chat/{repo_id}")
-@limiter.limit("5/minute")
+@router.post("/chat/{repo_id}", dependencies=[Depends(per_minute(5))])
 async def chat_repo(
     request: Request,
     repo_id: str,
@@ -124,8 +123,11 @@ async def chat_repo(
             if l1_result is not None:
                 result = l1_result
                 _skip_full_load = True
-                logger.debug("C4: skipped ensure_repo_loaded for %s (L1 hit, validated %.1fs ago)",
-                             repo_id, time.time() - last_validated)
+                logger.debug(
+                    "C4: skipped ensure_repo_loaded for %s (L1 hit, validated %.1fs ago)",
+                    repo_id,
+                    time.time() - last_validated,
+                )
 
         if not _skip_full_load:
             from codekavi.session import ensure_repo_loaded
@@ -254,6 +256,11 @@ async def chat_repo(
             else:
                 raise
 
+        # H-03 — record actual token usage against the per-user daily quota.
+        # Without this, check_quota() gates nothing since usage never accrues.
+        tokens_used = response.usage.get("total_tokens", 0) if response.usage else 0
+        tracker.record(user_id, provider=provider.name, tokens=tokens_used)
+
         return {
             "success": True,
             "repo_id": repo_id,
@@ -287,7 +294,7 @@ async def delete_session(session_id: str, user_id: str = Depends(verify_supabase
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Session not found or not owned by user.")
-        
+
         return {"success": True, "message": "Session deleted"}
     except HTTPException:
         raise

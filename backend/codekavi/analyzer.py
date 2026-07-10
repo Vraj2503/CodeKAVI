@@ -21,6 +21,7 @@ import ast
 import json
 import os
 import re
+import threading
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
@@ -28,15 +29,12 @@ from typing import Any
 import tree_sitter_javascript as tsjs
 import tree_sitter_python as tspy
 import tree_sitter_typescript as tsts
-from tree_sitter import Language, Parser
+from tree_sitter import Language, Parser, Query
 
 from codekavi.utils import BoundedContentCache
 from codekavi.pipeline_models import FileEntry, DepGraph
 
-# Initialize Tree-sitter languages and queries (immutable, safe to share across threads).
-# Parsers are NOT global because Tree-sitter Parsers mutate internal state on parse()
-# and FastAPI runs analyze_dependencies() in a thread pool — a single shared Parser
-# would race between concurrent requests and may segfault.
+# Languages are immutable and safe to share across threads.
 JS_LANGUAGE = Language(tsjs.language(), "javascript")
 TS_LANGUAGE = Language(tsts.language_typescript(), "typescript")
 
@@ -51,8 +49,32 @@ _JS_TS_QUERY_STR = """
         function: (import)
         arguments: (arguments (string (string_fragment) @path)))
 """
-JS_QUERY = JS_LANGUAGE.query(_JS_TS_QUERY_STR)
-TS_QUERY = TS_LANGUAGE.query(_JS_TS_QUERY_STR)
+
+# Tree-sitter 0.21 Parser and Query objects mutate internal state on
+# parse()/captures() and are not safe to share across threads. FastAPI runs
+# analyze_dependencies() in a thread pool, so each worker thread gets its own
+# lazily-built Parser+Query pair (below), reused across every file it handles
+# instead of paying ~40ms to allocate a fresh Parser() per file.
+_thread_local = threading.local()
+
+
+def _get_js_ts_parser_and_query(is_ts: bool) -> tuple[Parser, Query]:
+    """Return the current thread's (Parser, Query) pair for JS or TS, building it once."""
+    cache = getattr(_thread_local, "js_ts_parsers", None)
+    if cache is None:
+        cache = {}
+        _thread_local.js_ts_parsers = cache
+
+    key = "ts" if is_ts else "js"
+    pair = cache.get(key)
+    if pair is None:
+        language = TS_LANGUAGE if is_ts else JS_LANGUAGE
+        parser = Parser()
+        parser.set_language(language)
+        query = language.query(_JS_TS_QUERY_STR)
+        pair = (parser, query)
+        cache[key] = pair
+    return pair
 
 
 try:
@@ -206,7 +228,11 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
 
 
 def _extract_js_ts_imports(
-    filepath: str, source: str, repo_root: str, known_files: set[str] | None = None, raw_imports_cache: list[dict] | None = None
+    filepath: str,
+    source: str,
+    repo_root: str,
+    known_files: set[str] | None = None,
+    raw_imports_cache: list[dict] | None = None,
 ) -> list[dict]:
     """
     Extract JS/TS imports using tree-sitter AST. Handles:
@@ -216,8 +242,9 @@ def _extract_js_ts_imports(
       - import('path')
       - export ... from 'path'
 
-    Thread-safety: creates a fresh tree-sitter Parser() on every call so
-    concurrent /analyze requests don't race on shared parser state.
+    Thread-safety: reuses a per-thread Parser()/Query() pair (see
+    _get_js_ts_parser_and_query) so concurrent /analyze requests don't race
+    on shared tree-sitter state, without paying the allocation cost per file.
     """
     is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
     return _extract_js_ts_imports_with_source(
@@ -226,9 +253,14 @@ def _extract_js_ts_imports(
 
 
 def _extract_js_ts_imports_with_source(
-    filepath: str, source: str, repo_root: str, is_ts: bool, known_files: set[str] | None = None, raw_imports_cache: list[dict] | None = None
+    filepath: str,
+    source: str,
+    repo_root: str,
+    is_ts: bool,
+    known_files: set[str] | None = None,
+    raw_imports_cache: list[dict] | None = None,
 ) -> list[dict]:
-    """Shared JS/TS extraction that picks the right language and a per-call Parser."""
+    """Shared JS/TS extraction that picks the right language and a pooled per-thread Parser."""
     imports: list[dict[str, Any]] = []
     file_dir = os.path.dirname(filepath)
 
@@ -247,13 +279,7 @@ def _extract_js_ts_imports_with_source(
             )
         return imports
 
-    language = TS_LANGUAGE if is_ts else JS_LANGUAGE
-    query = TS_QUERY if is_ts else JS_QUERY
-
-    # Per-call Parser — tree-sitter parsers mutate internal state on parse(),
-    # so a single shared Parser() across threads causes segfaults.
-    parser = Parser()
-    parser.set_language(language)
+    parser, query = _get_js_ts_parser_and_query(is_ts)
 
     source_bytes = source.encode("utf-8", errors="ignore")
     tree = parser.parse(source_bytes)
@@ -275,8 +301,10 @@ def _extract_js_ts_imports_with_source(
                     }
                 )
     else:
-        for node, name in captures.items():
-            if name == "path":
+        for name, nodes in captures.items():
+            if name != "path":
+                continue
+            for node in nodes:
                 raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
                 resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
@@ -308,6 +336,23 @@ def _resolve_js_path(
 
     candidate = os.path.normpath(os.path.join(base, import_path))
 
+    # Reject imports that resolve outside the repo root (e.g. `../../../../etc/passwd`)
+    # to prevent arbitrary-file-read into embeddings and chat history.
+    real_repo_root = os.path.realpath(repo_root)
+
+    def _contained(path: str) -> bool:
+        # Re-resolve per candidate (not just the extension-less base path) so that a
+        # symlink planted inside the repo (e.g. evil.js -> /etc/passwd) is caught too:
+        # the base path may not exist yet, but the final file-with-extension does.
+        try:
+            return os.path.commonpath([os.path.realpath(path), real_repo_root]) == real_repo_root
+        except ValueError:
+            # e.g. candidate and repo_root on different drives on Windows
+            return False
+
+    if not _contained(candidate):
+        return None
+
     def _exists(path: str) -> bool:
         rel = os.path.relpath(path, repo_root).replace("\\", "/")
         if known_files is not None:
@@ -318,26 +363,70 @@ def _resolve_js_path(
     js_extensions = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".vue", ".svelte"]
 
     # Exact match
-    if _exists(candidate):
+    if _exists(candidate) and _contained(candidate):
         return os.path.relpath(candidate, repo_root).replace("\\", "/")
 
     # Try adding extensions
     for ext in js_extensions:
-        if _exists(candidate + ext):
+        if _exists(candidate + ext) and _contained(candidate + ext):
             return os.path.relpath(candidate + ext, repo_root).replace("\\", "/")
 
     # Try index files
     for ext in js_extensions:
         index_path = os.path.join(candidate, f"index{ext}")
-        if _exists(index_path):
+        if _exists(index_path) and _contained(index_path):
             return os.path.relpath(index_path, repo_root).replace("\\", "/")
 
     return None
 
 
+def _strip_go_comments(source: str) -> str:
+    """Strip // and /* */ comments from Go source, preserving string/rune/raw-string
+    literals and line numbers (comment bodies are blanked, not removed)."""
+    out: list[str] = []
+    i = 0
+    n = len(source)
+    while i < n:
+        two = source[i : i + 2]
+        if two == "//":
+            j = source.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if two == "/*":
+            j = source.find("*/", i + 2)
+            end = j + 2 if j != -1 else n
+            out.append("\n" * source.count("\n", i, end))
+            i = end
+            continue
+        c = source[i]
+        if c in ('"', "'"):
+            j = i + 1
+            while j < n:
+                if source[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if source[j] == c:
+                    j += 1
+                    break
+                j += 1
+            out.append(source[i:j])
+            i = j
+            continue
+        if c == "`":
+            j = source.find("`", i + 1)
+            j = j + 1 if j != -1 else n
+            out.append(source[i:j])
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _extract_go_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
     """Extract Go imports."""
     imports: list[dict[str, Any]] = []
+    source = _strip_go_comments(source)
 
     # Single import: import "path"
     for match in re.finditer(r'import\s+"([^"]+)"', source):
@@ -613,7 +702,9 @@ def analyze_dependencies(
         # Extract imports
         if extractor in (_extract_python_imports, _extract_js_ts_imports):
             if extractor == _extract_js_ts_imports:
-                imports = extractor(abs_path, source, repo_root, known_files=known_files, raw_imports_cache=file_info.raw_imports)
+                imports = extractor(
+                    abs_path, source, repo_root, known_files=known_files, raw_imports_cache=file_info.raw_imports
+                )
             else:
                 imports = extractor(abs_path, source, repo_root, known_files=known_files)
         elif extractor == _extract_ipynb_imports:
@@ -676,7 +767,7 @@ def patch_dep_graph(
     deleted_paths: set[str],
     known_files: set[str],
     repo_root: str,
-    content_cache: Any
+    content_cache: Any,
 ) -> DepGraph:
     """
     Merge a partial dependency graph (from changed files) into an existing full graph.
@@ -690,42 +781,42 @@ def patch_dep_graph(
         if src in changed_paths or src in deleted_paths or tgt in deleted_paths:
             continue
         new_edges.append(edge)
-        
+
     # Append the new edges from the partial analysis
     new_edges.extend(partial_graph.edges)
-    
+
     adjacency: dict[str, set] = defaultdict(set)
     reverse_adjacency: dict[str, set] = defaultdict(set)
     resolved_count = 0
-    
+
     for edge in new_edges:
         src = edge["source"]
         tgt = edge["target"]
         adjacency[src].add(tgt)
         reverse_adjacency[tgt].add(src)
         resolved_count += 1
-        
+
     file_imports = dict(old_graph.file_imports)
     for path in changed_paths:
         if path in partial_graph.file_imports:
             file_imports[path] = partial_graph.file_imports[path]
         else:
             file_imports.pop(path, None)
-            
+
     for path in deleted_paths:
         file_imports.pop(path, None)
-        
+
     # Recompute global stats
     entry_points, file_signals = _detect_entry_points(
         repo_root, known_files, adjacency, reverse_adjacency, content_cache
     )
     central_files = _find_central_files(known_files, adjacency, reverse_adjacency)
-    
+
     # Unresolved edges estimate (keep old + partial, subtract deleted - rough estimate)
-    # A true unresolved_count would require re-parsing or storing unresolved per file, 
+    # A true unresolved_count would require re-parsing or storing unresolved per file,
     # but this is mostly for telemetry.
     unresolved_count = old_graph.stats.get("unresolved_edges", 0)
-    
+
     return DepGraph(
         edges=new_edges,
         adjacency=dict(adjacency),

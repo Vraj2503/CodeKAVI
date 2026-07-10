@@ -26,6 +26,7 @@ INITIAL_BACKOFF_S = 20  # Start at 20s; doubles each attempt on 429
 
 from codekavi.embedding import CloudflareEmbedding
 
+
 async def index_repository(
     repo_id: str,
     file_profiles: list[dict[str, Any]],
@@ -107,7 +108,9 @@ async def index_repository(
 
             await asyncio.to_thread(collection.insert, insert_data)
             total_chunks_inserted += batch_len
-            logger.info(f"  Inserted {batch_len} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})")
+            logger.info(
+                f"  Inserted {batch_len} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})"
+            )
 
         except Exception as e:
             logger.error(f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}")
@@ -131,10 +134,11 @@ async def index_repository(
         try:
             with open(abs_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-                
+
             if file_path.endswith(".ipynb"):
                 try:
                     import json
+
                     nb_data = json.loads(content)
                     extracted_lines = []
                     for cell in nb_data.get("cells", []):
@@ -147,7 +151,7 @@ async def index_repository(
                     content = "\n".join(extracted_lines)
                 except Exception as e:
                     logger.warning(f"Failed to parse notebook {file_path}, falling back to raw text: {e}")
-                    
+
         except Exception as e:
             logger.warning(f"File skipped in indexer: failed to read {abs_path}: {e}")
             continue
@@ -207,7 +211,9 @@ async def index_repository(
 
     lost = total_chunks_attempted - total_chunks_inserted
     summary = f"Finished indexing for {repo_id}: {total_chunks_inserted}/{total_chunks_attempted} chunks inserted"
-    if lost > 0:
+    if total_chunks_attempted == 0:
+        logger.error(f"{summary} — no chunks were attempted; RAG will serve empty contexts for this repo")
+    elif lost > 0:
         summary += f" ({lost} lost due to errors)"
         logger.warning(summary)
     else:

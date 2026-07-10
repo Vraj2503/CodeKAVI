@@ -24,13 +24,16 @@ from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
 
+
 def safe_cleanup(path: str):
     """Best-effort repo cleanup. Logs a warning on failure instead of raising."""
     from codekavi.cloner import cleanup_repo
+
     try:
         cleanup_repo(path)
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to cleanup repo at {path}: {e}")
+
 
 from codekavi.file_selector import SmartFileSelector
 from codekavi.graph import (
@@ -41,7 +44,7 @@ from codekavi.graph import (
     export_mermaid,
 )
 from codekavi.indexer import index_repository
-from codekavi.limiter import limiter
+from codekavi.limiter import per_minute
 from codekavi.logging_config import repo_id_ctx
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import AnalyzeRequest
@@ -61,8 +64,7 @@ logger = logging.getLogger(__name__)
 # ── Routes ──
 
 
-@router.post("/analyze")
-@limiter.limit("5/minute")
+@router.post("/analyze", dependencies=[Depends(per_minute(5))])
 async def analyze(
     request: Request,
     body: AnalyzeRequest,
@@ -108,9 +110,12 @@ async def analyze(
                 f"T4.4 commit-cache hit for {signature}; reusing cached repo result "
                 f"(repo_name={deduped.get('repo_name', '')})."
             )
-            # Register this fresh repo_id against the signature index too, so
-            # treat the cache key as the linkage. No L1/L2 result re-write is
-            # needed; ``deduped`` already references the original repo_id.
+            # H-01: keep the signature pinned to the ORIGIN repo_id (the one
+            # whose result is actually cached), not this request's freshly
+            # cloned repo_id. Without ``_origin_repo_id`` persisted on first
+            # write, this fell back to ``repo_id`` and re-pointed the shared
+            # signature index at a repo_id whose result was never cached —
+            # an ownership-transfer that broke dedup for every later caller.
             await _run_sync(cache.register_signature, signature, deduped.get("_origin_repo_id", repo_id))
             repo_data_for_response = deduped.get("repo_data", {}) or {
                 "total_files": 0,
@@ -164,6 +169,7 @@ async def analyze(
 
         # Fingerprint check for incremental analysis
         from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+
         fingerprints, change_class = await _run_sync(
             compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
         )
@@ -185,42 +191,52 @@ async def analyze(
                         "role_summary": cached_result.get("role_summary", {}),
                         "graph": cached_result.get("graph_json", {}),
                         "module_graph": cached_result.get("module_graph", {}),
-                        "cycles": {"has_cycles": False, "cycles": []}, # Default fallback
+                        "cycles": {"has_cycles": False, "cycles": []},  # Default fallback
                         "mermaid": {"file_level": "", "module_level": ""},
                         "nn_models": cached_result.get("nn_models", []),
                     }
             except Exception as e:
                 logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
-                
+
         elif change_class == ChangeClassification.PARTIAL_UPDATE:
             try:
                 cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                 if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
                     logger.info(f"PARTIAL_UPDATE detected for {repo_id}. Merging changed files.")
-                    changed_paths = {path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")}
-                    deleted_paths = {path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints}
-                    
+                    changed_paths = {
+                        path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
+                    }
+                    deleted_paths = {
+                        path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints
+                    }
+
                     partial_files = [f for f in repo_data.files if f.path in changed_paths]
-                    
+
                     # Analyze ONLY changed files
                     from codekavi.analyzer import analyze_dependencies, patch_dep_graph
+
                     partial_dep = await _run_sync(
                         analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
                     )
-                    
+
                     cached_dep_graph = DepGraph(**cached_result["dep_data"])
                     known_files = {f.path for f in repo_data.files}
-                    
+
                     dep_data = patch_dep_graph(
-                        cached_dep_graph, partial_dep, changed_paths, deleted_paths, known_files, clone_info["clone_path"], content_cache_dict
+                        cached_dep_graph,
+                        partial_dep,
+                        changed_paths,
+                        deleted_paths,
+                        known_files,
+                        clone_info["clone_path"],
+                        content_cache_dict,
                     )
-                    
+
                     # We skip full dependency analysis in the next step by caching dep_data
                     content_cache = BoundedContentCache(settings.max_content_cache_bytes)
                     for k, v in content_cache_dict.items():
-                        content_cache.cache[k] = v
-                        content_cache.current_bytes += len(v.encode('utf-8'))
-                    
+                        content_cache[k] = v
+
                 else:
                     logger.warning(f"PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
             except Exception as e:
@@ -232,12 +248,11 @@ async def analyze(
         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
         # Pre-populate BoundedContentCache with already loaded content
         for k, v in content_cache_dict.items():
-            content_cache.cache[k] = v
-            content_cache.current_bytes += len(v.encode('utf-8'))
-        
+            content_cache[k] = v
+
         start_time = time.perf_counter()
         try:
-            if change_class == ChangeClassification.PARTIAL_UPDATE and 'dep_data' in locals() and dep_data:
+            if change_class == ChangeClassification.PARTIAL_UPDATE and "dep_data" in locals() and dep_data:
                 logger.info("Skipped full analyze_dependencies, using patched graph.")
             else:
                 with analysis_stage_timer("analyzing"):
@@ -246,7 +261,8 @@ async def analyze(
                     )
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
-                    f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
+                    f"Stage analyzing completed in {duration:.2f}ms",
+                    extra={"stage": "analyzing", "duration_ms": duration},
                 )
         except Exception as e:
             dep_data = DepGraph(
@@ -266,11 +282,7 @@ async def analyze(
         try:
             with analysis_stage_timer("classifying"):
                 file_profiles = await _run_sync(
-                    classify_files,
-                    clone_info["clone_path"],
-                    repo_data.files,
-                    dep_data,
-                    content_cache=content_cache
+                    classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
                 )
                 role_summary = summarize_roles(file_profiles)
             duration = (time.perf_counter() - start_time) * 1000
@@ -285,20 +297,22 @@ async def analyze(
         # NN Model Extraction (before content_cache is cleared)
         nn_models = []
         ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
-        if ml_model_files and content_cache:
-            try:
-                nn_models = await extract_all_models(
-                    ml_model_files,
-                    content_cache=content_cache,
-                    repo_root=clone_info["clone_path"],
-                )
-            except Exception as e:
-                logger.warning(f"NN extraction failed: {e}")
-
-        # Now safe to clear content cache
-        if content_cache:
-            content_cache.clear()
-            del content_cache
+        try:
+            if ml_model_files and content_cache:
+                try:
+                    nn_models = await extract_all_models(
+                        ml_model_files,
+                        content_cache=content_cache,
+                        repo_root=clone_info["clone_path"],
+                    )
+                except Exception as e:
+                    logger.warning(f"NN extraction failed: {e}")
+        finally:
+            # M-09: clear in finally so a failure/cancellation during NN
+            # extraction can't skip cache cleanup and leak content_cache.
+            if content_cache:
+                content_cache.clear()
+                del content_cache
 
         # Export graphs
         start_time = time.perf_counter()
@@ -307,11 +321,13 @@ async def analyze(
                 dep_data_dict = dep_data.model_dump()
                 file_profiles_dicts = [p.model_dump() for p in file_profiles]
                 repo_files_dicts = [f.model_dump() for f in repo_data.files]
-                
-                graph_json_future = _run_sync(export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes)
+
+                graph_json_future = _run_sync(
+                    export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
+                )
                 mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
                 module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
-                
+
                 graph_json, mermaid_code, module_graph = await asyncio.gather(
                     graph_json_future, mermaid_future, module_graph_future
                 )
@@ -326,7 +342,7 @@ async def analyze(
             mermaid_code = {"file_level": "", "module_level": ""}
             module_graph = {"error": f"Module graph failed: {e}"}
             cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-            
+
             dep_data_dict = dep_data.model_dump()
             file_profiles_dicts = [p.model_dump() for p in file_profiles]
             repo_files_dicts = [f.model_dump() for f in repo_data.files]
@@ -357,8 +373,17 @@ async def analyze(
             "module_graph": module_graph,
             "selected_files": selected_files,
             "nn_models": nn_models,
+            # H-01: pin this result to its origin repo_id so cross-user
+            # signature dedup (T4.4) can never rebind the signature index
+            # to a requester's repo_id whose result was never cached.
+            "_origin_repo_id": repo_id,
         }
-        background_tasks.add_task(save_analysis, repo_id, clone_info["clone_path"], result_data, cache)
+        # H-02: route through the task registry so shutdown can wait for this
+        # to actually finish before draining the executors it runs on.
+        task_registry = request.app.state.task_registry
+        background_tasks.add_task(
+            task_registry.wrap(save_analysis), repo_id, clone_info["clone_path"], result_data, cache
+        )
 
         # T4.4 — register cross-user signature so subsequent callers probing
         # this commit at this SHA skip the pipeline.
@@ -367,7 +392,9 @@ async def analyze(
 
         # Index repository for RAG in the background (prevents proxy timeouts)
         if settings.gemini_api_key and settings.zilliz_uri:
-            background_tasks.add_task(index_repository, repo_id, file_profiles_dicts, clone_info["clone_path"])
+            background_tasks.add_task(
+                task_registry.wrap(index_repository), repo_id, file_profiles_dicts, clone_info["clone_path"]
+            )
 
         final_result = {
             "success": True,
@@ -424,6 +451,7 @@ async def with_keepalive(async_gen_func):
     if the generator hasn't produced an event. Prevents proxy timeouts.
     """
     import asyncio
+
     q = asyncio.Queue()
 
     async def producer():
@@ -454,8 +482,7 @@ async def with_keepalive(async_gen_func):
         raise
 
 
-@router.post("/analyze/stream")
-@limiter.limit("5/minute")
+@router.post("/analyze/stream", dependencies=[Depends(per_minute(5))])
 async def analyze_stream(
     request: Request,
     body: AnalyzeRequest,
@@ -487,6 +514,7 @@ async def analyze_stream(
 
         yield _sse_event("cloning", 10, "Cloning repository…", seq=_next_seq(seq_box))
         from codekavi.metrics import analysis_stage_timer  # T4.3 — Prometheus stage timing
+
         start_time = time.perf_counter()
         try:
             with analysis_stage_timer("cloning"):
@@ -535,6 +563,7 @@ async def analyze_stream(
 
             # Fingerprint check for incremental analysis
             from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+
             fingerprints, change_class = await _run_sync(
                 compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
             )
@@ -559,28 +588,40 @@ async def analyze_stream(
                     cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                     if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
                         logger.info(f"PARTIAL_UPDATE detected for {repo_id} in background. Merging changed files.")
-                        changed_paths = {path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")}
-                        deleted_paths = {path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints}
-                        
+                        changed_paths = {
+                            path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
+                        }
+                        deleted_paths = {
+                            path
+                            for path in cached_result.get("repo_data", {}).get("files", [])
+                            if path not in fingerprints
+                        }
+
                         partial_files = [f for f in repo_data.files if f.path in changed_paths]
-                        
+
                         from codekavi.analyzer import analyze_dependencies, patch_dep_graph
+
                         partial_dep = await _run_sync(
                             analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
                         )
-                        
+
                         cached_dep_graph = DepGraph(**cached_result["dep_data"])
                         known_files = {f.path for f in repo_data.files}
-                        
+
                         dep_data = patch_dep_graph(
-                            cached_dep_graph, partial_dep, changed_paths, deleted_paths, known_files, clone_info["clone_path"], content_cache_dict
+                            cached_dep_graph,
+                            partial_dep,
+                            changed_paths,
+                            deleted_paths,
+                            known_files,
+                            clone_info["clone_path"],
+                            content_cache_dict,
                         )
-                        
+
                         content_cache = BoundedContentCache(settings.max_content_cache_bytes)
                         for k, v in content_cache_dict.items():
-                            content_cache.cache[k] = v
-                            content_cache.current_bytes += len(v.encode('utf-8'))
-                            
+                            content_cache[k] = v
+
                     else:
                         logger.warning(f"PARTIAL_UPDATE background failed to load cache. Falling back to FULL_UPDATE.")
                 except Exception as e:
@@ -595,16 +636,15 @@ async def analyze_stream(
                 return
 
             yield _sse_event("analyzing", 40, "Analyzing dependencies…", seq=_next_seq(seq_box))
-            
-            if 'content_cache' not in locals():
+
+            if "content_cache" not in locals():
                 content_cache = BoundedContentCache(settings.max_content_cache_bytes)
                 for k, v in content_cache_dict.items():
-                    content_cache.cache[k] = v
-                    content_cache.current_bytes += len(v.encode('utf-8'))
-                    
+                    content_cache[k] = v
+
             start_time = time.perf_counter()
             try:
-                if change_class == ChangeClassification.PARTIAL_UPDATE and 'dep_data' in locals() and dep_data:
+                if change_class == ChangeClassification.PARTIAL_UPDATE and "dep_data" in locals() and dep_data:
                     logger.info("Skipped background full analyze_dependencies, using patched graph.")
                 else:
                     with analysis_stage_timer("analyzing"):
@@ -655,20 +695,22 @@ async def analyze_stream(
             # NN Model Extraction
             nn_models = []
             ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
-            if ml_model_files and content_cache:
-                try:
-                    nn_models = await extract_all_models(
-                        ml_model_files,
-                        content_cache=content_cache,
-                        repo_root=clone_info["clone_path"],
-                    )
-                except Exception as e:
-                    logger.warning(f"NN extraction failed: {e}")
-
-            # Now safe to clear content cache
-            if content_cache:
-                content_cache.clear()
-                del content_cache
+            try:
+                if ml_model_files and content_cache:
+                    try:
+                        nn_models = await extract_all_models(
+                            ml_model_files,
+                            content_cache=content_cache,
+                            repo_root=clone_info["clone_path"],
+                        )
+                    except Exception as e:
+                        logger.warning(f"NN extraction failed: {e}")
+            finally:
+                # M-09: clear in finally so a failure/cancellation during NN
+                # extraction can't skip cache cleanup and leak content_cache.
+                if content_cache:
+                    content_cache.clear()
+                    del content_cache
 
             # Stage 5: Building graphs
             if await request.is_disconnected():
@@ -683,12 +725,14 @@ async def analyze_stream(
                     dep_data_dict = dep_data.model_dump()
                     file_profiles_dicts = [p.model_dump() for p in file_profiles]
                     repo_files_dicts = [f.model_dump() for f in repo_data.files]
-                    
-                    graph_json_future = _run_sync(export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes)
+
+                    graph_json_future = _run_sync(
+                        export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
+                    )
                     mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
                     module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
                     cycles_future = _run_sync(detect_cycles, dep_data_dict)
-                    
+
                     graph_json, mermaid_code, module_graph, cycles_data = await asyncio.gather(
                         graph_json_future, mermaid_future, module_graph_future, cycles_future
                     )
@@ -702,7 +746,7 @@ async def analyze_stream(
                 mermaid_code = {"file_level": "", "module_level": ""}
                 module_graph = {"error": f"Module graph failed: {e}"}
                 cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-                
+
                 dep_data_dict = dep_data.model_dump()
                 file_profiles_dicts = [p.model_dump() for p in file_profiles]
                 repo_files_dicts = [f.model_dump() for f in repo_data.files]
@@ -740,12 +784,21 @@ async def analyze_stream(
                 "module_graph": module_graph,
                 "selected_files": selected_files,
                 "nn_models": nn_models,
+                # H-01: see non-streaming /analyze — pins dedup to the origin repo_id.
+                "_origin_repo_id": repo_id,
             }
-            background_tasks.add_task(save_analysis, repo_id, clone_info["clone_path"], stream_result_data, cache)
+            # H-02: route through the task registry so shutdown can wait for
+            # this to actually finish before draining the executors it runs on.
+            task_registry = request.app.state.task_registry
+            background_tasks.add_task(
+                task_registry.wrap(save_analysis), repo_id, clone_info["clone_path"], stream_result_data, cache
+            )
 
             # Stage 7: Indexing (embedding) — move to background task
             if settings.gemini_api_key and settings.zilliz_uri:
-                background_tasks.add_task(index_repository, repo_id, file_profiles, clone_info["clone_path"])
+                background_tasks.add_task(
+                    task_registry.wrap(index_repository), repo_id, file_profiles, clone_info["clone_path"]
+                )
                 yield _sse_event("indexing", 90, "Creating embeddings for RAG in background…", seq=_next_seq(seq_box))
 
             # Stage 8: Complete — include full result data
@@ -796,8 +849,7 @@ async def analyze_stream(
     )
 
 
-@router.get("/graph/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/graph/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def get_graph(
     request: Request,
     repo_id: str,
@@ -842,8 +894,7 @@ async def get_graph(
         raise HTTPException(status_code=400, detail=f"Unknown format: {format}. Use json, dot, mermaid, or module.")
 
 
-@router.get("/restore/{repo_id}")
-@limiter.limit("30/minute")
+@router.get("/restore/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def restore_repo(
     request: Request,
     repo_id: str,
@@ -883,18 +934,19 @@ async def restore_repo(
 
     if request.headers.get("if-none-match") == etag:
         from fastapi.responses import Response
+
         return Response(status_code=304)
 
     from fastapi.responses import Response
+
     return Response(
         content=response_bytes,
         media_type="application/json",
-        headers={"ETag": etag, "Cache-Control": "private, max-age=300"}
+        headers={"ETag": etag, "Cache-Control": "private, max-age=300"},
     )
 
 
-@router.delete("/cleanup/{repo_id}")
-@limiter.limit("30/minute")
+@router.delete("/cleanup/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def cleanup(
     request: Request,
     repo_id: str,

@@ -45,3 +45,6 @@ supabase_migrations/
 Task.md
 
 Tools-to-Design-or-Visualize-Architecture-of-Neural-Network/
+
+.claude/
+skills-lock.json
