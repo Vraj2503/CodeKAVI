@@ -103,6 +103,12 @@ def validate_config() -> None:
     required = [
         ("GROQ_API_KEY", settings.groq_api_key),
         ("GEMINI_API_KEY", settings.gemini_api_key),
+        # L-15: embeddings run through Cloudflare (indexer.py), so its
+        # credentials gate the core RAG feature just like Zilliz does. If
+        # they're unset, indexing silently no-ops and the repo is marked
+        # "analyzed" with an empty vector index — fail fast at startup instead.
+        ("CLOUDFLARE_ACCOUNT_ID", settings.cloudflare_account_id),
+        ("CLOUDFLARE_API_TOKEN", settings.cloudflare_api_token),
         ("ZILLIZ_URI", settings.zilliz_uri),
         ("ZILLIZ_API_KEY", settings.zilliz_api_key),
         ("REDIS_URL", settings.redis_url),
@@ -115,3 +121,11 @@ def validate_config() -> None:
         raise ValueError(
             f"Missing required configuration variables: {', '.join(missing)}. Please check your .env file."
         )
+
+    # M-10: CORS_ORIGINS="*" combined with allow_credentials=True (main.py)
+    # advertises a wildcard origin to credentialed traffic — every read
+    # endpoint becomes world-readable from any origin. Reject at config time;
+    # operators that genuinely want a wildcard must disable credentials.
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if "*" in origins:
+        raise ValueError("CORS_ORIGINS='*' is not allowed with credentialed CORS; list explicit origins.")
