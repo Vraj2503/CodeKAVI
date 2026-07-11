@@ -18,6 +18,24 @@ from codekavi.config import (
 from codekavi.pipeline_models import RepoData, FileEntry
 from codekavi.settings import settings
 
+# M-24: never read these into FileEntry.content — a committed .env or key
+# file must not flow into prompts/embeddings even though its metadata (name,
+# size) may still be listed. Checked before the FILENAME_LANGUAGE_MAP hidden
+# file exemption so it can't be bypassed by mapping the name to a language.
+SECRET_FILENAMES = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.development",
+    ".env.test",
+    ".env.example",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+}
+SECRET_SUFFIXES = (".pem", ".key", ".pfx", ".p12")
+
 
 def _should_ignore_dir(dirname: str) -> bool:
     """Check if a directory should be skipped."""
@@ -34,6 +52,9 @@ def _get_skip_reason(filepath: str, size: int | None = None) -> str | None:
 
     if basename in IGNORED_FILES:
         return "ignored_filename"
+
+    if basename in SECRET_FILENAMES or basename.startswith(".env") or basename.endswith(SECRET_SUFFIXES):
+        return "secret_file"
 
     _, ext = os.path.splitext(basename)
     if ext.lower() in IGNORED_EXTENSIONS:
