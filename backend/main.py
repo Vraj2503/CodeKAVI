@@ -45,8 +45,13 @@ async def lifespan(app: FastAPI):
 
     await init_limiter()
 
-    io_executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="codekavi-io-")
-    cpu_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="codekavi-cpu-")
+    # M-21: sizes were hardcoded, so a 1-core container had its CPU pool
+    # starved by a fixed 8-worker count sized for larger hosts. Configurable
+    # via env, defaulting to the previous values / cpu_count().
+    io_workers = int(os.getenv("IO_EXECUTOR_WORKERS", "32"))
+    cpu_workers = int(os.getenv("CPU_EXECUTOR_WORKERS", str(min(8, (os.cpu_count() or 8)))))
+    io_executor = ThreadPoolExecutor(max_workers=io_workers, thread_name_prefix="codekavi-io-")
+    cpu_executor = ThreadPoolExecutor(max_workers=cpu_workers, thread_name_prefix="codekavi-cpu-")
     cache = AnalysisCache()
     task_registry = BackgroundTaskRegistry()
 
