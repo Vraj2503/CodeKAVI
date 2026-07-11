@@ -42,7 +42,6 @@ class BoundedContentCache:
 
     def __init__(self, max_bytes: int):
         self.max_bytes = max_bytes
-        self.max_bytes = max_bytes
         self.current_bytes = 0
         self.cache: OrderedDict[str, tuple[str, int]] = OrderedDict()
 
