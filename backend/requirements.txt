@@ -2,10 +2,15 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 gitpython==3.1.44
 python-dotenv==1.1.0
-pymilvus
+# L-10: pinned to the versions this codebase is actually tested against.
+# Both packages iterate quickly enough (schema/API changes) that an
+# unpinned install can silently break indexing/chunking on a fresh
+# environment. Bump deliberately and re-run the pipeline-check skill.
+# Last verified: 2026-07-10.
+pymilvus==2.6.12
 google-genai>=1.0.0
 groq>=0.9.0
-langchain-text-splitters
+langchain-text-splitters==0.3.11
 jinja2>=3.1.0
 redis>=5.0.0
 supabase>=2.0.0
