@@ -304,7 +304,7 @@ async def analyze(
             if ml_model_files and content_cache:
                 try:
                     nn_models = await extract_all_models(
-                        ml_model_files,
+                        [fp.model_dump() for fp in ml_model_files],
                         content_cache=content_cache,
                         repo_root=clone_info["clone_path"],
                     )
@@ -706,7 +706,7 @@ async def analyze_stream(
                 if ml_model_files and content_cache:
                     try:
                         nn_models = await extract_all_models(
-                            ml_model_files,
+                            [fp.model_dump() for fp in ml_model_files],
                             content_cache=content_cache,
                             repo_root=clone_info["clone_path"],
                         )
