@@ -56,7 +56,7 @@ from codekavi.utils import BoundedContentCache
 from codekavi.pipeline_models import RepoData, FileEntry, DepGraph, FileProfile
 from codekavi.fingerprint import ChangeClassification
 from codekavi.utils import run_sync as _run_sync
-from codekavi.nn_extractor import extract_all_models
+from codekavi.nn_extractor import extract_all_models, select_nn_candidates
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -298,13 +298,15 @@ async def analyze(
             role_summary = {"error": f"Classification failed: {e}"}
 
         # NN Model Extraction (before content_cache is cleared)
+        # Candidates come from the parsed import graph (immune to the classifier's
+        # 4KB window / import aliasing), not just the winner-takes-all role label.
         nn_models = []
-        ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
+        ml_model_files = select_nn_candidates(file_profiles, dep_data)
         try:
             if ml_model_files and content_cache:
                 try:
                     nn_models = await extract_all_models(
-                        [fp.model_dump() for fp in ml_model_files],
+                        ml_model_files,
                         content_cache=content_cache,
                         repo_root=clone_info["clone_path"],
                     )
@@ -700,13 +702,15 @@ async def analyze_stream(
                 role_summary = {"error": f"Classification failed: {e}"}
 
             # NN Model Extraction
+            # Candidates come from the parsed import graph (immune to the
+            # classifier's 4KB window / import aliasing), not just the role label.
             nn_models = []
-            ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
+            ml_model_files = select_nn_candidates(file_profiles, dep_data)
             try:
                 if ml_model_files and content_cache:
                     try:
                         nn_models = await extract_all_models(
-                            [fp.model_dump() for fp in ml_model_files],
+                            ml_model_files,
                             content_cache=content_cache,
                             repo_root=clone_info["clone_path"],
                         )
