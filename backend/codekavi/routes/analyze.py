@@ -18,12 +18,32 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
-from codekavi.analyzer import analyze_dependencies
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
 from codekavi.cloner import cleanup_repo, clone_repo, parse_repo_url
+from codekavi.file_selector import SmartFileSelector
+from codekavi.fingerprint import ChangeClassification
+from codekavi.graph import (
+    build_module_graph,
+    detect_cycles,
+    export_dot,
+    export_graph_json,
+    export_mermaid,
+)
+from codekavi.indexer import index_repository
+from codekavi.limiter import per_minute
+from codekavi.logging_config import repo_id_ctx
+from codekavi.nn_extractor import extract_all_models
+from codekavi.pipeline_models import DepGraph
 from codekavi.routes._errors import internal_error, scrub_message
+from codekavi.routes.dependencies import get_cache
+from codekavi.schemas import AnalyzeRequest
+from codekavi.session import ensure_repo_loaded, save_analysis
+from codekavi.settings import settings
+from codekavi.traverser import traverse_repo
+from codekavi.utils import BoundedContentCache
+from codekavi.utils import run_sync as _run_sync
 
 
 def safe_cleanup(path: str):
@@ -35,28 +55,6 @@ def safe_cleanup(path: str):
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to cleanup repo at {path}: {e}")
 
-
-from codekavi.file_selector import SmartFileSelector
-from codekavi.graph import (
-    build_module_graph,
-    detect_cycles,
-    export_dot,
-    export_graph_json,
-    export_mermaid,
-)
-from codekavi.indexer import index_repository
-from codekavi.limiter import per_minute
-from codekavi.logging_config import repo_id_ctx
-from codekavi.routes.dependencies import get_cache
-from codekavi.schemas import AnalyzeRequest
-from codekavi.session import ensure_repo_loaded, save_analysis
-from codekavi.settings import settings
-from codekavi.traverser import traverse_repo
-from codekavi.utils import BoundedContentCache
-from codekavi.pipeline_models import RepoData, FileEntry, DepGraph, FileProfile
-from codekavi.fingerprint import ChangeClassification
-from codekavi.utils import run_sync as _run_sync
-from codekavi.nn_extractor import extract_all_models
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -241,7 +239,7 @@ async def analyze(
                         content_cache[k] = v
 
                 else:
-                    logger.warning(f"PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
+                    logger.warning("PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
             except Exception as e:
                 logger.warning(f"PARTIAL_UPDATE exception: {e}. Falling back to FULL_UPDATE.")
 
@@ -328,13 +326,34 @@ async def analyze(
                 graph_json_future = _run_sync(
                     export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
                 )
-                mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
-                module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
+                module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
+                cycles_future = _run_sync(detect_cycles, dep_data_dict)
 
-                graph_json, mermaid_code, module_graph = await asyncio.gather(
-                    graph_json_future, mermaid_future, module_graph_future
+                results = await asyncio.gather(
+                    graph_json_future, module_graph_future, cycles_future, return_exceptions=True
                 )
-                cycles_data = await _run_sync(detect_cycles, dep_data_dict)
+
+                graph_json = (
+                    results[0]
+                    if not isinstance(results[0], Exception)
+                    else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
+                )
+                module_graph = (
+                    results[1]
+                    if not isinstance(results[1], Exception)
+                    else {"error": f"Module graph failed: {results[1]}"}
+                )
+                cycles_data = (
+                    results[2]
+                    if not isinstance(results[2], Exception)
+                    else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
+                )
+
+                try:
+                    mermaid_code = await _run_sync(export_mermaid, graph_json)
+                except Exception as e:
+                    logger.warning(f"Mermaid export failed: {e}")
+                    mermaid_code = {"file_level": "", "module_level": ""}
             duration = (time.perf_counter() - start_time) * 1000
             logger.info(
                 f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
@@ -481,7 +500,7 @@ async def with_keepalive(async_gen_func):
                 if isinstance(item, Exception):
                     raise item
                 yield item
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ":keepalive\n\n"
     except asyncio.CancelledError:
         task.cancel()
@@ -508,7 +527,6 @@ async def analyze_stream(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     async def event_generator():
-
         # T2.4 — single counter threaded through every yield so the client
         # can verify seq === total_events and resume via Last-Event-ID.
         seq_box: list[int] = [0]
@@ -630,7 +648,7 @@ async def analyze_stream(
                             content_cache[k] = v
 
                     else:
-                        logger.warning(f"PARTIAL_UPDATE background failed to load cache. Falling back to FULL_UPDATE.")
+                        logger.warning("PARTIAL_UPDATE background failed to load cache. Falling back to FULL_UPDATE.")
                 except Exception as e:
                     logger.warning(f"PARTIAL_UPDATE background exception: {e}. Falling back to FULL_UPDATE.")
 
@@ -736,13 +754,34 @@ async def analyze_stream(
                     graph_json_future = _run_sync(
                         export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
                     )
-                    mermaid_future = _run_sync(export_mermaid, file_profiles_dicts, dep_data_dict)
-                    module_graph_future = _run_sync(build_module_graph, file_profiles_dicts, dep_data_dict)
+                    module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
                     cycles_future = _run_sync(detect_cycles, dep_data_dict)
 
-                    graph_json, mermaid_code, module_graph, cycles_data = await asyncio.gather(
-                        graph_json_future, mermaid_future, module_graph_future, cycles_future
+                    results = await asyncio.gather(
+                        graph_json_future, module_graph_future, cycles_future, return_exceptions=True
                     )
+
+                    graph_json = (
+                        results[0]
+                        if not isinstance(results[0], Exception)
+                        else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
+                    )
+                    module_graph = (
+                        results[1]
+                        if not isinstance(results[1], Exception)
+                        else {"error": f"Module graph failed: {results[1]}"}
+                    )
+                    cycles_data = (
+                        results[2]
+                        if not isinstance(results[2], Exception)
+                        else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
+                    )
+
+                    try:
+                        mermaid_code = await _run_sync(export_mermaid, graph_json)
+                    except Exception as e:
+                        logger.warning(f"Mermaid export failed: {e}")
+                        mermaid_code = {"file_level": "", "module_level": ""}
                 duration = (time.perf_counter() - start_time) * 1000
                 logger.info(
                     f"Stage graphing completed in {duration:.2f}ms",
