@@ -34,7 +34,7 @@ from codekavi.graph import (
 from codekavi.indexer import index_repository
 from codekavi.limiter import per_minute
 from codekavi.logging_config import repo_id_ctx
-from codekavi.nn_extractor import extract_all_models
+from codekavi.nn_extractor import extract_all_models, select_nn_candidates
 from codekavi.pipeline_models import DepGraph
 from codekavi.routes._errors import internal_error, scrub_message
 from codekavi.routes.dependencies import get_cache
@@ -46,18 +46,18 @@ from codekavi.utils import BoundedContentCache
 from codekavi.utils import run_sync as _run_sync
 
 
+logger = logging.getLogger(__name__)
+
+
 def safe_cleanup(path: str):
     """Best-effort repo cleanup. Logs a warning on failure instead of raising."""
-    from codekavi.cloner import cleanup_repo
-
     try:
         cleanup_repo(path)
     except Exception as e:
-        logging.getLogger(__name__).warning(f"Failed to cleanup repo at {path}: {e}")
+        logger.warning(f"Failed to clean up repo at {path}: {e}")
 
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 # ── Routes ──
@@ -296,8 +296,10 @@ async def analyze(
             role_summary = {"error": f"Classification failed: {e}"}
 
         # NN Model Extraction (before content_cache is cleared)
+        # Candidates come from the parsed import graph (immune to the classifier's
+        # 4KB window / import aliasing), not just the winner-takes-all role label.
         nn_models = []
-        ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
+        ml_model_files = select_nn_candidates(file_profiles, dep_data)
         try:
             if ml_model_files and content_cache:
                 try:
@@ -718,8 +720,10 @@ async def analyze_stream(
                 role_summary = {"error": f"Classification failed: {e}"}
 
             # NN Model Extraction
+            # Candidates come from the parsed import graph (immune to the
+            # classifier's 4KB window / import aliasing), not just the role label.
             nn_models = []
-            ml_model_files = [fp for fp in file_profiles if fp.role == "ml_model"]
+            ml_model_files = select_nn_candidates(file_profiles, dep_data)
             try:
                 if ml_model_files and content_cache:
                     try:

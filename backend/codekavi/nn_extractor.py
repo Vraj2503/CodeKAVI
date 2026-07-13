@@ -13,6 +13,7 @@ Extraction strategies:
 import ast
 import logging
 import math
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,117 @@ _LAYER_CATEGORIES: dict[str, str] = {
 # PyTorch nn module names for matching
 _NN_MODULES = {"nn.Module", "torch.nn.Module"}
 _KERAS_MODELS = {"keras.Model", "tf.keras.Model", "keras.models.Model"}
+
+# Import roots that mark a file as an NN-extraction candidate. Matched against
+# the first dotted segment of each import (so ``torch.nn.functional`` -> ``torch``).
+_ML_FRAMEWORK_ROOTS = {
+    "torch",
+    "torchvision",
+    "tensorflow",
+    "tf",
+    "keras",
+    "jax",
+    "flax",
+    "transformers",
+    "timm",
+    "lightning",
+    "pytorch_lightning",
+    "fastai",
+    "diffusers",
+    "sentence_transformers",
+}
+
+# FileProfile roles that are NN candidates even if the import graph missed them.
+_NN_CANDIDATE_ROLES = {"ml_model", "ml_training", "ml_pipeline"}
+
+# Container constructors whose element calls should each be treated as a layer.
+_LAYER_CONTAINERS = {"ModuleList", "Sequential", "ModuleDict"}
+
+# Pre-trained model factory calls, matched on the alias-resolved dotted call
+# name. Two matching modes, kept separate so they can't collide:
+#   - _PRETRAINED_PREFIXES: exact dotted-prefix match (like _is_nn_layer_call)
+#   - suffix match on ".from_pretrained" is handled specially in
+#     _match_pretrained_call (receiver varies too much for a prefix table)
+# `timm.create_model` / `torch.hub.load` are matched as exact call names
+# inside _match_pretrained_call, not via this prefix table.
+_PRETRAINED_PREFIXES: dict[str, str] = {
+    "torchvision.models.": "pytorch",
+    "keras.applications.": "keras",
+    "tf.keras.applications.": "keras",
+    "tensorflow.keras.applications.": "keras",
+}
+_PRETRAINED_FROM_PRETRAINED_SUFFIX = ".from_pretrained"
+
+
+# ─────────────────────────────────────────────
+# Import alias resolution (alias/local-base aware extraction)
+# ─────────────────────────────────────────────
+
+
+def _build_import_alias_map(tree: ast.Module) -> dict[str, str]:
+    """Map each locally-bound import name to its fully-qualified dotted path.
+
+    Examples:
+        ``import torch.nn as N``        -> {"N": "torch.nn"}
+        ``import torch``                -> {"torch": "torch"}
+        ``from torch import nn``        -> {"nn": "torch.nn"}
+        ``from torch.nn import Module`` -> {"Module": "torch.nn.Module"}
+        ``from keras import layers``    -> {"layers": "keras.layers"}
+    """
+    alias_map: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    alias_map[a.asname] = a.name
+                else:
+                    # ``import torch.nn`` binds only the top-level ``torch`` name.
+                    top = a.name.split(".")[0]
+                    alias_map[top] = top
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for a in node.names:
+                local = a.asname or a.name
+                alias_map[local] = f"{module}.{a.name}" if module else a.name
+    return alias_map
+
+
+def _resolve_with_alias(dotted: str | None, alias_map: dict[str, str] | None) -> str | None:
+    """Rewrite the first segment of a dotted name through the alias map."""
+    if not dotted or not alias_map:
+        return dotted
+    first, _, rest = dotted.partition(".")
+    if first in alias_map:
+        base = alias_map[first]
+        return f"{base}.{rest}" if rest else base
+    return dotted
+
+
+def _base_dotted_name(base: ast.expr) -> str | None:
+    """Return the dotted name of a class base node (``nn.Module`` -> 'nn.Module')."""
+    if isinstance(base, ast.Name):
+        return base.id
+    if isinstance(base, ast.Attribute):
+        parts: list[str] = []
+        cur: ast.AST = base
+        while isinstance(cur, ast.Attribute):
+            parts.append(cur.attr)
+            cur = cur.value
+        if isinstance(cur, ast.Name):
+            parts.append(cur.id)
+            return ".".join(reversed(parts))
+    return None
+
+
+def _known_base_framework(resolved: str | None) -> str | None:
+    """Return the framework ('pytorch'/'keras') if ``resolved`` is a known NN base."""
+    if not resolved:
+        return None
+    if resolved in _KERAS_MODELS or resolved.endswith("keras.Model") or resolved.endswith("keras.models.Model"):
+        return "keras"
+    if resolved in _NN_MODULES or resolved == "Module" or resolved.endswith("torch.nn.Module"):
+        return "pytorch"
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -227,10 +339,75 @@ def _resolve_layer_type(call_name: str) -> str:
     return parts[-1]
 
 
-def _is_nn_layer_call(call_name: str) -> bool:
-    """Check if a call name looks like a neural network layer constructor."""
-    layer_prefixes = ["nn.", "torch.nn.", "layers.", "keras.layers.", "tf.keras.layers."]
-    return any(call_name.startswith(p) for p in layer_prefixes)
+def _is_nn_layer_call(call_name: str, alias_map: dict[str, str] | None = None) -> bool:
+    """Check if a call name looks like a neural network layer constructor.
+
+    Resolves the leading segment through ``alias_map`` first, so aliased imports
+    (``import torch.nn as N`` -> ``N.Conv2d``) still match.
+    """
+    resolved = _resolve_with_alias(call_name, alias_map) or call_name
+    layer_prefixes = [
+        "nn.",
+        "torch.nn.",
+        "layers.",
+        "keras.layers.",
+        "tf.keras.layers.",
+        "tensorflow.keras.layers.",
+    ]
+    return any(resolved.startswith(p) for p in layer_prefixes)
+
+
+def _match_pretrained_call(call_node: ast.Call, alias_map: dict[str, str] | None) -> dict | None:
+    """Detect a pretrained-model factory call (torchvision.models.*, timm,
+    torch.hub.load, HuggingFace .from_pretrained, keras.applications.*).
+
+    Returns ``{"arch": str, "framework": str, "weights": Any}`` or ``None``.
+    """
+    call_name = _get_call_name(call_node)
+    if not call_name:
+        return None
+    resolved = _resolve_with_alias(call_name, alias_map) or call_name
+    params = _extract_call_params(call_node)
+
+    if resolved.endswith(_PRETRAINED_FROM_PRETRAINED_SUFFIX):
+        arch = None
+        if call_node.args:
+            first = _ast_to_value(call_node.args[0])
+            if isinstance(first, str):
+                arch = first
+        if arch is None:
+            receiver = resolved[: -len(_PRETRAINED_FROM_PRETRAINED_SUFFIX)]
+            arch = receiver.split(".")[-1]
+        return {"arch": arch, "framework": "pytorch", "weights": params.get("weights", arch)}
+
+    if resolved == "timm.create_model" or resolved.endswith(".timm.create_model"):
+        arch = _ast_to_value(call_node.args[0]) if call_node.args else None
+        return {
+            "arch": arch if isinstance(arch, str) else "timm_model",
+            "framework": "pytorch",
+            "weights": params.get("pretrained", params.get("weights")),
+        }
+
+    if resolved == "torch.hub.load" or resolved.endswith(".torch.hub.load"):
+        arch = _ast_to_value(call_node.args[1]) if len(call_node.args) >= 2 else None
+        if not isinstance(arch, str):
+            arch = params.get("model", "hub_model")
+        return {
+            "arch": arch,
+            "framework": "pytorch",
+            "weights": params.get("pretrained", params.get("weights")),
+        }
+
+    for prefix, framework in _PRETRAINED_PREFIXES.items():
+        if resolved.startswith(prefix):
+            arch = resolved[len(prefix) :].split(".")[0] or resolved.split(".")[-1]
+            return {
+                "arch": arch,
+                "framework": framework,
+                "weights": params.get("weights", params.get("pretrained")),
+            }
+
+    return None
 
 
 def _normalize_params(layer_type: str, params: dict) -> dict:
@@ -328,10 +505,69 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
 # ─────────────────────────────────────────────
 
 
+def _build_layer(call_node: ast.Call, layer_id: str, alias_map: dict[str, str] | None) -> dict | None:
+    """Build a single layer dict from a layer-constructor Call node, or None."""
+    call_name = _get_call_name(call_node)
+    if not call_name or not _is_nn_layer_call(call_name, alias_map):
+        return None
+    layer_type = _resolve_layer_type(call_name)
+    raw_params = _extract_call_params(call_node)
+    params = _normalize_params(layer_type, raw_params)
+    return {
+        "id": layer_id,
+        "type": layer_type,
+        "category": _LAYER_CATEGORIES.get(layer_type, "other"),
+        "params": params,
+        "output_shape": None,
+        "param_count": _estimate_param_count(layer_type, params),
+        "activation": None,
+        "block_dims": _compute_block_dims(layer_type, params, None),
+    }
+
+
+def _collect_layers_from_value(
+    value: ast.expr,
+    base_id: str,
+    layers: list[dict],
+    layer_order: list[str],
+    alias_map: dict[str, str] | None,
+) -> None:
+    """Append layer(s) from an assignment/append value.
+
+    Handles a direct layer call, and container constructors
+    (``nn.ModuleList``/``nn.Sequential``/``nn.ModuleDict``) whose element calls
+    are each treated as a layer so config/loop-built models aren't empty.
+    """
+    if not isinstance(value, ast.Call):
+        return
+
+    call_name = _get_call_name(value)
+    last = call_name.split(".")[-1] if call_name else ""
+    if last in _LAYER_CONTAINERS:
+        # Flatten container elements (positional args, incl. list/tuple literals).
+        idx = 0
+        for arg in value.args:
+            elements = arg.elts if isinstance(arg, (ast.List, ast.Tuple)) else [arg]
+            for el in elements:
+                _collect_layers_from_value(el, f"{base_id}_{idx}", layers, layer_order, alias_map)
+                idx += 1
+        return
+
+    layer = _build_layer(value, base_id, alias_map)
+    if layer is None:
+        match = _match_pretrained_call(value, alias_map)
+        if match is not None:
+            layer = _build_pretrained_layer(match, base_id)
+    if layer is not None:
+        layers.append(layer)
+        layer_order.append(base_id)
+
+
 def _extract_module_class(
     class_node: ast.ClassDef,
     file_path: str,
     framework: str = "pytorch",
+    alias_map: dict[str, str] | None = None,
 ) -> dict | None:
     """Extract a neural network architecture from an nn.Module or Keras Model subclass."""
     layers: list[dict] = []
@@ -355,7 +591,10 @@ def _extract_module_class(
     if not init_method:
         return None
 
-    # Walk __init__ for layer assignments
+    # Walk __init__ for layer assignments. Covers `self.x = nn.Y(...)`,
+    # container values (`nn.ModuleList([...])`, `nn.Sequential(...)`), and
+    # dynamic `self.layers.append(nn.Y(...))` calls built in loops/from config.
+    dynamic_idx = 0
     for node in ast.walk(init_method):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -363,31 +602,16 @@ def _extract_module_class(
                     isinstance(target, ast.Attribute)
                     and isinstance(target.value, ast.Name)
                     and target.value.id == "self"
-                    and isinstance(node.value, ast.Call)
                 ):
-                    call_name = _get_call_name(node.value)
-                    if call_name and _is_nn_layer_call(call_name):
-                        layer_type = _resolve_layer_type(call_name)
-                        raw_params = _extract_call_params(node.value)
-                        params = _normalize_params(layer_type, raw_params)
-                        category = _LAYER_CATEGORIES.get(layer_type, "other")
-                        param_count = _estimate_param_count(layer_type, params)
-                        block_dims = _compute_block_dims(layer_type, params, None)
-
-                        layer_id = target.attr
-                        layers.append(
-                            {
-                                "id": layer_id,
-                                "type": layer_type,
-                                "category": category,
-                                "params": params,
-                                "output_shape": None,
-                                "param_count": param_count,
-                                "activation": None,
-                                "block_dims": block_dims,
-                            }
-                        )
-                        layer_order.append(layer_id)
+                    _collect_layers_from_value(node.value, target.attr, layers, layer_order, alias_map)
+        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            if isinstance(func, ast.Attribute) and func.attr == "append" and node.value.args:
+                layer = _build_layer(node.value.args[0], f"append_{dynamic_idx}", alias_map)
+                if layer is not None:
+                    layers.append(layer)
+                    layer_order.append(layer["id"])
+                    dynamic_idx += 1
 
     if not layers:
         return None
@@ -549,6 +773,48 @@ def _extract_sequential(
 
 
 # ─────────────────────────────────────────────
+# Pre-trained / transfer-learning model detection
+# ─────────────────────────────────────────────
+
+
+def _build_pretrained_layer(match: dict, layer_id: str) -> dict:
+    """Build a single NNLayer-shaped dict for a pretrained backbone (same
+    shape as ``_build_layer``'s return), for use inside a class's layer list."""
+    return {
+        "id": layer_id,
+        "type": match["arch"],
+        "category": "pretrained",
+        "params": {"weights": match.get("weights")},
+        "output_shape": None,
+        "param_count": None,
+        "activation": None,
+        "block_dims": _compute_block_dims(match["arch"], {}, None),
+    }
+
+
+def _build_pretrained_model(match: dict, file_path: str, line: int, model_name: str) -> dict:
+    """Build an NNModel-shaped dict for a standalone pretrained-backbone call."""
+    layer = _build_pretrained_layer(match, "backbone")
+    connections = [
+        {"from_id": "input", "to_id": "backbone", "type": "sequential"},
+        {"from_id": "backbone", "to_id": "output", "type": "sequential"},
+    ]
+    return {
+        "name": model_name,
+        "file": file_path,
+        "line": line,
+        "framework": match["framework"],
+        "type": "pretrained",
+        "total_params": None,
+        "input_shape": None,
+        "output_shape": None,
+        "layers": [layer],
+        "connections": connections,
+        "blocks": None,
+    }
+
+
+# ─────────────────────────────────────────────
 # Main extraction entry point
 # ─────────────────────────────────────────────
 
@@ -569,57 +835,110 @@ def extract_models_from_source(
         logger.debug(f"Failed to parse {file_path} — skipping NN extraction")
         return models
 
-    for node in ast.walk(tree):
-        # 1. nn.Module subclasses
-        if isinstance(node, ast.ClassDef):
-            for base in node.bases:
-                base_name = None
-                if isinstance(base, ast.Attribute):
-                    base_name = f"{_ast_to_value(base.value)}.{base.attr}" if isinstance(base.value, ast.Name) else None
-                elif isinstance(base, ast.Name):
-                    base_name = base.id
+    # Resolve import aliases so aliased bases/layers (`import torch.nn as N`,
+    # `from torch.nn import Module`) are recognized structurally.
+    alias_map = _build_import_alias_map(tree)
 
-                if base_name and (base_name in _NN_MODULES or base_name in _KERAS_MODELS or base_name == "Module"):
-                    framework = "keras" if base_name in _KERAS_MODELS else "pytorch"
-                    model = _extract_module_class(node, file_path, framework=framework)
-                    if model and len(model["layers"]) >= 2:  # Minimum 2 layers to be meaningful
-                        models.append(model)
+    class_defs = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+
+    # Precompute each class's base info: (resolved dotted base, simple last name).
+    class_bases: dict[str, list[tuple[str | None, str | None]]] = {}
+    for cd in class_defs:
+        bases: list[tuple[str | None, str | None]] = []
+        for base in cd.bases:
+            dotted = _base_dotted_name(base)
+            resolved = _resolve_with_alias(dotted, alias_map)
+            simple = dotted.split(".")[-1] if dotted else None
+            bases.append((resolved, simple))
+        class_bases[cd.name] = bases
+
+    # 1. Determine model classes: those subclassing a known NN base directly, or
+    # (transitively) a local class that does. Fixpoint handles forward/late refs.
+    local_model_fw: dict[str, str] = {}
+    changed = True
+    while changed:
+        changed = False
+        for cd in class_defs:
+            if cd.name in local_model_fw:
+                continue
+            for resolved, simple in class_bases[cd.name]:
+                fw = _known_base_framework(resolved)
+                if fw is None and simple in local_model_fw:
+                    fw = local_model_fw[simple]
+                if fw is not None:
+                    local_model_fw[cd.name] = fw
+                    changed = True
                     break
 
-        # 2. nn.Sequential(...) assignments
-        if isinstance(node, ast.Assign):
-            if isinstance(node.value, ast.Call):
-                call_name = _get_call_name(node.value)
-                if call_name and any(
-                    call_name.endswith(s) for s in ("Sequential", "nn.Sequential", "keras.Sequential")
-                ):
-                    # Get model name from assignment target
-                    model_name = "SequentialModel"
-                    if node.targets and isinstance(node.targets[0], ast.Name):
-                        model_name = node.targets[0].id
-                    elif (
-                        node.targets
-                        and isinstance(node.targets[0], ast.Attribute)
-                        and isinstance(node.targets[0].value, ast.Name)
-                        and node.targets[0].value.id == "self"
-                    ):
-                        model_name = node.targets[0].attr
+    for cd in class_defs:
+        fw = local_model_fw.get(cd.name)
+        if fw is None:
+            continue
+        model = _extract_module_class(cd, file_path, framework=fw, alias_map=alias_map)
+        if model and len(model["layers"]) >= 1:  # relaxed floor — small models are valid
+            models.append(model)
 
-                    model = _extract_sequential(node.value, file_path, node.lineno, model_name)
-                    if model and len(model["layers"]) >= 2:
-                        models.append(model)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+            continue
+
+        call_name = _get_call_name(node.value)
+
+        # 2. nn.Sequential(...) assignments
+        if call_name and any(call_name.endswith(s) for s in ("Sequential", "nn.Sequential", "keras.Sequential")):
+            # Get model name from assignment target
+            model_name = "SequentialModel"
+            if node.targets and isinstance(node.targets[0], ast.Name):
+                model_name = node.targets[0].id
+            elif (
+                node.targets
+                and isinstance(node.targets[0], ast.Attribute)
+                and isinstance(node.targets[0].value, ast.Name)
+                and node.targets[0].value.id == "self"
+            ):
+                model_name = node.targets[0].attr
+
+            model = _extract_sequential(node.value, file_path, node.lineno, model_name)
+            if model and len(model["layers"]) >= 1:
+                models.append(model)
+            continue
+
+        # 3. Standalone pretrained-model factory assignments, e.g.
+        # `model = torchvision.models.resnet50(weights=...)`. Backbones nested
+        # inside a model class's __init__ (`self.backbone = resnet50(...)`) are
+        # already captured via _collect_layers_from_value during class
+        # extraction above, so only plain-variable targets are handled here to
+        # avoid emitting the same call twice.
+        if node.targets and isinstance(node.targets[0], ast.Name):
+            match = _match_pretrained_call(node.value, alias_map)
+            if match is not None:
+                models.append(_build_pretrained_model(match, file_path, node.lineno, node.targets[0].id))
 
     return models
+
+
+# Notebook magic/shell lines (`!pip install ...`, `%matplotlib inline`,
+# `%%time`) that break `ast.parse` when a notebook is concatenated into one
+# source string.
+_NOTEBOOK_MAGIC_LINE_RE = re.compile(r"^\s*[!%]")
 
 
 def extract_models_from_notebook(
     notebook_json: dict,
     file_path: str,
 ) -> list[dict]:
-    """Extract NN models from a Jupyter notebook's code cells."""
-    models: list[dict] = []
+    """Extract NN models from a Jupyter notebook's code cells.
 
+    Code cells are concatenated into a single source and parsed once, so
+    imports, base classes, and helpers defined in one cell are visible to
+    definitions in later cells (notebooks share one logical namespace across
+    cells). Magic/shell lines are blanked first since they're the usual
+    ``SyntaxError`` cause. Falls back to per-cell parsing if the concatenated
+    source yields nothing, so one cell an editor can't fix doesn't zero out an
+    otherwise salvageable notebook.
+    """
     cells = notebook_json.get("cells", [])
+    code_sources: list[str] = []
     for cell in cells:
         if cell.get("cell_type") != "code":
             continue
@@ -628,11 +947,59 @@ def extract_models_from_notebook(
             source = "".join(source_lines)
         else:
             source = str(source_lines)
+        cleaned = "\n".join("" if _NOTEBOOK_MAGIC_LINE_RE.match(line) else line for line in source.splitlines())
+        code_sources.append(cleaned)
 
-        cell_models = extract_models_from_source(source, file_path)
-        models.extend(cell_models)
+    models = extract_models_from_source("\n".join(code_sources), file_path)
+    if models:
+        return models
+
+    for source in code_sources:
+        models.extend(extract_models_from_source(source, file_path))
 
     return models
+
+
+def select_nn_candidates(file_profiles: list, dep_data: Any) -> list[dict]:
+    """Select files to run NN extraction on, decoupled from the classifier role.
+
+    A Python/notebook file is a candidate if EITHER:
+      - its parsed imports (``dep_data.file_imports``) reference an ML framework
+        root (matched on the first dotted segment, so ``torch.nn.functional`` ->
+        ``torch``) — immune to the classifier's 4KB window and import aliasing, OR
+      - its FileProfile role is ml_model/ml_training/ml_pipeline (safety net for
+        files the import graph missed).
+
+    Returns ``list[dict]`` (via ``model_dump()``) so ``extract_all_models`` still
+    receives the ``{"path": ...}`` shape it expects.
+    """
+    # dep_data is a DepGraph (pydantic) or a plain dict on the degraded path.
+    file_imports = getattr(dep_data, "file_imports", None)
+    if file_imports is None and isinstance(dep_data, dict):
+        file_imports = dep_data.get("file_imports")
+    file_imports = file_imports or {}
+
+    candidates: list[dict] = []
+    for fp in file_profiles:
+        path = getattr(fp, "path", None) if not isinstance(fp, dict) else fp.get("path")
+        if not path or not (path.endswith(".py") or path.endswith(".ipynb")):
+            continue
+
+        role = getattr(fp, "role", None) if not isinstance(fp, dict) else fp.get("role")
+        matched = role in _NN_CANDIDATE_ROLES
+        if not matched:
+            for imp in file_imports.get(path, []):
+                raw = imp.get("raw", "") if isinstance(imp, dict) else ""
+                root = raw.lstrip(".").split(".")[0] if raw else ""
+                if root in _ML_FRAMEWORK_ROOTS:
+                    matched = True
+                    break
+
+        if matched:
+            candidates.append(fp.model_dump() if hasattr(fp, "model_dump") else dict(fp))
+
+    logger.info(f"Selected {len(candidates)} NN candidate file(s) from {len(file_profiles)} profile(s)")
+    return candidates
 
 
 async def extract_all_models(
