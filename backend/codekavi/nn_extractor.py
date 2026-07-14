@@ -30,6 +30,9 @@ _LAYER_CATEGORIES: dict[str, str] = {
     "ConvTranspose1d": "convolution",
     "ConvTranspose2d": "convolution",
     "ConvTranspose3d": "convolution",
+    "Conv1D": "convolution",
+    "Conv2D": "convolution",
+    "Conv3D": "convolution",
     # Pooling
     "MaxPool1d": "pooling",
     "MaxPool2d": "pooling",
@@ -40,6 +43,16 @@ _LAYER_CATEGORIES: dict[str, str] = {
     "AdaptiveAvgPool1d": "pooling",
     "AdaptiveAvgPool2d": "pooling",
     "AdaptiveMaxPool2d": "pooling",
+    "MaxPooling1D": "pooling",
+    "MaxPooling2D": "pooling",
+    "MaxPooling3D": "pooling",
+    "AveragePooling1D": "pooling",
+    "AveragePooling2D": "pooling",
+    "AveragePooling3D": "pooling",
+    "GlobalAveragePooling1D": "pooling",
+    "GlobalAveragePooling2D": "pooling",
+    "GlobalMaxPooling1D": "pooling",
+    "GlobalMaxPooling2D": "pooling",
     # Dense / Linear
     "Linear": "dense",
     "Dense": "dense",
@@ -52,6 +65,7 @@ _LAYER_CATEGORIES: dict[str, str] = {
     "GroupNorm": "normalization",
     "InstanceNorm1d": "normalization",
     "InstanceNorm2d": "normalization",
+    "BatchNormalization": "normalization",
     # Activation
     "ReLU": "activation",
     "LeakyReLU": "activation",
@@ -65,17 +79,22 @@ _LAYER_CATEGORIES: dict[str, str] = {
     "SiLU": "activation",
     "Mish": "activation",
     "Hardswish": "activation",
+    "Activation": "activation",
     # Dropout
     "Dropout": "dropout",
     "Dropout2d": "dropout",
     "Dropout3d": "dropout",
     "AlphaDropout": "dropout",
+    "SpatialDropout1D": "dropout",
+    "SpatialDropout2D": "dropout",
     # Recurrent
     "LSTM": "recurrent",
     "GRU": "recurrent",
     "RNN": "recurrent",
     "LSTMCell": "recurrent",
     "GRUCell": "recurrent",
+    "SimpleRNN": "recurrent",
+    "Bidirectional": "recurrent",
     # Attention / Transformer
     "MultiheadAttention": "attention",
     "TransformerEncoder": "attention",
@@ -89,6 +108,8 @@ _LAYER_CATEGORIES: dict[str, str] = {
     # Reshape
     "Flatten": "other",
     "Unflatten": "other",
+    "Reshape": "other",
+    "Lambda": "other",
     # Keras-specific
     "Input": "other",
     "Concatenate": "other",
@@ -339,22 +360,82 @@ def _resolve_layer_type(call_name: str) -> str:
     return parts[-1]
 
 
-def _is_nn_layer_call(call_name: str, alias_map: dict[str, str] | None = None) -> bool:
-    """Check if a call name looks like a neural network layer constructor.
+_LAYER_PREFIXES = (
+    "nn.",
+    "torch.nn.",
+    "layers.",
+    "keras.layers.",
+    "tf.keras.layers.",
+    "tensorflow.keras.layers.",
+    "flax.linen.",
+    "flax.nnx.",
+)
+
+# Wrapper layers whose "real" layer type is their first positional argument.
+_WRAPPER_LAYERS = {"Bidirectional", "TimeDistributed"}
+
+
+def _recognize_layer_type(call_node: ast.Call, alias_map: dict[str, str] | None = None) -> str | None:
+    """Return a layer type name if ``call_node`` looks like a layer constructor, else ``None``.
 
     Resolves the leading segment through ``alias_map`` first, so aliased imports
-    (``import torch.nn as N`` -> ``N.Conv2d``) still match.
+    (``import torch.nn as N`` -> ``N.Conv2d``) still match. Falls back to a
+    bare-import check (``from keras.layers import Dense`` -> ``Dense(...)``)
+    since ``_LAYER_CATEGORIES`` names are distinctive enough to be safe without
+    prefix confirmation.
     """
+    call_name = _get_call_name(call_node)
+    if not call_name:
+        return None
     resolved = _resolve_with_alias(call_name, alias_map) or call_name
-    layer_prefixes = [
-        "nn.",
-        "torch.nn.",
-        "layers.",
-        "keras.layers.",
-        "tf.keras.layers.",
-        "tensorflow.keras.layers.",
-    ]
-    return any(resolved.startswith(p) for p in layer_prefixes)
+    if any(resolved.startswith(p) for p in _LAYER_PREFIXES):
+        return _resolve_layer_type(resolved)
+    leaf = _resolve_layer_type(call_name)
+    if leaf in _LAYER_CATEGORIES:
+        return leaf
+    return None
+
+
+def _make_layer_dict(
+    call_node: ast.Call,
+    layer_id: str,
+    alias_map: dict[str, str] | None = None,
+) -> dict | None:
+    """Build a single NNLayer-shaped dict from a layer-constructor Call node, or ``None``.
+
+    Unwraps ``Bidirectional``/``TimeDistributed`` wrappers into their inner layer
+    (marking ``bidirectional=True`` for the former) so the underlying recurrent
+    layer's type/params/category are reported rather than the wrapper's.
+    """
+    layer_type = _recognize_layer_type(call_node, alias_map)
+    if layer_type is None:
+        return None
+
+    wrapper_type = None
+    if layer_type in _WRAPPER_LAYERS and call_node.args and isinstance(call_node.args[0], ast.Call):
+        inner_type = _recognize_layer_type(call_node.args[0], alias_map)
+        if inner_type is not None:
+            wrapper_type = layer_type
+            layer_type = inner_type
+            call_node = call_node.args[0]
+
+    raw_params = _extract_call_params(call_node)
+    params = _normalize_params(layer_type, raw_params)
+    category = _LAYER_CATEGORIES.get(layer_type, "other")
+    if wrapper_type == "Bidirectional":
+        category = "recurrent"
+        params["bidirectional"] = True
+
+    return {
+        "id": layer_id,
+        "type": layer_type,
+        "category": category,
+        "params": params,
+        "output_shape": None,
+        "param_count": _estimate_param_count(layer_type, params),
+        "activation": None,
+        "block_dims": _compute_block_dims(layer_type, params, None),
+    }
 
 
 def _match_pretrained_call(call_node: ast.Call, alias_map: dict[str, str] | None) -> dict | None:
@@ -505,24 +586,43 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
 # ─────────────────────────────────────────────
 
 
-def _build_layer(call_node: ast.Call, layer_id: str, alias_map: dict[str, str] | None) -> dict | None:
-    """Build a single layer dict from a layer-constructor Call node, or None."""
-    call_name = _get_call_name(call_node)
-    if not call_name or not _is_nn_layer_call(call_name, alias_map):
-        return None
-    layer_type = _resolve_layer_type(call_name)
-    raw_params = _extract_call_params(call_node)
-    params = _normalize_params(layer_type, raw_params)
-    return {
-        "id": layer_id,
-        "type": layer_type,
-        "category": _LAYER_CATEGORIES.get(layer_type, "other"),
-        "params": params,
-        "output_shape": None,
-        "param_count": _estimate_param_count(layer_type, params),
-        "activation": None,
-        "block_dims": _compute_block_dims(layer_type, params, None),
-    }
+def _flatten_layer_elements(node: ast.expr) -> list[ast.Call]:
+    """Flatten a Sequential/container-style argument into an ordered list of
+    layer-constructor Call nodes.
+
+    Handles a plain layer call, list/tuple literals, and
+    ``OrderedDict(...)``/dict literals (taking each entry's ``(name, layer)``
+    value) so ``nn.Sequential(OrderedDict(...))`` and
+    ``keras.Sequential([...])`` are both recognized.
+    """
+    if isinstance(node, ast.Call):
+        call_name = _get_call_name(node)
+        last = call_name.split(".")[-1] if call_name else ""
+        if last == "OrderedDict" and node.args:
+            return _flatten_layer_elements(node.args[0])
+        return [node]
+    if isinstance(node, ast.List | ast.Tuple):
+        result: list[ast.Call] = []
+        for el in node.elts:
+            if isinstance(el, ast.Tuple | ast.List) and len(el.elts) == 2 and isinstance(el.elts[1], ast.Call):
+                result.append(el.elts[1])  # ("name", layer) pair from an OrderedDict-style list
+            elif isinstance(el, ast.Call):
+                result.append(el)
+        return result
+    if isinstance(node, ast.Dict):
+        return [v for v in node.values if isinstance(v, ast.Call)]
+    return []
+
+
+def _sequential_connections(layers: list[dict], unverified: bool = False) -> list[dict]:
+    """Build linear ``input -> layer0 -> ... -> layerN -> output`` connections."""
+    conn_type = "sequential-unverified" if unverified else "sequential"
+    connections: list[dict] = []
+    for i in range(len(layers)):
+        from_id = "input" if i == 0 else layers[i - 1]["id"]
+        connections.append({"from_id": from_id, "to_id": layers[i]["id"], "type": conn_type})
+    connections.append({"from_id": layers[-1]["id"], "to_id": "output", "type": conn_type})
+    return connections
 
 
 def _collect_layers_from_value(
@@ -544,16 +644,20 @@ def _collect_layers_from_value(
     call_name = _get_call_name(value)
     last = call_name.split(".")[-1] if call_name else ""
     if last in _LAYER_CONTAINERS:
-        # Flatten container elements (positional args, incl. list/tuple literals).
+        # Flatten container elements (positional args, incl. list/tuple/dict literals).
         idx = 0
+        elements: list[ast.Call] = []
         for arg in value.args:
-            elements = arg.elts if isinstance(arg, (ast.List, ast.Tuple)) else [arg]
-            for el in elements:
-                _collect_layers_from_value(el, f"{base_id}_{idx}", layers, layer_order, alias_map)
-                idx += 1
+            elements.extend(_flatten_layer_elements(arg))
+        for kw in value.keywords:
+            if kw.arg == "layers":
+                elements.extend(_flatten_layer_elements(kw.value))
+        for el in elements:
+            _collect_layers_from_value(el, f"{base_id}_{idx}", layers, layer_order, alias_map)
+            idx += 1
         return
 
-    layer = _build_layer(value, base_id, alias_map)
+    layer = _make_layer_dict(value, base_id, alias_map)
     if layer is None:
         match = _match_pretrained_call(value, alias_map)
         if match is not None:
@@ -607,7 +711,7 @@ def _extract_module_class(
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             func = node.value.func
             if isinstance(func, ast.Attribute) and func.attr == "append" and node.value.args:
-                layer = _build_layer(node.value.args[0], f"append_{dynamic_idx}", alias_map)
+                layer = _make_layer_dict(node.value.args[0], f"append_{dynamic_idx}", alias_map)
                 if layer is not None:
                     layers.append(layer)
                     layer_order.append(layer["id"])
@@ -716,53 +820,273 @@ def _extract_sequential(
     file_path: str,
     line: int,
     model_name: str = "SequentialModel",
+    alias_map: dict[str, str] | None = None,
+    framework: str = "pytorch",
 ) -> dict | None:
-    """Extract layers from nn.Sequential(...) definitions."""
+    """Extract layers from ``Sequential(...)`` definitions.
+
+    Handles positional layer args, a single list/tuple literal
+    (``keras.Sequential([...])``), and ``OrderedDict``/dict-of-layers
+    (``nn.Sequential(OrderedDict(...))``) via ``_flatten_layer_elements``.
+    """
+    layer_calls: list[ast.Call] = []
+    for arg in call_node.args:
+        layer_calls.extend(_flatten_layer_elements(arg))
+    for kw in call_node.keywords:
+        if kw.arg == "layers":
+            layer_calls.extend(_flatten_layer_elements(kw.value))
+
     layers: list[dict] = []
-    connections: list[dict] = []
-
-    for i, arg in enumerate(call_node.args):
-        if isinstance(arg, ast.Call):
-            call_name = _get_call_name(arg)
-            if call_name:
-                layer_type = _resolve_layer_type(call_name)
-                raw_params = _extract_call_params(arg)
-                params = _normalize_params(layer_type, raw_params)
-                category = _LAYER_CATEGORIES.get(layer_type, "other")
-                param_count = _estimate_param_count(layer_type, params)
-                block_dims = _compute_block_dims(layer_type, params, None)
-
-                layer_id = f"layer_{i}"
-                layers.append(
-                    {
-                        "id": layer_id,
-                        "type": layer_type,
-                        "category": category,
-                        "params": params,
-                        "output_shape": None,
-                        "param_count": param_count,
-                        "activation": None,
-                        "block_dims": block_dims,
-                    }
-                )
+    for call in layer_calls:
+        layer = _make_layer_dict(call, f"layer_{len(layers)}", alias_map)
+        if layer is not None:
+            layers.append(layer)
 
     if not layers:
         return None
 
-    # Sequential = linear chain
-    for i in range(len(layers)):
-        from_id = "input" if i == 0 else layers[i - 1]["id"]
-        connections.append({"from_id": from_id, "to_id": layers[i]["id"], "type": "sequential"})
-    connections.append({"from_id": layers[-1]["id"], "to_id": "output", "type": "sequential"})
-
+    connections = _sequential_connections(layers)
     total_params = sum(l.get("param_count", 0) or 0 for l in layers)
 
     return {
         "name": model_name,
         "file": file_path,
         "line": line,
-        "framework": "pytorch",
+        "framework": framework,
         "type": "sequential",
+        "total_params": total_params if total_params > 0 else None,
+        "input_shape": None,
+        "output_shape": None,
+        "layers": layers,
+        "connections": connections,
+        "blocks": None,
+    }
+
+
+# ─────────────────────────────────────────────
+# Imperative Sequential extraction (model.add(...) chains)
+# ─────────────────────────────────────────────
+
+
+def _extract_imperative_sequential(
+    tree: ast.Module,
+    file_path: str,
+    alias_map: dict[str, str] | None,
+) -> list[dict]:
+    """Extract Keras imperative ``model = Sequential(); model.add(Layer(...))`` chains.
+
+    Only tracks ``Sequential()`` assignments with *no* layer args, so this pass
+    stays mutually exclusive with the list/positional-form Sequential handling
+    in ``_extract_sequential`` (no double emission for the same model).
+    """
+    models: list[dict] = []
+
+    tracked: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call) and len(node.targets) == 1):
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        call_name = _get_call_name(node.value)
+        if not call_name:
+            continue
+        resolved = _resolve_with_alias(call_name, alias_map) or call_name
+        if resolved.split(".")[-1] != "Sequential":
+            continue
+        if node.value.args or node.value.keywords:
+            continue  # has layer args — handled by _extract_sequential instead
+        tracked[target.id] = node.lineno
+
+    if not tracked:
+        return models
+
+    add_calls: dict[str, list[tuple[int, ast.Call]]] = {name: [] for name in tracked}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+            continue
+        call = node.value
+        func = call.func
+        if not (isinstance(func, ast.Attribute) and func.attr == "add" and isinstance(func.value, ast.Name)):
+            continue
+        var_name = func.value.id
+        if var_name not in tracked or not call.args:
+            continue
+        add_calls[var_name].append((call.lineno, call.args[0]))
+
+    for var_name, calls in add_calls.items():
+        calls.sort(key=lambda pair: pair[0])  # ast.walk is unordered
+        layers: list[dict] = []
+        for _, layer_call in calls:
+            layer = _make_layer_dict(layer_call, f"layer_{len(layers)}", alias_map)
+            if layer is not None:
+                layers.append(layer)
+        if not layers:
+            continue
+
+        total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+        models.append(
+            {
+                "name": var_name,
+                "file": file_path,
+                "line": tracked[var_name],
+                "framework": "keras",
+                "type": "sequential",
+                "total_params": total_params if total_params > 0 else None,
+                "input_shape": None,
+                "output_shape": None,
+                "layers": layers,
+                "connections": _sequential_connections(layers),
+                "blocks": None,
+            }
+        )
+
+    return models
+
+
+# ─────────────────────────────────────────────
+# Keras functional API extraction
+# ─────────────────────────────────────────────
+
+
+def _extract_functional(
+    tree: ast.Module,
+    file_path: str,
+    alias_map: dict[str, str] | None,
+) -> list[dict]:
+    """Extract Keras functional-API models:
+
+    ``x = Dense(64)(inputs); outputs = Dense(6)(x); model = Model(inputs, outputs)``
+    """
+    models: list[dict] = []
+
+    # var name -> ("input", None, []) | ("layer", layer_call_node, [input_var_names])
+    var_kind: dict[str, tuple[str, ast.Call | None, list[str]]] = {}
+    var_lineno: dict[str, int] = {}
+
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)):
+            continue
+        target_name = node.targets[0].id
+        value = node.value
+        if not isinstance(value, ast.Call):
+            continue
+
+        if isinstance(value.func, ast.Call):
+            # Functional application: <layer-constructor call>(<tensor(s)>)
+            layer_type = _recognize_layer_type(value.func, alias_map)
+            if layer_type is None:
+                continue
+            input_vars: list[str] = []
+            for arg in value.args:
+                if isinstance(arg, ast.Name):
+                    input_vars.append(arg.id)
+                elif isinstance(arg, ast.List | ast.Tuple):
+                    input_vars.extend(el.id for el in arg.elts if isinstance(el, ast.Name))
+            var_kind[target_name] = ("layer", value.func, input_vars)
+            var_lineno[target_name] = node.lineno
+            continue
+
+        call_name = _get_call_name(value)
+        resolved = (_resolve_with_alias(call_name, alias_map) or call_name) if call_name else None
+        leaf = resolved.split(".")[-1] if resolved else None
+        if leaf == "Input":
+            var_kind[target_name] = ("input", None, [])
+            var_lineno[target_name] = node.lineno
+
+    if not var_kind:
+        return models
+
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
+            continue
+        call = node.value
+        call_name = _get_call_name(call)
+        if not call_name:
+            continue
+        resolved = _resolve_with_alias(call_name, alias_map) or call_name
+        if resolved.split(".")[-1] != "Model":
+            continue
+
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        inputs_node = kwargs.get("inputs") or (call.args[0] if len(call.args) >= 1 else None)
+        outputs_node = kwargs.get("outputs") or (call.args[1] if len(call.args) >= 2 else None)
+        if not (isinstance(inputs_node, ast.Name) and isinstance(outputs_node, ast.Name)):
+            continue
+        input_var, output_var = inputs_node.id, outputs_node.id
+        if input_var not in var_kind or output_var not in var_kind:
+            continue
+
+        model_name = "FunctionalModel"
+        if node.targets and isinstance(node.targets[0], ast.Name):
+            model_name = node.targets[0].id
+
+        model = _build_functional_model(var_kind, var_lineno, output_var, file_path, node.lineno, model_name, alias_map)
+        if model is not None:
+            models.append(model)
+
+    return models
+
+
+def _build_functional_model(
+    var_kind: dict[str, tuple[str, ast.Call | None, list[str]]],
+    var_lineno: dict[str, int],
+    output_var: str,
+    file_path: str,
+    line: int,
+    model_name: str,
+    alias_map: dict[str, str] | None,
+) -> dict | None:
+    """Trace the functional-API dataflow graph backward from ``output_var``."""
+    layer_ids: dict[str, str] = {}
+    id_to_var: dict[str, str] = {}
+    layers: list[dict] = []
+    connections: list[dict] = []
+    visiting: set[str] = set()
+
+    def visit(var_name: str) -> str | None:
+        if var_name in layer_ids:
+            return layer_ids[var_name]
+        kind = var_kind.get(var_name)
+        if kind is None:
+            return None
+        tag, layer_call, input_vars = kind
+        if tag == "input":
+            layer_ids[var_name] = "input"
+            return "input"
+
+        if var_name in visiting:
+            return None  # cycle guard
+        visiting.add(var_name)
+
+        layer = _make_layer_dict(layer_call, f"layer_{len(layers)}", alias_map) if layer_call else None
+        if layer is None:
+            return None
+        layers.append(layer)
+        layer_ids[var_name] = layer["id"]
+        id_to_var[layer["id"]] = var_name
+
+        for iv in input_vars:
+            src_id = visit(iv)
+            if src_id is not None:
+                connections.append({"from_id": src_id, "to_id": layer["id"], "type": "sequential"})
+
+        return layer["id"]
+
+    final_id = visit(output_var)
+    if final_id is None or not layers:
+        return None
+
+    connections.append({"from_id": final_id, "to_id": "output", "type": "sequential"})
+    layers.sort(key=lambda l: var_lineno.get(id_to_var.get(l["id"], ""), 0))
+
+    total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+    return {
+        "name": model_name,
+        "file": file_path,
+        "line": line,
+        "framework": "keras",
+        "type": "functional",
         "total_params": total_params if total_params > 0 else None,
         "input_shape": None,
         "output_shape": None,
@@ -812,6 +1136,98 @@ def _build_pretrained_model(match: dict, file_path: str, line: int, model_name: 
         "connections": connections,
         "blocks": None,
     }
+
+
+# ─────────────────────────────────────────────
+# Heuristic catch-all (best-effort "any model" safety net)
+# ─────────────────────────────────────────────
+
+_MAX_HEURISTIC_LAYERS = 50
+
+
+def _is_ml_file(alias_map: dict[str, str] | None) -> bool:
+    """Whether the file's imports reference a known ML framework root."""
+    if not alias_map:
+        return False
+    for origin in alias_map.values():
+        if origin.split(".")[0] in _ML_FRAMEWORK_ROOTS:
+            return True
+    return False
+
+
+def _iter_heuristic_scopes(tree: ast.Module) -> list[tuple[str, list[ast.stmt], int, int]]:
+    """Yield ``(name, body_statements, start_line, end_line)`` for module scope
+    and each top-level function — the scopes the heuristic pass scans."""
+    scopes: list[tuple[str, list[ast.stmt], int, int]] = []
+
+    module_stmts = [s for s in tree.body if not isinstance(s, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)]
+    if module_stmts:
+        start = min(s.lineno for s in module_stmts)
+        end = max(getattr(s, "end_lineno", s.lineno) for s in module_stmts)
+        scopes.append(("module", module_stmts, start, end))
+
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            end = getattr(node, "end_lineno", node.lineno)
+            scopes.append((node.name, node.body, node.lineno, end))
+
+    return scopes
+
+
+def _extract_heuristic_models(
+    tree: ast.Module,
+    file_path: str,
+    alias_map: dict[str, str] | None,
+    claimed_lines: set[int],
+) -> list[dict]:
+    """Best-effort fallback: emit one model per ML-file scope that has >= 2
+    recognized layer-constructor calls but matched none of the structured
+    passes. Labeled ``type="heuristic"`` / ``sequential-unverified`` since the
+    execution order is declaration order, not a traced graph."""
+    models: list[dict] = []
+
+    for name, stmts, start, end in _iter_heuristic_scopes(tree):
+        if any(start <= claimed <= end for claimed in claimed_lines):
+            continue  # scope already covered by a structured model
+
+        calls: list[ast.Call] = []
+        for stmt in stmts:
+            calls.extend(n for n in ast.walk(stmt) if isinstance(n, ast.Call))
+        calls.sort(key=lambda c: c.lineno)
+
+        layers: list[dict] = []
+        for call in calls:
+            if _recognize_layer_type(call, alias_map) is None:
+                continue
+            layer = _make_layer_dict(call, f"layer_{len(layers)}", alias_map)
+            if layer is not None:
+                layers.append(layer)
+            if len(layers) >= _MAX_HEURISTIC_LAYERS:
+                break
+
+        if len(layers) < 2:
+            continue
+
+        stem = file_path.rsplit("/", 1)[-1]
+        stem = stem.rsplit(".", 1)[0] if "." in stem else stem
+        total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+        models.append(
+            {
+                "name": name if name != "module" else stem,
+                "file": file_path,
+                "line": start,
+                "framework": "unknown",
+                "type": "heuristic",
+                "total_params": total_params if total_params > 0 else None,
+                "input_shape": None,
+                "output_shape": None,
+                "layers": layers,
+                "connections": _sequential_connections(layers, unverified=True),
+                "blocks": None,
+            }
+        )
+
+    return models
 
 
 # ─────────────────────────────────────────────
@@ -884,9 +1300,10 @@ def extract_models_from_source(
 
         call_name = _get_call_name(node.value)
 
-        # 2. nn.Sequential(...) assignments
+        # 2. Sequential(...) assignments — positional args, list-form, and
+        # OrderedDict/dict-of-layers (Change 2). Empty-arg Sequential() is left
+        # for the imperative .add() pass below (mutually exclusive, no double emit).
         if call_name and any(call_name.endswith(s) for s in ("Sequential", "nn.Sequential", "keras.Sequential")):
-            # Get model name from assignment target
             model_name = "SequentialModel"
             if node.targets and isinstance(node.targets[0], ast.Name):
                 model_name = node.targets[0].id
@@ -898,7 +1315,11 @@ def extract_models_from_source(
             ):
                 model_name = node.targets[0].attr
 
-            model = _extract_sequential(node.value, file_path, node.lineno, model_name)
+            resolved = _resolve_with_alias(call_name, alias_map) or call_name
+            framework = "keras" if "keras" in resolved else "pytorch"
+            model = _extract_sequential(
+                node.value, file_path, node.lineno, model_name, alias_map=alias_map, framework=framework
+            )
             if model and len(model["layers"]) >= 1:
                 models.append(model)
             continue
@@ -913,6 +1334,21 @@ def extract_models_from_source(
             match = _match_pretrained_call(node.value, alias_map)
             if match is not None:
                 models.append(_build_pretrained_model(match, file_path, node.lineno, node.targets[0].id))
+
+    # 4. Imperative `model.add(...)` Sequential chains (Change 3).
+    models.extend(_extract_imperative_sequential(tree, file_path, alias_map))
+
+    # 5. Keras functional API (Change 4).
+    models.extend(_extract_functional(tree, file_path, alias_map))
+
+    # 6. Conservative heuristic catch-all — only for ML files where nothing
+    # structured matched, and only for scopes not already claimed (Change 6).
+    if not models and _is_ml_file(alias_map):
+        models.extend(_extract_heuristic_models(tree, file_path, alias_map, claimed_lines=set()))
+    elif models:
+        claimed_lines = {m["line"] for m in models if m.get("line") is not None}
+        if _is_ml_file(alias_map):
+            models.extend(_extract_heuristic_models(tree, file_path, alias_map, claimed_lines))
 
     return models
 
