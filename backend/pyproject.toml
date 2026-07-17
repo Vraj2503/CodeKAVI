@@ -4,6 +4,10 @@ version = "0.2.0"
 description = "AI-powered codebase intelligence platform"
 requires-python = ">=3.12"
 
+# Development reload configuration for tools that read pyproject.toml.
+[tool.uvicorn]
+reload-excludes = ["cloned_repos/*", "output/*"]
+
 # ─────────────────────────────────────────
 # Ruff — lint + format (replaces flake8, isort, black)
 # ─────────────────────────────────────────

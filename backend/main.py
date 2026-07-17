@@ -20,7 +20,7 @@ from codekavi.logging_config import RequestIDMiddleware, setup_logging
 from codekavi.routes import api_router
 from codekavi.settings import settings
 from codekavi.task_registry import BackgroundTaskRegistry
-from codekavi.utils import current_io_executor, current_cpu_executor
+from codekavi.utils import current_cpu_executor, current_io_executor
 
 # Setup logging immediately before other modules log anything
 setup_logging()
@@ -139,3 +139,15 @@ async def health():
         "llm_configured": gemini_configured,
         "llm_provider": "gemini" if gemini_configured else None,
     }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        reload_excludes=["cloned_repos/*", "output/*"],
+    )
