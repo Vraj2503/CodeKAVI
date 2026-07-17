@@ -84,19 +84,20 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
             repo_data = traverse_repo(clone_path)
             # Create content_cache_dict for pre-population
             content_cache_dict = {}
-            for f in repo_data.get("files", []):
-                if "content" in f:
-                    content_cache_dict[f["path"]] = f.pop("content")
+            for f in repo_data.files:
+                if f.content is not None:
+                    content_cache_dict[f.path] = f.content
+                    f.content = None
 
             content_cache = BoundedContentCache(settings.max_content_cache_bytes)
             for k, v in content_cache_dict.items():
                 content_cache[k] = v
 
             try:
-                dep_data = analyze_dependencies(clone_path, repo_data["files"], content_cache)
+                dep_data = analyze_dependencies(clone_path, repo_data.files, content_cache)
                 file_profiles = classify_files(
                     clone_path,
-                    repo_data["files"],
+                    repo_data.files,
                     dep_data,
                     content_cache=content_cache,
                 )
@@ -104,12 +105,17 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
                 content_cache.clear()
                 del content_cache
 
+            dep_data_dict = dep_data.model_dump()
+            file_profiles_dicts = [p.model_dump() for p in file_profiles]
+            repo_data_dict = repo_data.model_dump()
+            repo_files_dicts = [f.model_dump() for f in repo_data.files]
+
             role_summary = summarize_roles(file_profiles)
-            graph_json = export_graph_json(dep_data, file_profiles)
-            module_graph = build_module_graph(dep_data, file_profiles, depth=1)
+            graph_json = export_graph_json(dep_data_dict, file_profiles_dicts)
+            module_graph = build_module_graph(dep_data_dict, file_profiles_dicts, depth=1)
 
             selector = SmartFileSelector()
-            selected_files = selector.select_files(repo_data["files"], dep_data, file_profiles)
+            selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
 
             repo_dir = os.path.basename(clone_path)
             repo_name, _, _ = repo_dir.rpartition("_")
@@ -117,9 +123,9 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
             result = {
                 "repo_name": repo_name,
                 "owner": "",
-                "repo_data": repo_data,
-                "dep_data": dep_data,
-                "file_profiles": file_profiles,
+                "repo_data": repo_data_dict,
+                "dep_data": dep_data_dict,
+                "file_profiles": file_profiles_dicts,
                 "role_summary": role_summary,
                 "graph_json": graph_json,
                 "module_graph": module_graph,

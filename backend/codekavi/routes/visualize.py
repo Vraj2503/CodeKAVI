@@ -41,6 +41,8 @@ async def _load_repo(repo_id: str, cache: AnalysisCache):
     """Load repo analysis data. Raises HTTPException if not found."""
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="visualize: failed to load repo") from e
 

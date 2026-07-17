@@ -1,16 +1,15 @@
+import asyncio
 import hashlib
 import logging
 import os
-import time
-import asyncio
 from typing import Any
 
 from dotenv import load_dotenv
-from google import genai
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from codekavi.config import detect_language
 from codekavi.config import detect_layer as _detect_layer
+from codekavi.embedding import CloudflareEmbedding
 from codekavi.settings import settings
 from codekavi.vectorstore import zilliz_client
 
@@ -22,9 +21,6 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 20  # Gemini batch-embed accepts up to ~100 items/call; 20 is safe
 MAX_RETRIES = 6  # Retry attempts on transient / rate-limit errors
 INITIAL_BACKOFF_S = 20  # Start at 20s; doubles each attempt on 429
-
-
-from codekavi.embedding import CloudflareEmbedding
 
 
 async def index_repository(
@@ -77,6 +73,7 @@ async def index_repository(
 
         batch_len = len(current_batch_texts)
         total_chunks_attempted += batch_len
+        batch_succeeded = False
 
         try:
             embeddings = await cf_client.embed_texts(current_batch_texts)
@@ -88,9 +85,7 @@ async def index_repository(
             if len(embeddings) != batch_len:
                 from codekavi.exceptions import IndexingError
 
-                raise IndexingError(
-                    f"embedding count {len(embeddings)} != texts {batch_len} for {repo_id}"
-                )
+                raise IndexingError(f"embedding count {len(embeddings)} != texts {batch_len} for {repo_id}")
             provider_name = "cloudflare"
 
             ids = [m["id"] for m in current_batch_metadata]
@@ -129,6 +124,7 @@ async def index_repository(
             logger.info(
                 f"  Inserted {inserted} chunks via {provider_name} (Total: {total_chunks_inserted}/{total_chunks_attempted})"
             )
+            batch_succeeded = True
 
         except Exception as e:
             logger.error(f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}")
@@ -137,6 +133,9 @@ async def index_repository(
         # Reset batch regardless of success/failure
         current_batch_texts.clear()
         current_batch_metadata.clear()
+
+        if batch_succeeded and settings.indexer_batch_delay_s > 0:
+            await asyncio.sleep(settings.indexer_batch_delay_s)
 
     # 3. Process each file
     for profile in file_profiles:
@@ -221,8 +220,6 @@ async def index_repository(
 
             if len(current_batch_texts) >= BATCH_SIZE:
                 await flush_batch()
-                # No inter-batch delay needed — rate limits are handled
-                # per-API-call in _embed_with_retry via exponential backoff
 
     # Flush remaining
     await flush_batch()
