@@ -24,10 +24,10 @@ from codekavi.limiter import per_minute
 from codekavi.orchestrator import ExplanationOrchestrator
 from codekavi.quota import get_token_tracker
 from codekavi.routes._errors import internal_error, scrub_message
+from codekavi.routes.analyze import with_keepalive
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ExplainFileRequest, ExplainRequest
 from codekavi.session import ensure_repo_loaded
-from codekavi.routes.analyze import with_keepalive
 from codekavi.tour_generator import generate_deterministic_tour
 from codekavi.utils import get_explainer as _get_explainer
 from codekavi.utils import run_sync
@@ -120,15 +120,17 @@ async def explain_repo(
     # 1. Architecture overview
     logger.info(f"Generating architecture overview for {repo_id}...")
     try:
+        _repo_data_dict = repo_data if isinstance(repo_data, dict) else repo_data.model_dump()
+        _dep_data_dict = dep_data if isinstance(dep_data, dict) else dep_data.model_dump()
         arch_result = await explainer.explain_architecture(
             repo_name=repo_name,
             owner=owner,
-            total_files=repo_data.get("total_files", len(file_profiles)),
-            total_size_formatted=repo_data.get("total_size_formatted", ""),
-            languages=repo_data.get("languages", {}),
+            total_files=_repo_data_dict.get("total_files", len(file_profiles)),
+            total_size_formatted=_repo_data_dict.get("total_size_formatted", ""),
+            languages=_repo_data_dict.get("languages", {}),
             role_summary=role_summary,
-            entry_points=dep_data.get("entry_points", []),
-            central_files=dep_data.get("central_files", []),
+            entry_points=_dep_data_dict.get("entry_points", []),
+            central_files=_dep_data_dict.get("central_files", []),
             module_graph=module_graph if isinstance(module_graph, dict) else {},
             file_profiles=file_profiles,
         )

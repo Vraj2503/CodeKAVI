@@ -45,7 +45,6 @@ from codekavi.traverser import traverse_repo
 from codekavi.utils import BoundedContentCache
 from codekavi.utils import run_sync as _run_sync
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -180,13 +179,15 @@ async def analyze(
                 cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
                 if cached_result:
                     logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
+                    _cached_rd = cached_result.get("repo_data", repo_data)
+                    _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
                     return {
                         "success": True,
                         "repo_id": repo_id,
                         "repo_name": clone_info["repo_name"],
                         "owner": clone_info["owner"],
                         "github_url": github_url,
-                        **cached_result.get("repo_data", repo_data.model_dump()),
+                        **_cached_rd_dict,
                         "dependencies": cached_result.get("dep_data", {}),
                         "file_profiles": cached_result.get("file_profiles", []),
                         "role_summary": cached_result.get("role_summary", {}),
@@ -207,8 +208,10 @@ async def analyze(
                     changed_paths = {
                         path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
                     }
+                    _cached_rd = cached_result.get("repo_data", {})
+                    _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
                     deleted_paths = {
-                        path for path in cached_result.get("repo_data", {}).get("files", []) if path not in fingerprints
+                        f["path"] for f in _cached_rd_dict.get("files", []) if f["path"] not in fingerprints
                     }
 
                     partial_files = [f for f in repo_data.files if f.path in changed_paths]
@@ -618,10 +621,10 @@ async def analyze_stream(
                         changed_paths = {
                             path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
                         }
+                        _cached_rd = cached_result.get("repo_data", {})
+                        _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
                         deleted_paths = {
-                            path
-                            for path in cached_result.get("repo_data", {}).get("files", [])
-                            if path not in fingerprints
+                            f["path"] for f in _cached_rd_dict.get("files", []) if f["path"] not in fingerprints
                         }
 
                         partial_files = [f for f in repo_data.files if f.path in changed_paths]
@@ -916,6 +919,8 @@ async def get_graph(
     """
     try:
         result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="get_graph: failed to load repo") from e
 
@@ -955,6 +960,8 @@ async def restore_repo(
     """Restore analysis results from cache chain for a previously analyzed repo."""
     try:
         result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="restore_repo: failed to load repo") from e
 

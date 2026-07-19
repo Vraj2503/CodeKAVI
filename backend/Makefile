@@ -44,6 +44,9 @@ typecheck:
 	python -m mypy codekavi/ --ignore-missing-imports
 
 # ── Development Server ──
+# On Windows, use `python main.py` or include both reload exclusions when
+# invoking uvicorn directly so cloned repositories and generated output do not
+# trigger WatchFiles restarts.
 run:
 	python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude "cloned_repos/*" --reload-exclude "output/*"
 

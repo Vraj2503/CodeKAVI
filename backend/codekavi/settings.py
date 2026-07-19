@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # provider's RPM limit (Groq's free tier is 30 RPM). Configurable so
     # deployments on higher-tier quotas don't eat a fixed 6s tax per report.
     orchestrator_batch_delay_s: float = Field(default=3.0, validation_alias="ORCHESTRATOR_BATCH_DELAY_S")
+    indexer_batch_delay_s: float = Field(
+        default=1.0,
+        validation_alias="INDEXER_BATCH_DELAY_S",
+        description="Seconds to pause between embedding batches. Set to 0 for testing speed.",
+    )
     # Cost per 1k tokens by provider. Used by TokenTracker to populate
     # ``estimated_cost_usd`` in log records. Order-of-magnitude figures —
     # actual Groq/Gemini pricing varies by tier.
