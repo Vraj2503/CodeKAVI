@@ -29,7 +29,7 @@ Roles:
 
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 from codekavi.utils import BoundedContentCache
@@ -245,11 +245,13 @@ def _content_signals(
         try:
             if ext.lower() == ".ipynb":
                 import json
+
                 with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     nb = json.load(f)
                 code_cells = [
                     "".join(c.get("source", [])) if isinstance(c.get("source"), list) else c.get("source", "")
-                    for c in nb.get("cells", []) if c.get("cell_type") == "code"
+                    for c in nb.get("cells", [])
+                    if c.get("cell_type") == "code"
                 ]
                 content = "\n".join(code_cells)[:16384]  # Read up to 16KB of actual code
             else:
@@ -344,7 +346,9 @@ def _content_signals(
         signals["has_ml_model_def"] = True
     if re.search(r"(?:nn\.Sequential|keras\.Sequential|tf\.keras\.Sequential)\s*\(", content):
         signals["has_ml_model_def"] = True
-    if re.search(r"(?:nn\.(?:Conv|Linear|LSTM|GRU|BatchNorm|Dropout|Embedding|Transformer)|layers\.(?:Dense|Conv))", content):
+    if re.search(
+        r"(?:nn\.(?:Conv|Linear|LSTM|GRU|BatchNorm|Dropout|Embedding|Transformer)|layers\.(?:Dense|Conv))", content
+    ):
         signals["has_ml_model_def"] = True
 
     # Training signals
@@ -789,3 +793,85 @@ def summarize_roles(profiles: list[FileProfile]) -> dict:
         "top_files": top_files,
         "dependency_hubs": dependency_hubs,
     }
+
+
+# ─────────────────────────────────────────────
+# Repo type detection
+# ─────────────────────────────────────────────
+
+_ML_ROLES = {"ml_model", "ml_training", "ml_pipeline"}
+_TEMPLATE_EXTENSIONS = {".html", ".vue", ".svelte", ".ejs", ".hbs", ".pug", ".jinja", ".jinja2"}
+
+
+def detect_repo_type(file_profiles: list[FileProfile], dep_data: DepGraph) -> str:
+    """
+    Detect the overall type of the repository from its file role distribution.
+
+    Returns one of: "web_app", "ml_pipeline", "microservice", "cli_tool", "library".
+    Used to hint the data flow LLM prompt and pick a flow style on the frontend.
+    """
+    if not file_profiles:
+        return "library"
+
+    role_counts = Counter(p.role for p in file_profiles)
+    has_ml = any(role_counts[r] for r in _ML_ROLES)
+    has_router = role_counts["router"] > 0
+    has_entry = role_counts["entry_point"] > 0 or bool(dep_data.entry_points)
+    has_docker = any(p.role == "build" and "infrastructure" in p.tags for p in file_profiles)
+    has_templates = any(os.path.splitext(p.name)[1].lower() in _TEMPLATE_EXTENSIONS for p in file_profiles)
+
+    if has_ml:
+        return "ml_pipeline"
+    if has_router and has_templates:
+        return "web_app"
+    if has_router and (has_docker or role_counts["config"] > 0):
+        return "microservice"
+    if has_router:
+        return "web_app"
+    if has_entry:
+        return "cli_tool"
+    return "library"
+
+
+if __name__ == "__main__":
+
+    def _profile(role: str, name: str = "f.py", tags: list[str] | None = None) -> FileProfile:
+        return FileProfile(
+            path=name,
+            name=name,
+            language="Python",
+            size=10,
+            role=role,
+            role_label=role,
+            role_confidence=0.9,
+            depends_on=[],
+            used_by=[],
+            in_degree=0,
+            out_degree=0,
+            importance_score=0.0,
+            tags=tags or [],
+        )
+
+    empty_dep = DepGraph(
+        edges=[],
+        adjacency={},
+        reverse_adjacency={},
+        file_imports={},
+        entry_points=[],
+        file_signals={},
+        central_files=[],
+        stats={},
+    )
+
+    assert detect_repo_type([], empty_dep) == "library"
+    assert detect_repo_type([_profile("ml_training")], empty_dep) == "ml_pipeline"
+    assert detect_repo_type([_profile("router"), _profile("index.html", name="index.html")], empty_dep) == "web_app"
+    assert (
+        detect_repo_type(
+            [_profile("router"), _profile("build", name="Dockerfile", tags=["devops", "infrastructure"])], empty_dep
+        )
+        == "microservice"
+    )
+    assert detect_repo_type([_profile("entry_point")], empty_dep) == "cli_tool"
+    assert detect_repo_type([_profile("shared_utility")], empty_dep) == "library"
+    print("detect_repo_type: all checks passed")

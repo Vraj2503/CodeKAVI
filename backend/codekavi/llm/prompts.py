@@ -282,3 +282,72 @@ Use Markdown formatting."""
         Message(role="system", content=SYSTEM_CODE_ANALYST),
         Message(role="user", content=user_prompt),
     ]
+
+
+# ─────────────────────────────────────────────
+# Data flow prompt
+# ─────────────────────────────────────────────
+
+SYSTEM_DATAFLOW_ANALYST = "You are CodeKavi, an expert software architect. Return ONLY valid JSON, no prose."
+
+
+def build_dataflow_prompt(
+    entry_points: list[str],
+    role_summary: dict[str, int],
+    adjacency_summary: list[str],
+    languages: list[str],
+    repo_type: str,
+) -> str:
+    """
+    Build the user prompt for semantic data flow generation. Returns a plain
+    string (paired with SYSTEM_DATAFLOW_ANALYST) since the caller uses
+    provider.generate_with_usage(system_prompt, user_prompt), not the
+    Message-list style used by the explanation prompts above.
+    """
+    entry_str = ", ".join(f"`{e}`" for e in entry_points[:10]) or "None detected"
+    role_str = ", ".join(f"{role} ({count})" for role, count in role_summary.items())
+    adjacency_str = "\n".join(f"  - {line}" for line in adjacency_summary[:30]) or "  (none)"
+    lang_str = ", ".join(languages) or "Unknown"
+
+    return f"""Analyze the data flow in this codebase and return a JSON object describing how data moves through the application.
+
+Context:
+- Entry points: {entry_str}
+- File roles: {role_str}
+- Import graph (sample):
+{adjacency_str}
+- Detected languages: {lang_str}
+- Repo type hint: {repo_type}
+
+Return a JSON object with this exact structure:
+{{
+  "repo_type": "web_app" | "ml_pipeline" | "microservice" | "cli_tool" | "library",
+  "nodes": [
+    {{
+      "id": "unique_id",
+      "label": "Human-readable label (e.g., 'Authentication Middleware', 'User Database')",
+      "type": "process" | "data_store" | "io" | "transform",
+      "description": "1-2 sentence description of what this node does",
+      "source_files": ["list", "of", "actual", "file", "paths", "that", "map", "to", "this", "node"]
+    }}
+  ],
+  "edges": [
+    {{
+      "source": "node_id",
+      "target": "node_id",
+      "label": "What data flows here (e.g., 'JWT Token', 'SQL Query Results')",
+      "data_type": "http" | "db" | "file" | "event" | "internal"
+    }}
+  ]
+}}
+
+Rules:
+- Nodes should represent CONCEPTUAL stages in the data flow, not individual files
+- Group related files into single nodes (e.g., all route handlers -> "API Router")
+- Include external systems as nodes (e.g., "PostgreSQL Database", "Redis Cache", "External API") with an empty source_files list
+- Every node must have at least one edge
+- Edges flow left-to-right: input sources -> processing -> output/storage
+- For ML pipelines: Data Loading -> Preprocessing -> Feature Engineering -> Model Training -> Evaluation -> Inference
+- For web apps: Client Request -> Routing -> Authentication -> Business Logic -> Data Access -> Response
+- Maximum 15 nodes, 25 edges
+- source_files must reference actual file paths from the provided file roles"""

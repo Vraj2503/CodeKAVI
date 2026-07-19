@@ -16,13 +16,16 @@ Endpoints:
 import json
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from codekavi.analyzer import SUPPORTED_LANGUAGES
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.config import detect_layer as _detect_layer
+from codekavi.graph import export_graph_json
 from codekavi.limiter import per_minute
 from codekavi.routes._errors import internal_error
 from codekavi.routes.dependencies import get_cache
@@ -73,49 +76,16 @@ async def visualize_dependencies(
     """
     result, _ = await _load_repo(repo_id, cache)
     analysis = result.get("dep_data", {})
-    adjacency = analysis.get("adjacency", {})
+    file_profiles = result.get("file_profiles", [])
 
-    from typing import Any
+    # export_graph_json enriches nodes with role/importance/language/degree
+    # and already seeds standalone (edge-less) files as nodes, so no separate
+    # fallback seeding is needed here.
+    graph_export = export_graph_json(analysis, file_profiles=file_profiles, max_nodes=60)
+    nodes: list[dict[str, Any]] = [{**n, "type": _detect_layer(n["id"])} for n in graph_export["nodes"]]
+    edges: list[dict[str, Any]] = [{"source": e["source"], "target": e["target"]} for e in graph_export["edges"]]
 
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    seen_nodes = set()
-
-    for src, targets in adjacency.items():
-        if len(nodes) >= 60:
-            break
-        if src not in seen_nodes:
-            seen_nodes.add(src)
-            nodes.append(
-                {
-                    "id": src,
-                    "label": os.path.basename(src),
-                    "type": _detect_layer(src),
-                }
-            )
-        target_list = targets if isinstance(targets, list) else [targets]
-        for t in target_list:
-            if len(edges) >= 100:
-                break
-            if t not in seen_nodes and len(nodes) < 60:
-                seen_nodes.add(t)
-                nodes.append(
-                    {
-                        "id": t,
-                        "label": os.path.basename(t),
-                        "type": _detect_layer(t),
-                    }
-                )
-            if t in seen_nodes:
-                edges.append({"source": src, "target": t})
-
-    if not nodes:
-        # Fallback: adjacency has no edges (unresolved imports, non-Python
-        # repo, etc.) — seed standalone nodes straight from file_profiles so
-        # the graph is never empty for a repo that has analyzable files.
-        for fp in result.get("file_profiles", [])[:60]:
-            path = fp.get("path", "")
-            nodes.append({"id": path, "label": os.path.basename(path), "type": _detect_layer(path)})
+    diagnostics = _build_diagnostics(analysis, file_profiles, edge_count=len(edges), node_count=len(nodes))
 
     # ───── Module-level data (for hierarchical view) ─────
     module_graph = result.get("module_graph", {}) or {}
@@ -141,7 +111,28 @@ async def visualize_dependencies(
             "modules": modules,
             "connections": connections,
             "module_graph": module_graph_json,
+            "diagnostics": diagnostics,
         },
+    }
+
+
+def _build_diagnostics(analysis: dict, file_profiles: list[dict], edge_count: int, node_count: int) -> dict[str, Any]:
+    """Honest resolution stats so the frontend can distinguish 'no data' from
+    'data present but unresolved' instead of always showing disconnected dots."""
+    stats = analysis.get("stats", {})
+    resolved = stats.get("resolved_edges", 0)
+    unresolved = stats.get("unresolved_edges", 0)
+    total_attempts = resolved + unresolved
+    resolution_rate = round(resolved / total_attempts, 3) if total_attempts else 1.0
+
+    languages_present = {fp.get("language", "Unknown") for fp in file_profiles}
+    unsupported_languages = sorted(languages_present - SUPPORTED_LANGUAGES - {"Unknown"})
+
+    return {
+        "edge_count": edge_count,
+        "node_count": node_count,
+        "resolution_rate": resolution_rate,
+        "unsupported_languages": unsupported_languages,
     }
 
 
@@ -263,60 +254,96 @@ async def visualize_dataflow(
     user_id: str = Depends(verify_supabase_token),
 ):
     """
-    Build data flow diagram from entry points and their dependencies.
-    Zero LLM cost — uses entry_points and adjacency from /analyze.
+    Build a semantic data flow diagram: static role-based grouping enriched
+    with an LLM pass (cached after the first call). Falls back to the
+    static-only result — with a `fallback_reason` on the metadata — if the
+    LLM call fails, returns invalid JSON, or the user is out of quota.
     """
     result, _ = await _load_repo(repo_id, cache)
     analysis = result.get("dep_data", {})
-    adjacency = analysis.get("adjacency", {})
-    entry_points = analysis.get("entry_points", [])
+    file_profiles = result.get("file_profiles", [])
 
-    from typing import Any
+    from codekavi.classifier import detect_repo_type, summarize_roles
+    from codekavi.graph import export_semantic_dataflow
+    from codekavi.pipeline_models import DepGraph, FileProfile
 
-    nodes: list[dict[str, Any]] = []
-    edges: list[dict[str, Any]] = []
-    seen = set()
-
-    if entry_points:
-        seed_files = [ep.get("file", "") for ep in entry_points[:5]]
-    else:
-        # Fallback: no entry points detected — seed from the most central
-        # files (ranked by in/out degree), or as a last resort the
-        # top-importance file_profiles, so the flow diagram is never empty.
-        central_files = analysis.get("central_files", [])
-        if central_files:
-            seed_files = [cf.get("file", "") for cf in central_files[:5]]
-        else:
-            top_files = sorted(
-                result.get("file_profiles", []),
-                key=lambda fp: fp.get("importance_score", 0),
-                reverse=True,
-            )
-            seed_files = [fp.get("path", "") for fp in top_files[:5]]
-
-    # Start from entry points and follow dependencies (BFS, depth=3)
-    queue = [(f, 0) for f in seed_files]
-
-    while queue and len(nodes) < 50:
-        file_path, depth = queue.pop(0)
-        if file_path in seen or depth > 3:
-            continue
-        seen.add(file_path)
-        nodes.append(
-            {
-                "id": file_path,
-                "label": os.path.basename(file_path),
-                "type": "entry_point" if depth == 0 else _detect_layer(file_path),
-            }
+    profile_objs = [FileProfile(**fp) for fp in file_profiles]
+    dep_graph_obj = (
+        DepGraph(**analysis)
+        if analysis
+        else DepGraph(
+            edges=[],
+            adjacency={},
+            reverse_adjacency={},
+            file_imports={},
+            entry_points=[],
+            file_signals={},
+            central_files=[],
+            stats={},
         )
-        for target in adjacency.get(file_path, []) if isinstance(adjacency.get(file_path), list) else []:
-            edges.append({"source": file_path, "target": target})
-            if target not in seen:
-                queue.append((target, depth + 1))
+    )
+    repo_type = detect_repo_type(profile_objs, dep_graph_obj)
+
+    dataflow_data = export_semantic_dataflow(analysis, file_profiles)
+    fallback_reason: str | None = None
+
+    cached_llm = result.get("dataflow_llm")
+    if cached_llm:
+        dataflow_data = cached_llm
+    else:
+        from codekavi.quota import get_token_tracker
+
+        tracker = get_token_tracker()
+        if not tracker.check_quota(user_id):
+            fallback_reason = "quota_exceeded"
+        else:
+            try:
+                from codekavi.llm.prompts import SYSTEM_DATAFLOW_ANALYST, build_dataflow_prompt
+                from codekavi.llm.providers import get_provider
+
+                role_summary = summarize_roles(profile_objs)["role_counts"]
+                adjacency_summary = [
+                    f"{src} -> {tgt}"
+                    for src, targets in list(analysis.get("adjacency", {}).items())[:30]
+                    for tgt in (targets if isinstance(targets, list) else [])[:1]
+                ]
+                languages = sorted({fp.get("language", "Unknown") for fp in file_profiles})
+                entry_points = [ep.get("file", "") for ep in analysis.get("entry_points", [])]
+
+                prompt = build_dataflow_prompt(
+                    entry_points=entry_points,
+                    role_summary=role_summary,
+                    adjacency_summary=adjacency_summary,
+                    languages=languages,
+                    repo_type=repo_type,
+                )
+                provider = get_provider("data_flow")
+                response, _usage = await provider.generate_with_usage(
+                    system_prompt=SYSTEM_DATAFLOW_ANALYST,
+                    user_prompt=prompt,
+                    temperature=0.2,
+                    max_tokens=2500,
+                    json_mode=True,
+                    user_id=user_id,
+                )
+                parsed = json.loads(response)
+                enriched = export_semantic_dataflow(analysis, file_profiles, llm_enrichment=parsed)
+                if enriched["metadata"]["is_llm_enriched"]:
+                    dataflow_data = enriched
+                    result["dataflow_llm"] = enriched
+                    await run_sync(cache.set, repo_id, result)
+                else:
+                    fallback_reason = "invalid_llm_response"
+            except Exception as e:
+                logger.warning(f"Data flow LLM generation failed, using static fallback: {e}")
+                fallback_reason = "llm_failed"
+
+    if fallback_reason:
+        dataflow_data = {**dataflow_data, "metadata": {**dataflow_data["metadata"], "fallback_reason": fallback_reason}}
 
     return {
         "type": "flow_diagram",
-        "data": {"nodes": nodes, "edges": edges},
+        "data": dataflow_data,
     }
 
 

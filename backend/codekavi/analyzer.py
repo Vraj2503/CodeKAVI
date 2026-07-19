@@ -634,6 +634,10 @@ _EXTRACTORS: dict[str, Callable[..., Any]] = {
     "Jupyter Notebook": _extract_ipynb_imports,
 }
 
+# Languages with a registered import extractor — used by the visualize routes
+# to flag file_profiles languages that can never produce resolved edges.
+SUPPORTED_LANGUAGES: set[str] = set(_EXTRACTORS.keys())
+
 
 def _detect_language(filepath: str) -> str:
     """Detect language from filename or extension."""

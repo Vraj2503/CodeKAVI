@@ -587,7 +587,226 @@ def _get_module_name(filepath: str, depth: int) -> str:
 
 
 # ─────────────────────────────────────────────
-# 5. Circular dependency detection
+# 5. Semantic data flow (hybrid static + LLM)
+# ─────────────────────────────────────────────
+
+# Maps each classifier role to a (tier, node_type) pair used to bucket files
+# into conceptual data-flow stages. Roles absent from this map (test,
+# documentation, build, barrel, leaf, unknown, ...) don't represent a stage
+# in the runtime data flow and are excluded.
+_ROLE_TIER_TYPE: dict[str, tuple[int, str]] = {
+    "entry_point": (0, "io"),
+    "router": (1, "io"),
+    "orchestrator": (2, "process"),
+    "core_module": (2, "process"),
+    "ml_training": (2, "process"),
+    "ml_pipeline": (2, "process"),
+    "shared_utility": (3, "transform"),
+    "internal_helper": (3, "transform"),
+    "ml_model": (4, "data_store"),
+    "type_definition": (4, "data_store"),
+    "config": (4, "data_store"),
+    "data": (4, "data_store"),
+}
+
+_ROLE_STAGE_LABELS: dict[str, str] = {
+    "entry_point": "Entry Points",
+    "router": "Routing",
+    "orchestrator": "Orchestration",
+    "core_module": "Core Logic",
+    "ml_training": "Model Training",
+    "ml_pipeline": "Data Pipeline",
+    "shared_utility": "Shared Utilities",
+    "internal_helper": "Helpers",
+    "ml_model": "Model Definitions",
+    "type_definition": "Types / Models",
+    "config": "Configuration",
+    "data": "Data / Migrations",
+}
+
+_TYPE_SHAPES: dict[str, str] = {
+    "process": "rounded_rect",
+    "data_store": "cylinder",
+    "io": "parallelogram",
+    "transform": "hexagon",
+}
+
+_VALID_DATA_TYPES = {"http", "db", "file", "event", "internal"}
+
+
+def export_semantic_dataflow(
+    dep_data: dict,
+    file_profiles: list[dict],
+    llm_enrichment: dict | None = None,
+) -> dict:
+    """
+    Build a semantic data flow graph: conceptual stages (not individual
+    files) connected by edges that describe how data moves through the app.
+
+    Static pass groups files by role into stage nodes and draws edges from
+    the real import adjacency. When ``llm_enrichment`` (parsed LLM JSON with
+    the same node/edge shape) is provided and validates, it replaces the
+    static result with richer semantic labels/descriptions; on validation
+    failure the static result is returned so the caller can always render
+    something.
+    """
+    static = _static_dataflow(dep_data, file_profiles)
+    if llm_enrichment is None:
+        return static
+
+    merged = _merge_llm_dataflow(llm_enrichment, file_profiles)
+    return merged if merged is not None else static
+
+
+def _static_dataflow(dep_data: dict, file_profiles: list[dict]) -> dict:
+    profile_map = {p["path"]: p for p in file_profiles}
+
+    stage_files: dict[str, list[str]] = defaultdict(list)
+    for p in file_profiles:
+        if p.get("role") in _ROLE_TIER_TYPE:
+            stage_files[p["role"]].append(p["path"])
+
+    nodes = []
+    for role, files in stage_files.items():
+        tier, node_type = _ROLE_TIER_TYPE[role]
+        nodes.append(
+            {
+                "id": role,
+                "label": _ROLE_STAGE_LABELS[role],
+                "type": node_type,
+                "shape": _TYPE_SHAPES[node_type],
+                "description": f"{len(files)} file(s) classified as {role.replace('_', ' ')}.",
+                "source_files": files,
+                "tier": tier,
+            }
+        )
+
+    adjacency = dep_data.get("adjacency", {})
+    edge_counts: dict[tuple[str, str], int] = defaultdict(int)
+    for src, targets in adjacency.items():
+        src_role = profile_map.get(src, {}).get("role")
+        if src_role not in _ROLE_TIER_TYPE:
+            continue
+        for tgt in targets if isinstance(targets, list) else []:
+            tgt_role = profile_map.get(tgt, {}).get("role")
+            if tgt_role not in _ROLE_TIER_TYPE or tgt_role == src_role:
+                continue
+            edge_counts[(src_role, tgt_role)] += 1
+
+    edges = [
+        {
+            "source": src_role,
+            "target": tgt_role,
+            "label": f"{count} import(s)",
+            "data_type": "internal",
+            "animated": False,
+        }
+        for (src_role, tgt_role), count in edge_counts.items()
+    ]
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {
+            "is_llm_enriched": False,
+            "repo_type": "unknown",
+            "total_nodes": len(nodes),
+            "total_edges": len(edges),
+            "tiers": sorted({n["type"] for n in nodes}),
+        },
+    }
+
+
+def _merge_llm_dataflow(llm_enrichment: dict, file_profiles: list[dict]) -> dict | None:
+    """Validate + normalize LLM-generated nodes/edges. Returns None if the
+    response is too malformed to trust (caller falls back to static)."""
+    valid_paths = {p["path"] for p in file_profiles}
+    raw_nodes = llm_enrichment.get("nodes", [])
+    raw_edges = llm_enrichment.get("edges", [])
+    if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list) or not raw_nodes or not raw_edges:
+        return None
+
+    nodes = []
+    node_ids: set[str] = set()
+    for n in raw_nodes[:15]:
+        node_id = n.get("id") if isinstance(n, dict) else None
+        if not node_id or node_id in node_ids:
+            continue
+        node_ids.add(node_id)
+        node_type = n.get("type") if n.get("type") in _TYPE_SHAPES else "process"
+        source_files = [f for f in n.get("source_files", []) or [] if f in valid_paths]
+        nodes.append(
+            {
+                "id": node_id,
+                "label": n.get("label") or node_id,
+                "type": node_type,
+                "shape": _TYPE_SHAPES[node_type],
+                "description": n.get("description") or "",
+                "source_files": source_files,
+                "tier": 0,
+            }
+        )
+    if not nodes:
+        return None
+
+    edges = []
+    seen_edges: set[tuple[str, str]] = set()
+    for e in raw_edges[:25]:
+        if not isinstance(e, dict):
+            continue
+        src, tgt = e.get("source"), e.get("target")
+        if src not in node_ids or tgt not in node_ids or src == tgt or (src, tgt) in seen_edges:
+            continue
+        seen_edges.add((src, tgt))
+        data_type = e.get("data_type") if e.get("data_type") in _VALID_DATA_TYPES else "internal"
+        edges.append(
+            {
+                "source": src,
+                "target": tgt,
+                "label": e.get("label") or "",
+                "data_type": data_type,
+                "animated": True,
+            }
+        )
+    if not edges:
+        return None
+
+    tiers = _topological_tiers(node_ids, edges)
+    for n in nodes:
+        n["tier"] = tiers.get(n["id"], 0)
+
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "metadata": {
+            "is_llm_enriched": True,
+            "repo_type": llm_enrichment.get("repo_type", "unknown"),
+            "total_nodes": len(nodes),
+            "total_edges": len(edges),
+            "tiers": sorted({n["type"] for n in nodes}),
+        },
+    }
+
+
+def _topological_tiers(node_ids: set[str], edges: list[dict]) -> dict[str, int]:
+    """Longest-path-from-source layering so left-to-right layout follows
+    the actual edge direction. Bounded iteration count tolerates cycles
+    (LLM output isn't guaranteed to be a DAG) by simply stopping early."""
+    tier = {node_id: 0 for node_id in node_ids}
+    for _ in range(len(node_ids) + 1):
+        changed = False
+        for e in edges:
+            src, tgt = e["source"], e["target"]
+            if tier[tgt] <= tier[src]:
+                tier[tgt] = tier[src] + 1
+                changed = True
+        if not changed:
+            break
+    return tier
+
+
+# ─────────────────────────────────────────────
+# 6. Circular dependency detection
 # ─────────────────────────────────────────────
 
 
@@ -693,3 +912,40 @@ def _deduplicate_cycles(cycles: list[list[str]]) -> list[list[str]]:
     # Sort by cycle length (shortest first, most actionable)
     unique.sort(key=len)
     return unique
+
+
+if __name__ == "__main__":
+
+    def _profile(path: str, role: str) -> dict:
+        return {"path": path, "role": role}
+
+    file_profiles = [
+        _profile("api/handlers.py", "router"),
+        _profile("services/user.py", "core_module"),
+        _profile("db/models.py", "type_definition"),
+    ]
+    dep_data = {"adjacency": {"api/handlers.py": ["services/user.py"], "services/user.py": ["db/models.py"]}}
+
+    static = export_semantic_dataflow(dep_data, file_profiles)
+    assert static["metadata"]["is_llm_enriched"] is False
+    assert {n["id"] for n in static["nodes"]} == {"router", "core_module", "type_definition"}
+    assert len(static["edges"]) == 2
+
+    valid_llm = {
+        "repo_type": "web_app",
+        "nodes": [
+            {"id": "api", "label": "API", "type": "io", "source_files": ["api/handlers.py"]},
+            {"id": "db", "label": "DB", "type": "data_store", "source_files": ["db/models.py"]},
+        ],
+        "edges": [{"source": "api", "target": "db", "data_type": "db"}],
+    }
+    enriched = export_semantic_dataflow(dep_data, file_profiles, llm_enrichment=valid_llm)
+    assert enriched["metadata"]["is_llm_enriched"] is True
+    assert enriched["metadata"]["repo_type"] == "web_app"
+    assert enriched["nodes"][0]["tier"] == 0 and enriched["nodes"][1]["tier"] == 1
+
+    malformed_llm: dict[str, list] = {"nodes": [], "edges": []}
+    fallback = export_semantic_dataflow(dep_data, file_profiles, llm_enrichment=malformed_llm)
+    assert fallback["metadata"]["is_llm_enriched"] is False
+
+    print("export_semantic_dataflow: all checks passed")

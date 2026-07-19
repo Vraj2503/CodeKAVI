@@ -4,13 +4,7 @@
 import { useRef } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  Loader2,
-  AlertCircle,
-  RefreshCw,
-  Sparkles,
-  X,
-} from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
@@ -19,35 +13,52 @@ import { DownloadMenu } from "./DownloadMenu";
 
 // Lazy-load D3 viz components
 const DependencyGraph = dynamic(
-  () => import("@/components/report/viz/DependencyGraph").then((m) => m.DependencyGraph),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  () =>
+    import("@/components/report/viz/DependencyGraph").then(
+      (m) => m.DependencyGraph,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 const ArchitectureGraph = dynamic(
-  () => import("@/components/report/viz/ArchitectureGraph").then((m) => m.ArchitectureGraph),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  () =>
+    import("@/components/report/viz/ArchitectureGraph").then(
+      (m) => m.ArchitectureGraph,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 const DataFlowGraph = dynamic(
-  () => import("@/components/report/viz/DataFlowGraph").then((m) => m.DataFlowGraph),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  () =>
+    import("@/components/report/viz/DataFlowGraph").then(
+      (m) => m.DataFlowGraph,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 const TreemapViz = dynamic(
   () => import("@/components/report/viz/TreemapViz").then((m) => m.TreemapViz),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 const RadialMindmap = dynamic(
-  () => import("@/components/report/viz/RadialMindmap").then((m) => m.RadialMindmap),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  () =>
+    import("@/components/report/viz/RadialMindmap").then(
+      (m) => m.RadialMindmap,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 const NeuralNetworkViz = dynamic(
-  () => import("@/components/report/viz/NeuralNetworkViz").then((m) => m.NeuralNetworkViz),
-  { ssr: false, loading: () => <VizSkeleton /> }
+  () =>
+    import("@/components/report/viz/NeuralNetworkViz").then(
+      (m) => m.NeuralNetworkViz,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
 );
 
 function VizSkeleton() {
   return (
     <div className="w-full h-full flex flex-col items-center justify-center">
       <Loader2 className="w-10 h-10 text-primary animate-spin mb-4" />
-      <div className="text-muted-foreground animate-pulse">Rendering Visualization...</div>
+      <div className="text-muted-foreground animate-pulse">
+        Rendering Visualization...
+      </div>
     </div>
   );
 }
@@ -103,16 +114,16 @@ export function FocusedVisualization({
      * AI Insights section = naturally below — scroll down to reach it.
      */
     <div className="w-full h-full overflow-y-auto overflow-x-hidden">
-
       {/* ── GRAPH SECTION — fills full visible height ───────────────────────── */}
       <div className="relative w-full" style={{ height: "100%" }}>
-
         {/* Floating Action Bar */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20 pointer-events-none">
           {/* Left: title pill */}
           <div className="flex items-center gap-2 bg-background/90 backdrop-blur-md px-4 py-2.5 rounded-xl border border-border shadow-sm pointer-events-auto">
             <Icon size={20} className="text-primary" />
-            <h2 className="text-sm font-bold text-foreground">{config.label}</h2>
+            <h2 className="text-sm font-bold text-foreground">
+              {config.label}
+            </h2>
           </div>
 
           {/* Right: action buttons */}
@@ -162,7 +173,9 @@ export function FocusedVisualization({
                 <div className="w-24 h-24 rounded-3xl flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/5 text-primary mb-6 shadow-inner">
                   <Icon size={48} />
                 </div>
-                <h2 className="text-2xl font-bold text-foreground mb-3">{config.label}</h2>
+                <h2 className="text-2xl font-bold text-foreground mb-3">
+                  {config.label}
+                </h2>
                 <p className="text-muted-foreground mb-10 leading-relaxed text-sm">
                   {config.description}
                 </p>
@@ -202,7 +215,9 @@ export function FocusedVisualization({
                 <div className="w-20 h-20 rounded-full flex items-center justify-center bg-destructive/10 text-destructive mb-6">
                   <AlertCircle size={40} />
                 </div>
-                <h3 className="text-xl font-bold text-foreground mb-3">Generation Failed</h3>
+                <h3 className="text-xl font-bold text-foreground mb-3">
+                  Generation Failed
+                </h3>
                 <p className="text-sm text-destructive mb-8">{state.error}</p>
                 <button
                   onClick={onGenerate}
@@ -227,14 +242,24 @@ export function FocusedVisualization({
                     <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
                       <AlertCircle size={40} />
                     </div>
-                    <h3 className="text-xl font-bold text-foreground mb-3">No Data Available</h3>
+                    <h3 className="text-xl font-bold text-foreground mb-3">
+                      {hasUnresolvedEdges(type, state.data.data)
+                        ? "No Connections Resolved"
+                        : "No Data Available"}
+                    </h3>
                     <p className="text-sm text-muted-foreground text-center max-w-md">
-                      We couldn't generate a {config.label.toLowerCase()} for this repository. 
-                      There might not be enough relevant files or connections to visualize.
+                      {hasUnresolvedEdges(type, state.data.data)
+                        ? "Files were detected but no connections resolved. This may indicate unsupported import syntax."
+                        : `We couldn't generate a ${config.label.toLowerCase()} for this repository. There might not be enough relevant files or connections to visualize.`}
                     </p>
                   </div>
                 ) : (
-                  renderVisualization(type, state.data.data)
+                  <>
+                    <DiagnosticsBanner
+                      diagnostics={(state.data.data as any)?.diagnostics}
+                    />
+                    {renderVisualization(type, state.data.data)}
+                  </>
                 )}
               </motion.div>
             )}
@@ -260,7 +285,9 @@ export function FocusedVisualization({
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                   <Sparkles size={16} className="text-primary" />
                 </div>
-                <h3 className="font-bold text-foreground text-base">AI Insights</h3>
+                <h3 className="font-bold text-foreground text-base">
+                  AI Insights
+                </h3>
               </div>
               <button
                 onClick={toggleExplanation}
@@ -278,9 +305,12 @@ export function FocusedVisualization({
                   <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-5">
                     <Sparkles size={26} className="text-muted-foreground/50" />
                   </div>
-                  <h4 className="text-foreground font-semibold text-lg mb-2">Ready to Analyze</h4>
+                  <h4 className="text-foreground font-semibold text-lg mb-2">
+                    Ready to Analyze
+                  </h4>
                   <p className="text-sm mb-8 max-w-sm leading-relaxed">
-                    Generate AI-powered insights to understand the patterns and architecture hidden in this visualization.
+                    Generate AI-powered insights to understand the patterns and
+                    architecture hidden in this visualization.
                   </p>
                   <button
                     onClick={onExplain}
@@ -295,7 +325,10 @@ export function FocusedVisualization({
                 <div className="flex flex-col items-center gap-5 text-muted-foreground py-10">
                   <div className="relative">
                     <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse" />
-                    <Loader2 size={40} className="animate-spin text-primary relative z-10" />
+                    <Loader2
+                      size={40}
+                      className="animate-spin text-primary relative z-10"
+                    />
                   </div>
                   <p className="animate-pulse font-medium text-foreground text-base">
                     Analyzing graph patterns...
@@ -310,12 +343,13 @@ export function FocusedVisualization({
                 </div>
               )}
 
-              {explanationState.status === "success" && explanationState.explanation && (
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                  className="text-sm text-foreground/90 leading-relaxed prose dark:prose-invert prose-sm max-w-none
+              {explanationState.status === "success" &&
+                explanationState.explanation && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="text-sm text-foreground/90 leading-relaxed prose dark:prose-invert prose-sm max-w-none
                     prose-headings:text-foreground
                     prose-h3:text-base prose-h3:font-bold prose-h3:mt-6 prose-h3:mb-2
                     prose-p:mb-4 prose-li:mb-1.5
@@ -323,20 +357,22 @@ export function FocusedVisualization({
                     prose-code:rounded-md prose-code:text-[13px] prose-code:font-mono
                     prose-code:before:content-none prose-code:after:content-none
                     prose-strong:text-foreground prose-strong:font-bold"
-                >
-                  <ReactMarkdown>{explanationState.explanation}</ReactMarkdown>
+                  >
+                    <ReactMarkdown>
+                      {explanationState.explanation}
+                    </ReactMarkdown>
 
-                  <div className="mt-8 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles size={12} className="text-primary" />
-                      <span className="font-medium">CodeKavi AI</span>
+                    <div className="mt-8 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles size={12} className="text-primary" />
+                        <span className="font-medium">CodeKavi AI</span>
+                      </div>
+                      <span className="font-mono bg-background px-2 py-1 rounded border border-border">
+                        {explanationState.tokensUsed} tokens
+                      </span>
                     </div>
-                    <span className="font-mono bg-background px-2 py-1 rounded border border-border">
-                      {explanationState.tokensUsed} tokens
-                    </span>
-                  </div>
-                </motion.div>
-              )}
+                  </motion.div>
+                )}
             </div>
           </motion.div>
         )}
@@ -350,11 +386,22 @@ function renderVisualization(type: VizType, data: any) {
 
   switch (type) {
     case "dependencies":
-      return <DependencyGraph nodes={data.nodes || []} edges={data.edges || []} moduleGraph={data.module_graph} modules={data.modules} />;
+      return (
+        <DependencyGraph
+          nodes={data.nodes || []}
+          edges={data.edges || []}
+          moduleGraph={data.module_graph}
+          modules={data.modules}
+        />
+      );
     case "architecture":
-      return <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />;
+      return (
+        <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />
+      );
     case "dataflow":
-      return <DataFlowGraph nodes={data.nodes || []} edges={data.edges || []} />;
+      return (
+        <DataFlowGraph nodes={data.nodes || []} edges={data.edges || []} />
+      );
     case "complexity":
       return <TreemapViz data={data} />;
     case "mindmap":
@@ -362,7 +409,37 @@ function renderVisualization(type: VizType, data: any) {
     case "neural_network":
       return <NeuralNetworkViz data={data} />;
     default:
-      return <p className="text-muted-foreground text-center py-12">Unknown visualization type: {type}</p>;
+      return (
+        <p className="text-muted-foreground text-center py-12">
+          Unknown visualization type: {type}
+        </p>
+      );
+  }
+}
+
+function DiagnosticsBanner({ diagnostics }: { diagnostics: any }) {
+  if (!diagnostics) return null;
+  const { resolution_rate, unsupported_languages } = diagnostics;
+  const incomplete = resolution_rate < 1 || unsupported_languages?.length > 0;
+  if (!incomplete) return null;
+  const pct = Math.round((resolution_rate ?? 1) * 100);
+  return (
+    <div className="absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
+      {pct}% of imports resolved.
+      {unsupported_languages?.length > 0 &&
+        ` Unsupported languages detected: ${unsupported_languages.join(", ")}.`}
+    </div>
+  );
+}
+
+function hasUnresolvedEdges(type: VizType, data: any) {
+  switch (type) {
+    case "dependencies":
+    case "architecture":
+    case "dataflow":
+      return !!data?.nodes?.length && !data?.edges?.length;
+    default:
+      return false;
   }
 }
 
@@ -372,11 +449,15 @@ function isEmptyVisualization(type: VizType, data: any) {
     case "dependencies":
     case "architecture":
     case "dataflow":
-      return !data.nodes || data.nodes.length === 0;
+      return (
+        !data.nodes || data.nodes.length === 0 || hasUnresolvedEdges(type, data)
+      );
     case "complexity":
       return !data.children || data.children.length === 0;
     case "mindmap":
-      return !data.root || !data.root.children || data.root.children.length === 0;
+      return (
+        !data.root || !data.root.children || data.root.children.length === 0
+      );
     case "neural_network":
       return !data.models || data.models.length === 0;
     default:
