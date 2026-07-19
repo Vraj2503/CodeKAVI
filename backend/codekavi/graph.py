@@ -56,11 +56,16 @@ def export_graph_json(
     edges_raw = dep_data.get("edges", [])
     entry_point_set = {ep["file"] for ep in dep_data.get("entry_points", [])}
 
-    # Collect all files that participate in the graph
+    # Collect all files that participate in the graph. Seed from edge
+    # endpoints plus every analyzed file, so files with no resolved imports
+    # still render as standalone nodes instead of vanishing entirely.
     all_connected = set()
     for e in edges_raw:
         all_connected.add(e["source"])
         all_connected.add(e["target"])
+    if file_profiles:
+        for p in file_profiles:
+            all_connected.add(p["path"])
 
     # Build nodes
     nodes = []

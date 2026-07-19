@@ -107,6 +107,14 @@ async def visualize_dependencies(
             if t in seen_nodes:
                 edges.append({"source": src, "target": t})
 
+    if not nodes:
+        # Fallback: adjacency has no edges (unresolved imports, non-Python
+        # repo, etc.) — seed standalone nodes straight from file_profiles so
+        # the graph is never empty for a repo that has analyzable files.
+        for fp in result.get("file_profiles", [])[:60]:
+            path = fp.get("path", "")
+            nodes.append({"id": path, "label": os.path.basename(path), "type": _detect_layer(path)})
+
     # ───── Module-level data (for hierarchical view) ─────
     module_graph = result.get("module_graph", {}) or {}
     modules: list[dict[str, Any]] = []
@@ -187,10 +195,11 @@ async def visualize_architecture(
     """
     result, _ = await _load_repo(repo_id, cache)
     module_graph = result.get("module_graph", {})
+    graph_json = module_graph.get("graph_json") if isinstance(module_graph, dict) else None
+    graph_json_nodes = graph_json.get("nodes", []) if isinstance(graph_json, dict) else []
 
-    if isinstance(module_graph, dict) and "graph_json" in module_graph:
-        graph_json = module_graph["graph_json"]
-        nodes = graph_json.get("nodes", [])
+    if graph_json_nodes:
+        nodes = graph_json_nodes
         edges = graph_json.get("edges", [])
 
         # Normalize nodes for the frontend ArchitectureGraph component
@@ -220,6 +229,18 @@ async def visualize_architecture(
                     viz_nodes.append({"id": t, "label": os.path.basename(t), "type": _detect_layer(t)})
                 if t in seen:
                     viz_edges.append({"source": src, "target": t})
+
+        if not viz_nodes:
+            # Final fallback: module_graph and adjacency are both empty (e.g.
+            # unresolved imports across the whole repo) — group file_profiles
+            # by top-level directory so the architecture view still renders.
+            from codekavi.graph import _get_module_name
+
+            module_counts: dict[str, int] = {}
+            for fp in result.get("file_profiles", []):
+                mod = _get_module_name(fp.get("path", ""), depth=1)
+                module_counts[mod] = module_counts.get(mod, 0) + 1
+            viz_nodes = [{"id": mod, "label": mod, "type": "module"} for mod in sorted(module_counts)][:40]
 
     return {
         "type": "architecture_graph",
@@ -254,8 +275,25 @@ async def visualize_dataflow(
     edges: list[dict[str, Any]] = []
     seen = set()
 
+    if entry_points:
+        seed_files = [ep.get("file", "") for ep in entry_points[:5]]
+    else:
+        # Fallback: no entry points detected — seed from the most central
+        # files (ranked by in/out degree), or as a last resort the
+        # top-importance file_profiles, so the flow diagram is never empty.
+        central_files = analysis.get("central_files", [])
+        if central_files:
+            seed_files = [cf.get("file", "") for cf in central_files[:5]]
+        else:
+            top_files = sorted(
+                result.get("file_profiles", []),
+                key=lambda fp: fp.get("importance_score", 0),
+                reverse=True,
+            )
+            seed_files = [fp.get("path", "") for fp in top_files[:5]]
+
     # Start from entry points and follow dependencies (BFS, depth=3)
-    queue = [(ep.get("file", ""), 0) for ep in entry_points[:5]]
+    queue = [(f, 0) for f in seed_files]
 
     while queue and len(nodes) < 50:
         file_path, depth = queue.pop(0)

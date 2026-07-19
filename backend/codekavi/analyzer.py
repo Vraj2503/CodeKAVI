@@ -197,6 +197,16 @@ def _resolve_python_module(
         if _exists(init):
             return os.path.relpath(init, repo_root).replace("\\", "/")
 
+    # Fallback: absolute import under a non-root package (src/ layout, monorepo).
+    # Only applies when direct repo_root-anchored resolution misses, so
+    # well-structured repos keep their exact current behavior.
+    if level == 0 and known_files is not None and parts:
+        rel_base = "/".join(parts)
+        suffixes = (f"{rel_base}.py", f"{rel_base}/__init__.py")
+        matches = [kf for kf in known_files if any(kf == suffix or kf.endswith("/" + suffix) for suffix in suffixes)]
+        if matches:
+            return sorted(matches, key=lambda p: (p.count("/"), len(p)))[0]
+
     return None
 
 
