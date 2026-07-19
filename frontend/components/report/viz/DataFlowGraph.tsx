@@ -1,29 +1,39 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 /**
- * DataFlowGraph — Sankey-inspired left-to-right flow layout.
+ * DataFlowGraph — semantic data flow diagram.
  *
- * Designed to look like a pipeline/flow diagram:
- * - Pill/capsule-shaped nodes
- * - Entry points are visually prominent (larger, glowing green)
- * - Curved gradient edges with animated dash patterns
- * - Horizontal left-to-right orientation emphasising data flow
+ * Renders conceptual stages (not files) as shaped nodes (rounded rect /
+ * cylinder / parallelogram / hexagon per backend `shape`), connected by
+ * curved, colour-coded edges ordered left-to-right by backend `tier`.
  */
 
-import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import {
+  useRef,
+  useEffect,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
+} from "react";
 import * as d3 from "d3";
 
 interface Node {
   id: string;
   label: string;
-  type: string;
+  type: string; // "process" | "data_store" | "io" | "transform"
+  shape?: string; // "rounded_rect" | "cylinder" | "parallelogram" | "hexagon"
+  description?: string;
+  source_files?: string[];
+  tier?: number;
 }
 
 interface Edge {
   source: string;
   target: string;
   label?: string;
+  data_type?: string; // "http" | "db" | "file" | "event" | "internal"
+  animated?: boolean;
 }
 
 interface DataFlowGraphProps {
@@ -31,24 +41,110 @@ interface DataFlowGraphProps {
   edges: Edge[];
 }
 
-const flowColors: Record<string, string> = {
-  entry_point: "#22c55e",
-  routes:      "#4ecdc4",
-  services:    "#a78bfa",
-  models:      "#4ade80",
-  database:    "#fbbf24",
-  utils:       "#60a5fa",
-  config:      "#f97316",
-  tests:       "#9ca3af",
-  other:       "#8b949e",
+const TYPE_COLORS: Record<string, string> = {
+  io: "#22c55e",
+  process: "#4ecdc4",
+  transform: "#a78bfa",
+  data_store: "#fbbf24",
 };
 
+const EDGE_COLORS: Record<string, string> = {
+  http: "#3b82f6",
+  db: "#f59e0b",
+  file: "#22c55e",
+  event: "#a855f7",
+};
+
+const NODE_W = 150;
+const NODE_H = 46;
+
 function getColor(type: string): string {
-  return flowColors[type.toLowerCase()] || flowColors.other;
+  return TYPE_COLORS[type] || "#8b949e";
 }
 
-function truncate(text: string, max = 16): string {
+function getEdgeColor(dataType?: string): string {
+  return dataType && EDGE_COLORS[dataType]
+    ? EDGE_COLORS[dataType]
+    : "hsl(var(--border))";
+}
+
+function truncate(text: string, max = 20): string {
   return text.length > max ? text.slice(0, max) + "…" : text;
+}
+
+/** Appends the SVG shape for a node's `shape` kind, centred at the origin. */
+function appendShape(
+  group: d3.Selection<SVGGElement, unknown, null, undefined>,
+  shape: string,
+  fill: string,
+  stroke: string,
+  strokeWidth: number,
+) {
+  const w = NODE_W;
+  const h = NODE_H;
+  switch (shape) {
+    case "cylinder": {
+      const rx = w / 2;
+      const ry = h * 0.18;
+      const top = -h / 2 + ry;
+      const bottom = h / 2 - ry;
+      group
+        .append("path")
+        .attr(
+          "d",
+          `M${-rx},${top} L${-rx},${bottom} A${rx},${ry} 0 0 0 ${rx},${bottom} L${rx},${top}`,
+        )
+        .attr("fill", fill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", strokeWidth);
+      group
+        .append("ellipse")
+        .attr("cy", top)
+        .attr("rx", rx)
+        .attr("ry", ry)
+        .attr("fill", fill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", strokeWidth);
+      break;
+    }
+    case "parallelogram": {
+      const skew = w * 0.18;
+      group
+        .append("polygon")
+        .attr(
+          "points",
+          `${-w / 2 + skew},${-h / 2} ${w / 2},${-h / 2} ${w / 2 - skew},${h / 2} ${-w / 2},${h / 2}`,
+        )
+        .attr("fill", fill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", strokeWidth);
+      break;
+    }
+    case "hexagon": {
+      const cut = w * 0.18;
+      group
+        .append("polygon")
+        .attr(
+          "points",
+          `${-w / 2 + cut},${-h / 2} ${w / 2 - cut},${-h / 2} ${w / 2},0 ${w / 2 - cut},${h / 2} ${-w / 2 + cut},${h / 2} ${-w / 2},0`,
+        )
+        .attr("fill", fill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", strokeWidth);
+      break;
+    }
+    default: // rounded_rect
+      group
+        .append("rect")
+        .attr("x", -w / 2)
+        .attr("y", -h / 2)
+        .attr("width", w)
+        .attr("height", h)
+        .attr("rx", 10)
+        .attr("fill", fill)
+        .attr("stroke", stroke)
+        .attr("stroke-width", strokeWidth);
+  }
 }
 
 export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
@@ -56,312 +152,221 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+    const [selected, setSelected] = useState<Node | null>(null);
+
+    const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
+      null,
+    );
+    const gRef = useRef<d3.Selection<
+      SVGGElement,
+      unknown,
+      null,
+      undefined
+    > | null>(null);
 
     useImperativeHandle(ref, () => containerRef.current!);
 
     // Track container dimensions for re-rendering on resize / sidebar toggle
     useEffect(() => {
-      if (!containerRef.current) return;
-      setContainerSize({
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight,
-      });
-      let resizeTimer: NodeJS.Timeout;
+      const el = containerRef.current;
+      if (!el) return;
+      setContainerSize({ width: el.clientWidth, height: el.clientHeight });
+      let timer: NodeJS.Timeout;
       const observer = new ResizeObserver((entries) => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
           const rect = entries[0]?.contentRect;
-          if (rect) setContainerSize({ width: rect.width, height: rect.height });
+          if (rect)
+            setContainerSize({ width: rect.width, height: rect.height });
         }, 150);
       });
-      observer.observe(containerRef.current);
-      return () => { observer.disconnect(); clearTimeout(resizeTimer); };
+      observer.observe(el);
+      return () => {
+        observer.disconnect();
+        clearTimeout(timer);
+      };
     }, []);
 
     useEffect(() => {
-      if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
+      if (!svgRef.current || !containerRef.current || nodes.length === 0)
+        return;
 
       const width = containerRef.current.clientWidth || 800;
       const viewportH = containerRef.current.clientHeight || 500;
-      const pillW = 120;
-      const pillH = 32;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
       svg.attr("width", width).attr("height", viewportH);
 
       const g = svg.append("g");
-
-      // Defs: gradients + animated dash marker + glow filter
+      gRef.current = g;
       const defs = svg.append("defs");
 
-      // Glow filter for entry points
-      const filter = defs.append("filter").attr("id", "flow-glow");
-      filter
-        .append("feGaussianBlur")
-        .attr("stdDeviation", "3")
-        .attr("result", "blur");
-      filter
-        .append("feMerge")
-        .selectAll("feMergeNode")
-        .data(["blur", "SourceGraphic"])
-        .join("feMergeNode")
-        .attr("in", (d) => d);
+      // Clear selection when clicking empty canvas
+      svg.on("click", () => setSelected(null));
 
-      // Arrow marker
-      defs
-        .append("marker")
-        .attr("id", "flow-arrow")
-        .attr("viewBox", "0 -4 8 8")
-        .attr("refX", 8)
-        .attr("refY", 0)
-        .attr("markerWidth", 5)
-        .attr("markerHeight", 5)
-        .attr("orient", "auto")
-        .append("path")
-        .attr("d", "M0,-4L8,0L0,4")
-        .attr("fill", "#6b7280");
-
-      // ── Assign layers (depth) via BFS from entry/root nodes ──
-      const adjacency = new Map<string, string[]>();
-      const reverseAdj = new Map<string, string[]>();
-      edges.forEach((e) => {
-        if (!adjacency.has(e.source)) adjacency.set(e.source, []);
-        adjacency.get(e.source)!.push(e.target);
-        if (!reverseAdj.has(e.target)) reverseAdj.set(e.target, []);
-        reverseAdj.get(e.target)!.push(e.source);
+      // Arrow markers — one per edge colour actually in use
+      const edgeColors = new Set(edges.map((e) => getEdgeColor(e.data_type)));
+      edgeColors.forEach((color) => {
+        defs
+          .append("marker")
+          .attr("id", `flow-arrow-${cssId(color)}`)
+          .attr("viewBox", "0 -4 8 8")
+          .attr("refX", NODE_W / 2 + 8)
+          .attr("refY", 0)
+          .attr("markerWidth", 5)
+          .attr("markerHeight", 5)
+          .attr("orient", "auto")
+          .append("path")
+          .attr("d", "M0,-4L8,0L0,4")
+          .attr("fill", color);
       });
 
-      const nodeDepth = new Map<string, number>();
-      const entryNodes = nodes.filter((n) => n.type === "entry_point");
-      const queue: Array<{ id: string; depth: number }> = [];
-
-      // Find root nodes: entry_points first, then nodes with no incoming edges
-      if (entryNodes.length > 0) {
-        entryNodes.forEach((n) => queue.push({ id: n.id, depth: 0 }));
-      } else {
-        const hasIncoming = new Set(edges.map((e) => e.target));
-        nodes.forEach((n) => {
-          if (!hasIncoming.has(n.id)) queue.push({ id: n.id, depth: 0 });
-        });
-        // Fallback: use the first node
-        if (queue.length === 0 && nodes.length > 0) {
-          queue.push({ id: nodes[0].id, depth: 0 });
-        }
-      }
-
-      while (queue.length > 0) {
-        const { id, depth } = queue.shift()!;
-        if (nodeDepth.has(id)) continue;
-        nodeDepth.set(id, depth);
-        (adjacency.get(id) || []).forEach((target) => {
-          if (!nodeDepth.has(target)) {
-            queue.push({ id: target, depth: depth + 1 });
-          }
-        });
-      }
-
-      // Assign remaining unvisited nodes
-      nodes.forEach((n) => {
-        if (!nodeDepth.has(n.id)) nodeDepth.set(n.id, 0);
-      });
-
-      let maxDepth = Math.max(...nodeDepth.values(), 0);
-
-      // ── CRITICAL FIX: If all nodes ended up at depth 0, distribute them
-      //    into synthetic columns so the graph actually flows left-to-right ──
-      if (maxDepth === 0 && nodes.length > 1) {
-        const visited = new Set<string>();
-        const roots = nodes.filter((n) => !(reverseAdj.get(n.id)?.length));
-        const synthQueue: Array<{ id: string; depth: number }> = [];
-
-        if (roots.length > 0) {
-          roots.forEach((n) => synthQueue.push({ id: n.id, depth: 0 }));
-        } else {
-          synthQueue.push({ id: nodes[0].id, depth: 0 });
-        }
-
-        nodeDepth.clear();
-        while (synthQueue.length > 0) {
-          const { id, depth } = synthQueue.shift()!;
-          if (visited.has(id)) continue;
-          visited.add(id);
-          nodeDepth.set(id, depth);
-          (adjacency.get(id) || []).forEach((target) => {
-            if (!visited.has(target)) {
-              synthQueue.push({ id: target, depth: depth + 1 });
-            }
-          });
-        }
-        nodes.forEach((n) => {
-          if (!nodeDepth.has(n.id)) nodeDepth.set(n.id, 0);
-        });
-        maxDepth = Math.max(...nodeDepth.values(), 0);
-
-        if (maxDepth === 0 && nodes.length > 1) {
-          const cols = Math.min(nodes.length, 4);
-          nodes.forEach((n, i) => {
-            nodeDepth.set(n.id, i % cols);
-          });
-          maxDepth = cols - 1;
-        }
-      }
-
-      // ── Position nodes in columns (left-to-right) ──
+      // ── Position nodes into columns by backend-provided tier ──
       const columns = new Map<number, Node[]>();
       nodes.forEach((n) => {
-        const d = nodeDepth.get(n.id) || 0;
-        if (!columns.has(d)) columns.set(d, []);
-        columns.get(d)!.push(n);
+        const t = n.tier ?? 0;
+        if (!columns.has(t)) columns.set(t, []);
+        columns.get(t)!.push(n);
       });
+      const maxTier = Math.max(...columns.keys(), 0);
+      const maxColSize = Math.max(
+        ...[...columns.values()].map((c) => c.length),
+        1,
+      );
 
-      // Find the tallest column to compute needed dimensions
-      const maxColSize = Math.max(...[...columns.values()].map((c) => c.length), 1);
-      const nodeSpacingY = pillH + 24; // vertical gap between pills in same column
-      const colSpacingX = pillW + 40;  // horizontal gap between columns (pill width + breathing room)
-      const marginX = 40;
+      const colSpacingX = NODE_W + 60;
+      const nodeSpacingY = NODE_H + 28;
+      const marginX = 50;
       const marginY = 40;
+      const contentW = Math.max(
+        width,
+        (maxTier + 1) * colSpacingX + marginX * 2,
+      );
+      const contentH = Math.max(
+        viewportH,
+        maxColSize * nodeSpacingY + marginY * 2,
+      );
 
-      // Content dimensions — expand beyond viewport if needed, auto-fit will scale down
-      const contentW = Math.max(width, (maxDepth + 1) * colSpacingX + marginX * 2);
-      const contentH = Math.max(viewportH, maxColSize * nodeSpacingY + marginY * 2);
-      const nodePositions = new Map<string, { x: number; y: number }>();
-
-      for (let d = 0; d <= maxDepth; d++) {
-        const col = columns.get(d) || [];
-        const colX = marginX + d * colSpacingX + colSpacingX / 2;
+      const positions = new Map<string, { x: number; y: number }>();
+      for (let t = 0; t <= maxTier; t++) {
+        const col = columns.get(t) || [];
+        const colX = marginX + t * colSpacingX + colSpacingX / 2;
         const totalColH = (col.length - 1) * nodeSpacingY;
         const startY = (contentH - totalColH) / 2;
-
-        col.forEach((n, i) => {
-          nodePositions.set(n.id, { x: colX, y: startY + i * nodeSpacingY });
-        });
+        col.forEach((n, i) =>
+          positions.set(n.id, { x: colX, y: startY + i * nodeSpacingY }),
+        );
       }
 
-      // ── Draw edges — curved horizontal flow ──
-      let edgeIdx = 0;
+      // ── Edges — curved left-to-right flow ──
       edges.forEach((edge) => {
-        const src = nodePositions.get(edge.source);
-        const tgt = nodePositions.get(edge.target);
+        const src = positions.get(edge.source);
+        const tgt = positions.get(edge.target);
         if (!src || !tgt) return;
 
-        const srcColor = getColor(
-          nodes.find((n) => n.id === edge.source)?.type || "other"
-        );
-        const tgtColor = getColor(
-          nodes.find((n) => n.id === edge.target)?.type || "other"
-        );
-
-        // Unique gradient per edge
-        const gradId = `flow-grad-${edgeIdx++}`;
-        const grad = defs
-          .append("linearGradient")
-          .attr("id", gradId)
-          .attr("x1", "0%")
-          .attr("y1", "0%")
-          .attr("x2", "100%")
-          .attr("y2", "0%");
-        grad.append("stop").attr("offset", "0%").attr("stop-color", srcColor).attr("stop-opacity", 0.8);
-        grad.append("stop").attr("offset", "100%").attr("stop-color", tgtColor).attr("stop-opacity", 0.8);
-
+        const color = getEdgeColor(edge.data_type);
         const midX = (src.x + tgt.x) / 2;
-
         const path = g
           .append("path")
           .attr(
             "d",
-            `M${src.x + pillW / 2},${src.y} C${midX},${src.y} ${midX},${tgt.y} ${tgt.x - pillW / 2},${tgt.y}`
+            `M${src.x + NODE_W / 2},${src.y} C${midX},${src.y} ${midX},${tgt.y} ${tgt.x - NODE_W / 2},${tgt.y}`,
           )
           .attr("fill", "none")
-          .attr("stroke", `url(#${gradId})`)
-          .attr("stroke-width", 2.5)
-          .attr("marker-end", "url(#flow-arrow)");
+          .attr("stroke", color)
+          .attr("stroke-width", 2)
+          .attr("stroke-opacity", 0.8)
+          .attr("marker-end", `url(#flow-arrow-${cssId(color)})`);
 
-        // Animated dash for flow effect
-        path
-          .attr("stroke-dasharray", `6 4`)
-          .attr("stroke-dashoffset", 0);
+        if (edge.animated) {
+          const pathNode = path.node();
+          const totalLength = pathNode?.getTotalLength() ?? 0;
+          if (totalLength > 0) {
+            const particle = g
+              .append("circle")
+              .attr("r", 3)
+              .attr("fill", color);
+            const loop = () => {
+              if (!pathNode!.isConnected) return;
+              particle
+                .transition()
+                .duration(1500)
+                .ease(d3.easeLinear)
+                .attrTween("transform", () => (t: number) => {
+                  const p = pathNode!.getPointAtLength(t * totalLength);
+                  return `translate(${p.x},${p.y})`;
+                })
+                .on("end", loop);
+            };
+            loop();
+          }
+        }
 
-        // CSS animation for flowing dashes
-        path
-          .style("animation", `flowDash 1.5s linear infinite`);
+        if (edge.label) {
+          const labelY = (src.y + tgt.y) / 2 - 6;
+          const text = g
+            .append("text")
+            .attr("x", midX)
+            .attr("y", labelY)
+            .attr("text-anchor", "middle")
+            .attr("font-size", 11)
+            .attr("fill", "hsl(var(--muted-foreground))")
+            .text(edge.label);
+          const bbox = (text.node() as SVGTextElement).getBBox();
+          g.insert("rect", () => text.node())
+            .attr("x", bbox.x - 4)
+            .attr("y", bbox.y - 2)
+            .attr("width", bbox.width + 8)
+            .attr("height", bbox.height + 4)
+            .attr("rx", 6)
+            .attr("fill", "hsl(var(--card))")
+            .attr("fill-opacity", 0.85);
+        }
       });
 
-      // Inject CSS keyframes for the dash animation
-      if (!document.getElementById("flow-dash-style")) {
-        const style = document.createElement("style");
-        style.id = "flow-dash-style";
-        style.textContent = `
-          @keyframes flowDash {
-            to { stroke-dashoffset: -20; }
-          }
-        `;
-        document.head.appendChild(style);
-      }
-
-      // ── Draw nodes — pill/capsule shapes ──
+      // ── Nodes ──
       nodes.forEach((node) => {
-        const pos = nodePositions.get(node.id);
+        const pos = positions.get(node.id);
         if (!pos) return;
         const color = getColor(node.type);
-        const isEntry = node.type === "entry_point";
 
         const nodeGroup = g
           .append("g")
           .attr("transform", `translate(${pos.x},${pos.y})`)
           .style("cursor", "pointer");
 
-        // Pill shape
-        nodeGroup
-          .append("rect")
-          .attr("x", -pillW / 2)
-          .attr("y", -pillH / 2)
-          .attr("width", pillW)
-          .attr("height", pillH)
-          .attr("rx", pillH / 2) // Fully rounded ends → pill shape
-          .attr("fill", isEntry ? "#052e16" : "#111827")
-          .attr("stroke", color)
-          .attr("stroke-width", isEntry ? 2 : 1.5)
-          .attr("fill-opacity", 0.9)
-          .attr("filter", isEntry ? "url(#flow-glow)" : null);
+        appendShape(
+          nodeGroup,
+          node.shape || "rounded_rect",
+          "hsl(var(--card))",
+          color,
+          2,
+        );
 
-        // Direction indicator dot on left side
-        nodeGroup
-          .append("circle")
-          .attr("cx", -pillW / 2 + 14)
-          .attr("cy", 0)
-          .attr("r", 4)
-          .attr("fill", color)
-          .attr("fill-opacity", isEntry ? 1 : 0.6);
-
-        // Label
         nodeGroup
           .append("text")
           .attr("text-anchor", "middle")
-          .attr("x", 6) // Slightly right of center to account for dot
           .attr("dy", "0.35em")
-          .attr("fill", isEntry ? "#86efac" : "#d1d5db")
+          .attr("fill", "hsl(var(--foreground))")
           .attr("font-size", 11)
-          .attr("font-weight", isEntry ? 600 : 400)
+          .attr("font-weight", 500)
           .text(truncate(node.label));
 
-        // Hover effect
         nodeGroup
+          .on("click", (event) => {
+            event.stopPropagation();
+            setSelected(node);
+          })
           .on("mouseenter", function () {
             d3.select(this)
-              .select("rect")
-              .transition()
-              .duration(150)
-              .attr("stroke-width", isEntry ? 3 : 2.5)
-              .attr("fill-opacity", 1);
+              .selectAll("rect,path,polygon,ellipse")
+              .attr("stroke-width", 3);
           })
           .on("mouseleave", function () {
             d3.select(this)
-              .select("rect")
-              .transition()
-              .duration(150)
-              .attr("stroke-width", isEntry ? 2 : 1.5)
-              .attr("fill-opacity", 0.9);
+              .selectAll("rect,path,polygon,ellipse")
+              .attr("stroke-width", 2);
           });
       });
 
@@ -369,22 +374,23 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
       const zoom = d3
         .zoom<SVGSVGElement, unknown>()
         .scaleExtent([0.15, 3])
-        .on("zoom", (event) => {
-          g.attr("transform", event.transform);
-        });
+        .on("zoom", (event) => g.attr("transform", event.transform));
       svg.call(zoom);
+      zoomRef.current = zoom;
 
-      // Auto-fit: always scale and center content into the viewport
+      // Auto-fit on first render
       const padX = 20;
       const padY = 20;
-      const fitScaleX = (width - padX * 2) / contentW;
-      const fitScaleY = (viewportH - padY * 2) / contentH;
-      const fitScale = Math.min(fitScaleX, fitScaleY, 1);
+      const fitScale = Math.min(
+        (width - padX * 2) / contentW,
+        (viewportH - padY * 2) / contentH,
+        1,
+      );
       const fitX = (width - contentW * fitScale) / 2;
       const fitY = (viewportH - contentH * fitScale) / 2;
       svg.call(
-        zoom.transform as any,
-        d3.zoomIdentity.translate(fitX, fitY).scale(fitScale)
+        zoom.transform,
+        d3.zoomIdentity.translate(fitX, fitY).scale(fitScale),
       );
 
       return () => {
@@ -392,10 +398,117 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
       };
     }, [nodes, edges, containerSize]);
 
+    const handleZoomBy = useCallback((factor: number) => {
+      if (!svgRef.current || !zoomRef.current) return;
+      d3.select(svgRef.current)
+        .transition()
+        .duration(200)
+        .call(zoomRef.current.scaleBy, factor);
+    }, []);
+
+    const handleFitToView = useCallback(() => {
+      const svgEl = svgRef.current;
+      const gEl = gRef.current?.node();
+      if (!svgEl || !gEl || !zoomRef.current) return;
+      const bbox = gEl.getBBox();
+      if (bbox.width === 0 || bbox.height === 0) return;
+      const W = svgEl.clientWidth || 800;
+      const H = svgEl.clientHeight || 500;
+      const scale = Math.max(
+        0.15,
+        Math.min(3, Math.min(W / bbox.width, H / bbox.height) * 0.85),
+      );
+      const tx = W / 2 - scale * (bbox.x + bbox.width / 2);
+      const ty = H / 2 - scale * (bbox.y + bbox.height / 2);
+      d3.select(svgEl)
+        .transition()
+        .duration(300)
+        .call(
+          zoomRef.current.transform,
+          d3.zoomIdentity.translate(tx, ty).scale(scale),
+        );
+    }, []);
+
     return (
-      <div ref={containerRef} className="w-full h-full overflow-hidden">
+      <div
+        ref={containerRef}
+        className="w-full h-full overflow-hidden relative"
+      >
         <svg ref={svgRef} className="w-full h-full" />
+
+        {/* ── Zoom controls (bottom-right) ── */}
+        <div className="absolute bottom-3 right-3 z-10 flex flex-col rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
+          <button
+            onClick={() => handleZoomBy(1.3)}
+            aria-label="Zoom in"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            +
+          </button>
+          <button
+            onClick={() => handleZoomBy(1 / 1.3)}
+            aria-label="Zoom out"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
+          >
+            −
+          </button>
+          <button
+            onClick={handleFitToView}
+            aria-label="Fit to view"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        {/* ── Selected node popover (click for source files + description) ── */}
+        {selected && (
+          <div className="glass-panel absolute top-3 left-3 z-20 rounded-lg px-4 py-3 text-xs max-w-xs">
+            <div className="flex items-start justify-between gap-3">
+              <div className="font-semibold text-foreground">
+                {selected.label}
+              </div>
+              <button
+                onClick={() => setSelected(null)}
+                aria-label="Close"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                ×
+              </button>
+            </div>
+            {selected.description && (
+              <p className="text-muted-foreground mt-1.5 leading-relaxed">
+                {selected.description}
+              </p>
+            )}
+            {!!selected.source_files?.length && (
+              <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                {selected.source_files.map((f) => (
+                  <div
+                    key={f}
+                    className="text-muted-foreground truncate font-mono text-[11px]"
+                  >
+                    {f}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
-  }
+  },
 );
+
+/** Turns a colour string into a valid SVG id fragment. */
+function cssId(color: string): string {
+  return color.replace(/[^a-zA-Z0-9]/g, "");
+}

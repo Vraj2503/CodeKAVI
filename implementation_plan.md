@@ -27,13 +27,16 @@ Both visualizations should work correctly on real-world repos (fixing the failur
 ## Open Questions
 
 > [!IMPORTANT]
-> **Q1 — Caching strategy for LLM data flow**: Should the LLM-generated data flow be cached in Redis (TTL-based, like other analysis results) or persisted in Supabase? Redis is simpler; Supabase survives restarts. Current viz data is cached via `ensure_repo_loaded()` which uses Redis L2 + Supabase L3. **Recommendation**: Use the same caching layer as existing analysis results.
+> **Q1 — Caching strategy for LLM data flow**: Should the LLM-generated data flow be cached in Redis (TTL-based, like other analysis results) or persisted in Supabase? Redis is simpler; Supabase survives restarts. Current viz data is cached via `ensure_repo_loaded()` which uses Redis L2 + Supabase L3. **Recommendation**: Use the same caching layer as existing analysis results. 
+A. Store it in redis cache
 
 > [!IMPORTANT]
 > **Q2 — Fallback when LLM fails**: If the LLM call for data flow generation times out or returns invalid JSON, should we fall back to the current BFS-based file-level data flow (same behavior as today), or show an error? **Recommendation**: Fall back to the current BFS approach with an info banner explaining it's a simplified view.
+A.Fall back
 
 > [!IMPORTANT]
 > **Q3 — Export formats**: The Dependency Graph currently supports SVG/PNG export via `DownloadMenu.tsx`. Should the Data Flow Diagram also support export? **Recommendation**: Yes, same export menu for consistency.
+A. Yes
 
 ---
 

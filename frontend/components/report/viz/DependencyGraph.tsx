@@ -30,6 +30,12 @@ interface Node {
   id: string;
   label: string;
   type: string;
+  role_label?: string;
+  language?: string;
+  importance?: number;
+  in_degree?: number;
+  out_degree?: number;
+  full_path?: string;
 }
 
 interface Edge {
@@ -75,7 +81,15 @@ export interface DependencyGraphProps {
 
 type ViewMode = "module" | "file";
 type LayoutMode = "layered" | "force";
-type DisplayNode = Node & { _fileCount?: number; _colorIdx?: number };
+type LayoutChoice = "auto" | LayoutMode;
+type DisplayNode = Node & {
+  _fileCount?: number;
+  _colorIdx?: number;
+  _importance?: number;
+  _language?: string;
+  _inDeg?: number;
+  _outDeg?: number;
+};
 
 /* ── Singleton ELK instance ───────────────────────────────── */
 
@@ -131,6 +145,37 @@ function truncate(text: string, max = 15): string {
   return text.length > max ? text.slice(0, max) + "…" : text;
 }
 
+/** DFS-based cycle detection — true if the graph has at least one cycle. */
+function hasCycle(
+  nodeIds: string[],
+  edges: { source: string; target: string }[],
+): boolean {
+  const adj = new Map<string, string[]>();
+  for (const id of nodeIds) adj.set(id, []);
+  for (const e of edges) adj.get(e.source)?.push(e.target);
+
+  const WHITE = 0,
+    GRAY = 1,
+    BLACK = 2;
+  const state = new Map<string, number>(nodeIds.map((id) => [id, WHITE]));
+
+  function visit(id: string): boolean {
+    state.set(id, GRAY);
+    for (const next of adj.get(id) || []) {
+      const s = state.get(next);
+      if (s === GRAY) return true;
+      if (s === WHITE && visit(next)) return true;
+    }
+    state.set(id, BLACK);
+    return false;
+  }
+
+  for (const id of nodeIds) {
+    if (state.get(id) === WHITE && visit(id)) return true;
+  }
+  return false;
+}
+
 /** Infer a coarse architectural type from a directory name. */
 function inferType(name: string): string {
   const l = name.toLowerCase();
@@ -151,13 +196,13 @@ async function runElkLayout(
   nodes: { id: string; w: number; h: number }[],
   edges: { source: string; target: string }[],
   canvasW: number,
-  canvasH: number
+  canvasH: number,
 ): Promise<Map<string, { x: number; y: number }>> {
   if (nodes.length === 0) return new Map();
 
   const ids = new Set(nodes.map((n) => n.id));
   const valid = edges.filter(
-    (e) => ids.has(e.source) && ids.has(e.target) && e.source !== e.target
+    (e) => ids.has(e.source) && ids.has(e.target) && e.source !== e.target,
   );
 
   const result = await elk.layout({
@@ -213,10 +258,25 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
-    const hasMods = !!(moduleGraph?.nodes?.length);
+    const hasMods = !!moduleGraph?.nodes?.length;
     const [view, setView] = useState<ViewMode>(hasMods ? "module" : "file");
-    const [layout, setLayout] = useState<LayoutMode>("layered");
+    const [layoutOverride, setLayoutOverride] = useState<LayoutChoice>("auto");
     const [expanded, setExpanded] = useState<string | null>(null);
+    const [tooltip, setTooltip] = useState<{
+      x: number;
+      y: number;
+      node: DisplayNode;
+    } | null>(null);
+
+    const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
+      null,
+    );
+    const gRef = useRef<d3.Selection<
+      SVGGElement,
+      unknown,
+      null,
+      undefined
+    > | null>(null);
 
     useImperativeHandle(ref, () => containerRef.current!);
 
@@ -265,6 +325,10 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
             type: inferType(m.label),
             _fileCount: m.file_count,
             _colorIdx: i,
+            _importance: m.importance,
+            _language: m.primary_language,
+            _inDeg: m.in_weight,
+            _outDeg: m.out_weight,
           };
         });
         const de: Edge[] = moduleGraph.edges.map((me) => ({
@@ -304,7 +368,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           }
           dn.forEach((n) => rm.set(n.id, 20));
           const de = edges.filter(
-            (e) => fileSet.has(e.source) && fileSet.has(e.target)
+            (e) => fileSet.has(e.source) && fileSet.has(e.target),
           );
           return {
             dispNodes: dn,
@@ -323,6 +387,23 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
       };
     }, [view, expanded, nodes, edges, moduleGraph, modules]);
 
+    // Auto-detect layout: DAGs get the hierarchical ELK layout, cyclic
+    // graphs fall back to force simulation which handles cycles naturally.
+    const isCyclic = useMemo(
+      () =>
+        hasCycle(
+          dispNodes.map((n) => n.id),
+          dispEdges,
+        ),
+      [dispNodes, dispEdges],
+    );
+    const effectiveLayout: LayoutMode =
+      layoutOverride === "auto"
+        ? isCyclic
+          ? "force"
+          : "layered"
+        : layoutOverride;
+
     /* ── Main D3 render effect ─────────────────────────────── */
 
     useEffect(() => {
@@ -339,6 +420,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
       svg.selectAll("*").remove();
       svg.attr("width", W).attr("height", H);
       const g = svg.append("g");
+      gRef.current = g;
       const defs = svg.append("defs");
 
       const isModView = view === "module" && !expanded;
@@ -358,16 +440,16 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .attr("orient", "auto")
           .append("path")
           .attr("d", "M0,-5L10,0L0,5")
-          .attr("fill", "#30363d");
+          .attr("fill", "hsl(var(--border))");
       }
 
       // Zoom & pan
-      svg.call(
-        d3
-          .zoom<SVGSVGElement, unknown>()
-          .scaleExtent([0.3, 3])
-          .on("zoom", (ev) => g.attr("transform", ev.transform))
-      );
+      const zoomBehavior = d3
+        .zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.15, 3])
+        .on("zoom", (ev) => g.attr("transform", ev.transform));
+      svg.call(zoomBehavior);
+      zoomRef.current = zoomBehavior;
 
       // D3 simulation types
       type SN = d3.SimulationNodeDatum & DisplayNode;
@@ -382,8 +464,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
 
       /** Colour a node based on view mode. */
       function colour(d: DisplayNode): string {
-        if (isModView && d._colorIdx != null)
-          return modColor(d._colorIdx);
+        if (isModView && d._colorIdx != null) return modColor(d._colorIdx);
         return getNodeColor(d.type);
       }
 
@@ -422,7 +503,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .selectAll("line")
           .data(sEdges)
           .join("line")
-          .attr("stroke", "#30363d")
+          .attr("stroke", "hsl(var(--border))")
           .attr("stroke-width", 1.5)
           .attr("marker-end", (d) => {
             const tid =
@@ -439,7 +520,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .data(sEdges.filter((e) => e.label))
           .join("text")
           .attr("font-size", 10)
-          .attr("fill", "#8b949e")
+          .attr("fill", "hsl(var(--muted-foreground))")
           .attr("text-anchor", "middle")
           .text((d) => d.label || "");
 
@@ -457,7 +538,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .attr("r", (d) => radiusOf(d.id))
           .attr("fill", (d) => colour(d))
           .attr("fill-opacity", isModView ? 0.85 : 1)
-          .attr("stroke", "#30363d")
+          .attr("stroke", "hsl(var(--border))")
           .attr("stroke-width", 2);
 
         // Module badges — file count inside the circle
@@ -469,9 +550,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
             .attr("font-size", (d) => Math.max(10, radiusOf(d.id) * 0.4))
             .attr("font-weight", "bold")
             .attr("fill", "#fff")
-            .text((d) =>
-              d._fileCount != null ? String(d._fileCount) : ""
-            );
+            .text((d) => (d._fileCount != null ? String(d._fileCount) : ""));
           node
             .append("text")
             .attr("text-anchor", "middle")
@@ -488,7 +567,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .attr("dy", (d) => radiusOf(d.id) + 16)
           .attr("font-size", isModView ? 12 : 11)
           .attr("font-weight", isModView ? "600" : "400")
-          .attr("fill", "#e6edf3")
+          .attr("fill", "hsl(var(--foreground))")
           .text((d) => truncate(d.label, isModView ? 20 : 15));
 
         // Click → expand module
@@ -496,12 +575,17 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           node.on("click", (_ev, d) => setExpanded(d.id));
         }
 
-        // Hover-highlight connected nodes & edges
+        // Hover-highlight connected nodes & edges, plus a following tooltip
+        function pointerPos(ev: MouseEvent) {
+          const rect = containerRef.current!.getBoundingClientRect();
+          return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+        }
+
         node
-          .on("mouseenter", function (_ev, d) {
+          .on("mouseenter", function (ev, d) {
             d3.select(this)
               .select("circle")
-              .attr("stroke", "#58a6ff")
+              .attr("stroke", "hsl(var(--viz-highlight))")
               .attr("stroke-width", 3);
             const linked = new Set<string>([d.id]);
             sEdges.forEach((e) => {
@@ -528,14 +612,19 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
                   : String(l.target);
               return linked.has(s) && linked.has(t) ? 1 : 0.15;
             });
+            setTooltip({ ...pointerPos(ev), node: d });
+          })
+          .on("mousemove", function (ev, d) {
+            setTooltip({ ...pointerPos(ev), node: d });
           })
           .on("mouseleave", function () {
             node.style("opacity", 1);
             link.style("opacity", 1);
             d3.select(this)
               .select("circle")
-              .attr("stroke", "#30363d")
+              .attr("stroke", "hsl(var(--border))")
               .attr("stroke-width", 2);
+            setTooltip(null);
           });
 
         /* ─ Positioning ─ */
@@ -549,45 +638,30 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
             .attr("x2", (d) => (d.target as SN).x!)
             .attr("y2", (d) => (d.target as SN).y!);
           eLabel
-            .attr(
-              "x",
-              (d) =>
-                ((d.source as SN).x! + (d.target as SN).x!) / 2
-            )
-            .attr(
-              "y",
-              (d) =>
-                ((d.source as SN).y! + (d.target as SN).y!) / 2
-            );
+            .attr("x", (d) => ((d.source as SN).x! + (d.target as SN).x!) / 2)
+            .attr("y", (d) => ((d.source as SN).y! + (d.target as SN).y!) / 2);
 
           // Drag in ELK mode repositions the node and updates connected edges
           node.call(
-            d3
-              .drag<SVGGElement, SN>()
-              .on("drag", function (ev, d) {
-                d.x = ev.x;
-                d.y = ev.y;
-                d3.select(this).attr(
-                  "transform",
-                  `translate(${d.x},${d.y})`
+            d3.drag<SVGGElement, SN>().on("drag", function (ev, d) {
+              d.x = ev.x;
+              d.y = ev.y;
+              d3.select(this).attr("transform", `translate(${d.x},${d.y})`);
+              link
+                .attr("x1", (l) => (l.source as SN).x!)
+                .attr("y1", (l) => (l.source as SN).y!)
+                .attr("x2", (l) => (l.target as SN).x!)
+                .attr("y2", (l) => (l.target as SN).y!);
+              eLabel
+                .attr(
+                  "x",
+                  (l) => ((l.source as SN).x! + (l.target as SN).x!) / 2,
+                )
+                .attr(
+                  "y",
+                  (l) => ((l.source as SN).y! + (l.target as SN).y!) / 2,
                 );
-                link
-                  .attr("x1", (l) => (l.source as SN).x!)
-                  .attr("y1", (l) => (l.source as SN).y!)
-                  .attr("x2", (l) => (l.target as SN).x!)
-                  .attr("y2", (l) => (l.target as SN).y!);
-                eLabel
-                  .attr(
-                    "x",
-                    (l) =>
-                      ((l.source as SN).x! + (l.target as SN).x!) / 2
-                  )
-                  .attr(
-                    "y",
-                    (l) =>
-                      ((l.source as SN).y! + (l.target as SN).y!) / 2
-                  );
-              })
+            }),
           );
         } else {
           // ── Force simulation ──
@@ -598,16 +672,16 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
               d3
                 .forceLink<SN, SE>(sEdges)
                 .id((d) => d.id)
-                .distance(isModView ? 180 : 140)
+                .distance(isModView ? 180 : 140),
             )
             .force(
               "charge",
-              d3.forceManyBody().strength(isModView ? -600 : -400)
+              d3.forceManyBody().strength(isModView ? -600 : -400),
             )
             .force("center", d3.forceCenter(W / 2, H / 2))
             .force(
               "collide",
-              d3.forceCollide<SN>((d) => radiusOf(d.id) + 10)
+              d3.forceCollide<SN>((d) => radiusOf(d.id) + 10),
             );
 
           node.call(
@@ -626,7 +700,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
                 if (!ev.active) sim!.alphaTarget(0);
                 d.fx = null;
                 d.fy = null;
-              })
+              }),
           );
 
           sim.on("tick", () => {
@@ -636,15 +710,10 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
               .attr("x2", (d) => (d.target as SN).x!)
               .attr("y2", (d) => (d.target as SN).y!);
             eLabel
-              .attr(
-                "x",
-                (d) =>
-                  ((d.source as SN).x! + (d.target as SN).x!) / 2
-              )
+              .attr("x", (d) => ((d.source as SN).x! + (d.target as SN).x!) / 2)
               .attr(
                 "y",
-                (d) =>
-                  ((d.source as SN).y! + (d.target as SN).y!) / 2
+                (d) => ((d.source as SN).y! + (d.target as SN).y!) / 2,
               );
             node.attr("transform", (d) => `translate(${d.x},${d.y})`);
           });
@@ -653,7 +722,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
 
       /* ─ Kick off the chosen layout ─ */
 
-      if (layout === "layered") {
+      if (effectiveLayout === "layered") {
         const elkNodes = sNodes.map((n) => ({
           id: n.id,
           w: radiusOf(n.id) * 2,
@@ -677,35 +746,78 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         svg.selectAll("*").remove();
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [dispNodes, dispEdges, radiusOf, view, layout, expanded, containerSize, modules]);
+    }, [
+      dispNodes,
+      dispEdges,
+      radiusOf,
+      view,
+      effectiveLayout,
+      expanded,
+      containerSize,
+      modules,
+    ]);
 
     const handleBack = useCallback(() => setExpanded(null), []);
+
+    const handleZoomBy = useCallback((factor: number) => {
+      if (!svgRef.current || !zoomRef.current) return;
+      d3.select(svgRef.current)
+        .transition()
+        .duration(200)
+        .call(zoomRef.current.scaleBy, factor);
+    }, []);
+
+    const handleFitToView = useCallback(() => {
+      const svgEl = svgRef.current;
+      const gEl = gRef.current?.node();
+      if (!svgEl || !gEl || !zoomRef.current) return;
+      const bbox = gEl.getBBox();
+      if (bbox.width === 0 || bbox.height === 0) return;
+      const W = svgEl.clientWidth || 800;
+      const H = svgEl.clientHeight || 500;
+      const scale = Math.max(
+        0.15,
+        Math.min(3, Math.min(W / bbox.width, H / bbox.height) * 0.85),
+      );
+      const tx = W / 2 - scale * (bbox.x + bbox.width / 2);
+      const ty = H / 2 - scale * (bbox.y + bbox.height / 2);
+      d3.select(svgEl)
+        .transition()
+        .duration(300)
+        .call(
+          zoomRef.current.transform,
+          d3.zoomIdentity.translate(tx, ty).scale(scale),
+        );
+    }, []);
 
     /* ── JSX ────────────────────────────────────────────────── */
 
     return (
-      <div ref={containerRef} className="w-full h-full overflow-hidden relative">
+      <div
+        ref={containerRef}
+        className="w-full h-full overflow-hidden relative"
+      >
         {/* ── Toggle controls (top-right) ── */}
         <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
           {/* View mode: Module / File */}
           {hasMods && (
-            <div className="flex rounded-lg overflow-hidden border border-[#30363d] bg-[#0d1117]/90 backdrop-blur-sm shadow-lg">
+            <div className="flex rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
               <button
                 onClick={() => setView("module")}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                   view === "module"
                     ? "bg-[#58a6ff]/20 text-[#58a6ff]"
-                    : "text-[#8b949e] hover:text-[#e6edf3]"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Module
               </button>
               <button
                 onClick={() => setView("file")}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-[#30363d] ${
+                className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${
                   view === "file"
                     ? "bg-[#58a6ff]/20 text-[#58a6ff]"
-                    : "text-[#8b949e] hover:text-[#e6edf3]"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 File
@@ -714,23 +826,23 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           )}
 
           {/* Layout mode: Layered (ELK) / Force (D3) */}
-          <div className="flex rounded-lg overflow-hidden border border-[#30363d] bg-[#0d1117]/90 backdrop-blur-sm shadow-lg">
+          <div className="flex rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
             <button
-              onClick={() => setLayout("layered")}
+              onClick={() => setLayoutOverride("layered")}
               className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                layout === "layered"
+                effectiveLayout === "layered"
                   ? "bg-[#3fb950]/20 text-[#3fb950]"
-                  : "text-[#8b949e] hover:text-[#e6edf3]"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               Layered
             </button>
             <button
-              onClick={() => setLayout("force")}
-              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-[#30363d] ${
-                layout === "force"
+              onClick={() => setLayoutOverride("force")}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${
+                effectiveLayout === "force"
                   ? "bg-[#3fb950]/20 text-[#3fb950]"
-                  : "text-[#8b949e] hover:text-[#e6edf3]"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
             >
               Force
@@ -743,7 +855,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           <div className="absolute top-3 left-3 z-10 flex items-center gap-2">
             <button
               onClick={handleBack}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[#30363d] bg-[#0d1117]/90 backdrop-blur-sm shadow-lg text-[#e6edf3] hover:bg-[#161b22] transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border bg-card/90 backdrop-blur-sm shadow-lg text-foreground hover:bg-accent transition-colors"
             >
               <svg
                 width="14"
@@ -758,14 +870,123 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
               </svg>
               Back to modules
             </button>
-            <span className="text-xs text-[#8b949e] bg-[#0d1117]/70 backdrop-blur-sm px-2 py-1 rounded border border-[#30363d]">
+            <span className="text-xs text-muted-foreground bg-card/70 backdrop-blur-sm px-2 py-1 rounded border border-border">
               {expanded}
             </span>
           </div>
         )}
 
+        {/* ── Zoom controls (bottom-right) ── */}
+        <div className="absolute bottom-3 right-3 z-10 flex flex-col rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
+          <button
+            onClick={() => handleZoomBy(1.3)}
+            aria-label="Zoom in"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            +
+          </button>
+          <button
+            onClick={() => handleZoomBy(1 / 1.3)}
+            aria-label="Zoom out"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
+          >
+            −
+          </button>
+          <button
+            onClick={handleFitToView}
+            aria-label="Fit to view"
+            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
         <svg ref={svgRef} className="w-full h-full" />
+
+        {/* ── Hover tooltip ── */}
+        {tooltip &&
+          (() => {
+            const d = tooltip.node;
+            const isMod = d._fileCount != null;
+            const TOOLTIP_W = 240;
+            const TOOLTIP_MAX_H = 180;
+            let left = tooltip.x + 14;
+            let top = tooltip.y + 14;
+            if (left + TOOLTIP_W > containerSize.width)
+              left = tooltip.x - TOOLTIP_W - 14;
+            if (top + TOOLTIP_MAX_H > containerSize.height)
+              top = tooltip.y - TOOLTIP_MAX_H - 14;
+            left = Math.max(8, left);
+            top = Math.max(8, top);
+
+            const importance = d.importance ?? d._importance;
+            const language = d.language ?? d._language;
+            const inDeg = d.in_degree ?? d._inDeg;
+            const outDeg = d.out_degree ?? d._outDeg;
+            const path = d.full_path || (!isMod ? d.id : undefined);
+
+            return (
+              <div
+                className="glass-panel absolute z-20 rounded-lg px-3 py-2 text-xs pointer-events-none"
+                style={{ left, top, width: TOOLTIP_W }}
+              >
+                <div className="font-semibold text-foreground truncate">
+                  {d.label}
+                </div>
+                {path && (
+                  <div className="text-muted-foreground truncate mt-0.5">
+                    {path}
+                  </div>
+                )}
+                <div className="mt-1.5 space-y-0.5 text-muted-foreground">
+                  {isMod ? (
+                    <div>
+                      Files:{" "}
+                      <span className="text-foreground">{d._fileCount}</span>
+                    </div>
+                  ) : (
+                    d.role_label && (
+                      <div>
+                        Role:{" "}
+                        <span className="text-foreground">{d.role_label}</span>
+                      </div>
+                    )
+                  )}
+                  {language && (
+                    <div>
+                      Language:{" "}
+                      <span className="text-foreground">{language}</span>
+                    </div>
+                  )}
+                  {importance != null && (
+                    <div>
+                      Importance:{" "}
+                      <span className="text-foreground">
+                        {importance.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {(inDeg != null || outDeg != null) && (
+                    <div>
+                      In / Out:{" "}
+                      <span className="text-foreground">
+                        {inDeg ?? 0} / {outDeg ?? 0}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
       </div>
     );
-  }
+  },
 );

@@ -25,9 +25,9 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const backendUrl = "http://localhost:8000/api/analyze/stream";
+    const backendUrl = `${process.env.BACKEND_URL || "http://127.0.0.1:8000"}/api/analyze/stream`;
     const authHeader = request.headers.get("authorization");
-    
+
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "text/event-stream",
@@ -46,7 +46,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: "Analysis failed" }));
+      const error = await response
+        .json()
+        .catch(() => ({ detail: "Analysis failed" }));
       return new Response(JSON.stringify(error), {
         status: response.status,
         headers: { "Content-Type": "application/json" },
@@ -66,15 +68,20 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",          // disable nginx buffering on managed hosts
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no", // disable nginx buffering on managed hosts
         "Transfer-Encoding": "chunked",
       },
     });
   } catch (err: unknown) {
-    return new Response(JSON.stringify({ detail: err instanceof Error ? err.message : "Analysis failed" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({
+        detail: err instanceof Error ? err.message : "Analysis failed",
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   }
 }
