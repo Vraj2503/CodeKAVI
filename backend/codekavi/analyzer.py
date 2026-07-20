@@ -19,6 +19,7 @@ Supports:
 
 import ast
 import json
+import logging
 import os
 import re
 import threading
@@ -32,6 +33,25 @@ from tree_sitter import Language, Parser, Query
 
 from codekavi.pipeline_models import DepGraph, FileEntry
 from codekavi.utils import BoundedContentCache
+
+logger = logging.getLogger(__name__)
+
+
+def _unresolved_reason(raw: str, target: str | None) -> str:
+    """Best-effort classification of why an import didn't become a graph edge."""
+    if target is not None:
+        # Resolver found a file on disk, but it's outside the tracked file set
+        # (e.g. filtered out by the repo traverser's ignore rules).
+        return "resolved_but_not_tracked"
+    if raw.startswith(".") or raw.startswith("/"):
+        return "local_path_not_found"
+    # `@/…`, `~/…` etc. are tsconfig/bundler path aliases pointing back into the
+    # repo. The JS resolver treats them as bare packages (returns None), so they
+    # never become edges — flag them separately since they ARE fixable locally.
+    if raw.startswith("@/") or raw.startswith("~/"):
+        return "path_alias_unresolved"
+    return "external_or_unmapped_package"
+
 
 # Languages are immutable and safe to share across threads.
 JS_LANGUAGE = Language(tsjs.language(), "javascript")
@@ -113,7 +133,8 @@ def _extract_python_imports(
     imports: list[dict[str, Any]] = []
     try:
         tree = ast.parse(source, filename=filepath)
-    except SyntaxError:
+    except SyntaxError as e:
+        logger.debug("dep_graph.syntax_error file=%s error=%s", filepath, e)
         return imports
 
     file_dir = os.path.dirname(filepath)
@@ -692,6 +713,9 @@ def analyze_dependencies(
 
     resolved_count = 0
     unresolved_count = 0
+    skipped_by_language: dict[str, int] = defaultdict(int)
+
+    logger.info("dep_graph.start files=%d repo_root=%s", len(file_list), repo_root)
 
     for file_info in file_list:
         rel_path = file_info.path
@@ -700,6 +724,7 @@ def analyze_dependencies(
 
         extractor = _EXTRACTORS.get(language)
         if not extractor:
+            skipped_by_language[language] += 1
             continue
 
         # Read file ONCE and cache (skip caching large notebooks to save memory)
@@ -713,12 +738,14 @@ def analyze_dependencies(
             else:
                 file_size = os.path.getsize(abs_path)
                 if file_size > max_size:
+                    logger.debug("dep_graph.skip_too_large file=%s size=%d max=%d", rel_path, file_size, max_size)
                     continue
                 with open(abs_path, encoding="utf-8", errors="ignore") as f:
                     source = f.read()
             if not rel_path.endswith(".ipynb"):
                 content_cache[rel_path] = source[:4096]
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError) as e:
+            logger.debug("dep_graph.skip_read_error file=%s error=%s", rel_path, e)
             continue
 
         # Extract imports
@@ -736,6 +763,7 @@ def analyze_dependencies(
             imports = extractor(abs_path, source, repo_root)
         file_imports[rel_path] = imports
 
+        file_resolved = 0
         for imp in imports:
             target = imp["resolved"]
             if target and target in known_files and target != rel_path:
@@ -751,8 +779,29 @@ def analyze_dependencies(
                 adjacency[rel_path].add(target)
                 reverse_adjacency[target].add(rel_path)
                 resolved_count += 1
+                file_resolved += 1
             else:
                 unresolved_count += 1
+                raw = imp["raw"]
+                reason = "self_import" if target == rel_path else _unresolved_reason(raw, target)
+                logger.debug(
+                    "dep_graph.unresolved file=%s raw=%r language=%s reason=%s",
+                    rel_path,
+                    raw,
+                    language,
+                    reason,
+                )
+
+        logger.debug(
+            "dep_graph.file file=%s language=%s imports=%d resolved=%d",
+            rel_path,
+            language,
+            len(imports),
+            file_resolved,
+        )
+
+    if skipped_by_language:
+        logger.warning("dep_graph.unsupported_languages counts=%s", dict(skipped_by_language))
 
     # ── Detect entry points (using content_cache to avoid re-reading files) ──
     entry_points, file_signals = _detect_entry_points(
@@ -765,6 +814,15 @@ def analyze_dependencies(
     if local_cache:
         content_cache.clear()
         del content_cache
+
+    logger.info(
+        "dep_graph.done edges=%d resolved=%d unresolved=%d entry_points=%d central_files=%d",
+        len(edges),
+        resolved_count,
+        unresolved_count,
+        len(entry_points),
+        len(central_files),
+    )
 
     return DepGraph(
         edges=edges,

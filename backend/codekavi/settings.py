@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Optional/CORS Config
     cors_origins: str = Field(default="http://localhost:3000", validation_alias="CORS_ORIGINS")
     sentry_dsn: str = Field(default="", validation_alias="SENTRY_DSN")
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
 
     # Model Names
     groq_model: str = Field(default="llama-3.3-70b-versatile", validation_alias="GROQ_MODEL")

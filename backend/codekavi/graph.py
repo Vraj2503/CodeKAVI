@@ -9,9 +9,12 @@ Converts raw dependency data from analyzer.py into:
   5. Circular dependency detection (DFS-based cycle finding)
 """
 
+import logging
 import os
 from collections import defaultdict
 from typing import Any, cast
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 # 1. Visualization-ready JSON export
@@ -179,6 +182,17 @@ def export_graph_json(
 
         nodes = kept_top + [collapsed_node]
         deduped_edges = collapsed_edges
+
+    logger.info(
+        "graph_json.done nodes=%d edges=%d connected=%d truncated=%s (%d removed)",
+        len(nodes),
+        len(deduped_edges),
+        len(all_connected),
+        is_truncated,
+        truncated_count,
+    )
+    if nodes and not deduped_edges:
+        logger.warning("graph_json.no_edges nodes=%d — check dep_graph logs for unresolved imports", len(nodes))
 
     return {
         "nodes": nodes,
