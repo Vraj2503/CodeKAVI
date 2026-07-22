@@ -600,6 +600,101 @@ def _get_module_name(filepath: str, depth: int) -> str:
     return os.sep.join(parts[:depth])
 
 
+def _common_dir_label(files: list[str]) -> str | None:
+    """Common parent directory shared by all files, or None if they diverge."""
+    dirs = [os.path.dirname(f) for f in files if os.path.dirname(f)]
+    if not dirs:
+        return None
+    try:
+        return os.path.commonpath(dirs) or None
+    except ValueError:
+        return None
+
+
+# ─────────────────────────────────────────────
+# 4b. Semantic architecture graph (grouped by role, not directory)
+# ─────────────────────────────────────────────
+
+# Maps classifier roles to architecture swim-lane layer names. Must match
+# the frontend's layerColors keys in ArchitectureGraph.tsx.
+ROLE_TO_LAYER: dict[str, str] = {
+    "entry_point": "routes",
+    "router": "routes",
+    "orchestrator": "services",
+    "core_module": "services",
+    "ml_pipeline": "services",
+    "ml_training": "services",
+    "ml_model": "models",
+    "type_definition": "models",
+    "data": "database",
+    "shared_utility": "utils",
+    "internal_helper": "utils",
+    "config": "config",
+    "test": "tests",
+    "barrel": "other",
+    "leaf": "other",
+    "build": "other",
+    "documentation": "other",
+}
+
+
+def build_semantic_module_graph(dep_data: dict, file_profiles: list[dict]) -> dict:
+    """
+    Group files by architectural layer (via classifier role, see
+    ROLE_TO_LAYER) instead of by directory, producing correctly-typed
+    swim-lane nodes for the architecture diagram. Same return shape as
+    build_module_graph().
+    """
+    file_to_layer = {p["path"]: ROLE_TO_LAYER.get(p.get("role"), "other") for p in file_profiles}
+
+    layer_files: dict[str, list[str]] = defaultdict(list)
+    for path, layer in file_to_layer.items():
+        layer_files[layer].append(path)
+
+    adjacency = dep_data.get("adjacency", {})
+    cross_edge_counts: dict[tuple[str, str], int] = defaultdict(int)
+    internal_edges: dict[str, int] = defaultdict(int)
+    for src, targets in adjacency.items():
+        src_layer = file_to_layer.get(src)
+        if src_layer is None:
+            continue
+        for tgt in targets if isinstance(targets, list) else []:
+            tgt_layer = file_to_layer.get(tgt)
+            if tgt_layer is None:
+                continue
+            if tgt_layer == src_layer:
+                internal_edges[src_layer] += 1
+            else:
+                cross_edge_counts[(src_layer, tgt_layer)] += 1
+
+    modules = []
+    for layer, files in sorted(layer_files.items()):
+        common_dir = _common_dir_label(files)
+        label = f"{common_dir} — {len(files)} files" if common_dir else f"{len(files)} files"
+        modules.append(
+            {
+                "name": layer,
+                "label": label,
+                "file_count": len(files),
+                "files": sorted(files),
+                "internal_edges": internal_edges.get(layer, 0),
+            }
+        )
+
+    nodes = [{"id": m["name"], "label": m["label"], "type": m["name"], "file_count": m["file_count"]} for m in modules]
+    connections = [
+        {"source": src, "target": tgt, "weight": count} for (src, tgt), count in sorted(cross_edge_counts.items())
+    ]
+
+    return {
+        "modules": modules,
+        "connections": connections,
+        "internal_edges": dict(internal_edges),
+        "graph_json": {"nodes": nodes, "edges": connections},
+        "mermaid": "",
+    }
+
+
 # ─────────────────────────────────────────────
 # 5. Semantic data flow (hybrid static + LLM)
 # ─────────────────────────────────────────────
@@ -963,3 +1058,11 @@ if __name__ == "__main__":
     assert fallback["metadata"]["is_llm_enriched"] is False
 
     print("export_semantic_dataflow: all checks passed")
+
+    semantic = build_semantic_module_graph(dep_data, file_profiles)
+    assert {n["id"] for n in semantic["graph_json"]["nodes"]} == {"routes", "services", "models"}
+    assert all(n["type"] == n["id"] for n in semantic["graph_json"]["nodes"])
+    edge_pairs = {(e["source"], e["target"]) for e in semantic["graph_json"]["edges"]}
+    assert edge_pairs == {("routes", "services"), ("services", "models")}
+
+    print("build_semantic_module_graph: all checks passed")

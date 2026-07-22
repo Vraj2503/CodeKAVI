@@ -77,9 +77,14 @@ function renderViz(type: string, data: any) {
         );
       if (hasEdgelessNodes(data))
         return (
-          <EmptyViz message="Modules detected but no connections resolved. This may indicate unsupported import syntax." />
+          <EmptyViz message="Modules detected but no connections resolved. This project may use path aliases (@/, ~/) or only import external packages. Try the Dependency Graph for file-level detail." />
         );
-      return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
+      return (
+        <div>
+          <DiagnosticsBanner diagnostics={data.diagnostics} />
+          <ArchitectureGraph nodes={data.nodes} edges={data.edges} />
+        </div>
+      );
     case "flow_diagram":
       if (!data.nodes || data.nodes.length === 0)
         return <EmptyViz message="No entry points found to map data flow." />;

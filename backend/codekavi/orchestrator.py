@@ -672,49 +672,13 @@ class ExplanationOrchestrator:
 
     def _auto_viz_architecture(self) -> dict:
         """Build module-level architecture graph from file classifications."""
-        # Group files by top-level directory
-        module_files: dict[str, list[str]] = {}
-        for fp in self.classification or []:
-            path = fp.get("path", "")
-            parts = path.split("/")
-            module = parts[0] if len(parts) > 1 else "root"
-            if module not in module_files:
-                module_files[module] = []
-            module_files[module].append(path)
+        from codekavi.graph import build_semantic_module_graph
 
-        # Create module nodes
-        nodes = []
-        for module_name in module_files:
-            nodes.append(
-                {
-                    "id": module_name,
-                    "label": module_name,
-                    "type": "module",
-                }
-            )
-
-        # Compute inter-module edges from adjacency data
-        adjacency = self.analysis.get("adjacency", {})
-        file_to_module = {}
-        for mod, files in module_files.items():
-            for f in files:
-                file_to_module[f] = mod
-
-        edge_weights: dict[tuple[str, str], int] = {}
-        for src, targets in adjacency.items():
-            src_mod = file_to_module.get(src)
-            if not src_mod:
-                continue
-            target_list = targets if isinstance(targets, list) else [targets]
-            for t in target_list:
-                tgt_mod = file_to_module.get(t)
-                if tgt_mod and src_mod != tgt_mod:
-                    key = (src_mod, tgt_mod)
-                    edge_weights[key] = edge_weights.get(key, 0) + 1
-
-        edges = [{"source": src, "target": tgt} for (src, tgt) in edge_weights]
-
-        return {"nodes": nodes, "edges": edges}
+        semantic = build_semantic_module_graph(
+            dep_data=self.analysis,
+            file_profiles=self.classification or [],
+        )
+        return semantic["graph_json"]
 
     # ─────────────────────────────────────────
     # Helper methods

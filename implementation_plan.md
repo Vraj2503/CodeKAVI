@@ -1,121 +1,339 @@
-# Fix: stale cache serves zero-edge dependency graphs after analyzer changes
+# Fix Architecture Diagram — Step-by-Step Changes
 
-## Context
+## Root Causes (Quick Reference)
 
-sanku-backend's dependency graph shows "No Connections Resolved" (zero edges),
-even though a **fresh** analysis of that repo now resolves 23 edges (confirmed
-via `dep_debug.py` and a direct re-analysis in prior diagnostic sessions).
+| # | Bug | Location |
+|---|---|---|
+| 1 | All nodes hardcoded to `type: "module"` → single swim-lane | [visualize.py L203](file:///Applications/Projects/CodeKavi/backend/codekavi/routes/visualize.py#L203) |
+| 2 | Flat/single-dir repos → 1 node, 0 edges | [graph.py L587](file:///Applications/Projects/CodeKavi/backend/codekavi/graph.py#L587), [orchestrator.py L679](file:///Applications/Projects/CodeKavi/backend/codekavi/orchestrator.py#L679) |
+| 3 | `@/` and `~/` path aliases → 0 resolved edges | [analyzer.py L367](file:///Applications/Projects/CodeKavi/backend/codekavi/analyzer.py#L367) |
+| 4 | Fallback paths also hardcode `type: "module"` | [visualize.py L236](file:///Applications/Projects/CodeKavi/backend/codekavi/routes/visualize.py#L236), [orchestrator.py L688](file:///Applications/Projects/CodeKavi/backend/codekavi/orchestrator.py#L688) |
 
-Diagnosis is complete: edge extraction, resolution, and `known_files` matching
-all work correctly today. The zero-edges symptom is **not** an analyzer bug
-anymore — it is a **cache-invalidation gap**:
+### Role → Layer Mapping (used in multiple changes)
 
-- Cached analysis results (`graph_json`) are keyed only by `repo_id` /
-  commit-signature. Fingerprints (`fingerprint.py`) detect **file content**
-  changes, but nothing detects **analyzer/pipeline code** changes.
-- So when the analyzer or `fingerprint.py` is fixed, any repo already cached
-  keeps serving its old, pre-fix `graph_json` forever. sanku-backend was cached
-  with an old zero-edge result and never recomputed.
+| Classifier Role | → Architecture Layer |
+|---|---|
+| `entry_point`, `router` | `routes` |
+| `orchestrator`, `core_module`, `ml_pipeline`, `ml_training` | `services` |
+| `ml_model`, `type_definition` | `models` |
+| `data` | `database` |
+| `shared_utility`, `internal_helper` | `utils` |
+| `config` | `config` |
+| `test` | `tests` |
+| `barrel`, `leaf`, `build`, `documentation` | `other` |
 
-Two short-circuit paths both serve that stale result, and **both read through
-one function** — `AnalysisCache.get()`:
+---
 
-1. **T4.4 signature dedup** (`routes/analyze.py:107`, `:561`): `lookup_by_signature`
-   → `self.get(repo_id)`. Fires for *any* fresh request whose commit was seen
-   before — the dominant real-world path.
-2. **`ChangeClassification.SKIP`** (`routes/analyze.py:177`, `:601`):
-   `ensure_repo_loaded` (`session.py:55`) → `cache.get(repo_id)`.
+## Change 1 — Extend `detect_layer()` patterns
 
-Intended outcome: when analyzer/pipeline logic changes, cached results become
-stale and are transparently recomputed; existing zero-edge entries (including
-sanku-backend) flush on next access.
+**File:** [config.py](file:///Applications/Projects/CodeKavi/backend/codekavi/config.py#L246-L265)
 
-## Approach
+**What to do:**
+Update the `checks` list inside `detect_layer()` to recognize more modern directory/file patterns, and align return values with the frontend's `layerColors` keys.
 
-Add an **analysis-version stamp** to cached results and treat a version
-mismatch as a cache miss. One chokepoint — `AnalysisCache.get()` /
-`AnalysisCache.set()` in `backend/codekavi/cache.py` — covers both
-short-circuit paths, because everything reads through `get()`.
+**Current code (L252-264):**
+```python
+checks = [
+    (["route", "controller", "api", "endpoint"], "api"),
+    (["model", "schema", "entity"], "model"),
+    (["service", "logic", "handler", "pipeline", "rag"], "service"),
+    (["db", "database", "repo", "migration"], "database"),
+    (["util", "helper", "lib", "common"], "utility"),
+    (["config", "setting", "constant"], "config"),
+    (["component", "page", "layout", "ui", "css", "style", "theme"], "frontend"),
+    (["test", "spec"], "test"),
+]
+```
 
-A miss returns `None`, which routes back into the normal full-analysis path
-(dedup miss → clone/traverse/analyze; or SKIP's `try/except` falls through to
-full analysis), producing a fresh, correctly-edged graph that `set()` then
-re-caches under the current version.
+**Change to:**
+```python
+checks = [
+    (["route", "controller", "api", "endpoint", "view", "screen", "page"], "routes"),
+    (["model", "schema", "entity", "type", "interface", "dto"], "models"),
+    (["service", "logic", "handler", "pipeline", "rag", "middleware", "orchestrat"], "services"),
+    (["db", "database", "repo", "migration", "prisma", "drizzle", "sequelize"], "database"),
+    (["util", "helper", "lib", "common", "shared", "tool", "script", "cli"], "utils"),
+    (["config", "setting", "constant", "env"], "config"),
+    (["component", "layout", "ui", "css", "style", "theme", "hook", "composable",
+      "store", "redux", "zustand", "state", "asset", "static", "public"], "frontend"),
+    (["test", "spec", "__test__", "__spec__"], "tests"),
+]
+```
 
-### Changes — `backend/codekavi/cache.py`
+> [!IMPORTANT]
+> Return values changed: `"api"` → `"routes"`, `"model"` → `"models"`, `"service"` → `"services"`, `"utility"` → `"utils"`, `"test"` → `"tests"`. These must match the frontend's `layerColors` keys in `ArchitectureGraph.tsx`. Check if any other backend code references the old return values (e.g., `"api"`, `"utility"`) and update those callers too.
 
-1. Module constant near the other cache constants (line ~26):
-   ```python
-   # Bump whenever analyzer/fingerprint/graph-export logic changes in a way
-   # that alters cached output. A mismatch makes cached results a cache miss,
-   # forcing transparent re-analysis. Current bump: require()/dynamic-import()
-   # fingerprint fix + edge-resolution work on visualization_fix.
-   ANALYSIS_VERSION = "2"
+**Expected outcome:** `detect_layer()` now returns layer names that directly match the frontend swim-lane keys.
+
+---
+
+## Change 2 — Add `ROLE_TO_LAYER` mapping & `build_semantic_module_graph()` to graph.py
+
+**File:** [graph.py](file:///Applications/Projects/CodeKavi/backend/codekavi/graph.py)
+
+**What to do:**
+Add a new constant and a new function that groups files by their classifier role into architectural layers (instead of by directory).
+
+**Add at module level** (after the existing `_ROLE_TIER_TYPE` dict around L611):
+
+```python
+# Maps classifier roles to architecture swim-lane layer names.
+ROLE_TO_LAYER: dict[str, str] = {
+    "entry_point": "routes",
+    "router": "routes",
+    "orchestrator": "services",
+    "core_module": "services",
+    "ml_pipeline": "services",
+    "ml_training": "services",
+    "ml_model": "models",
+    "type_definition": "models",
+    "data": "database",
+    "shared_utility": "utils",
+    "internal_helper": "utils",
+    "config": "config",
+    "test": "tests",
+    "barrel": "other",
+    "leaf": "other",
+    "build": "other",
+    "documentation": "other",
+}
+```
+
+**Add new function** `build_semantic_module_graph()`:
+
+- Groups all `file_profiles` by their architecture layer (via `ROLE_TO_LAYER[profile["role"]]`, defaulting to `"other"`)
+- For each layer group, creates a node:
+  - `id`: layer name (e.g., `"routes"`)
+  - `label`: layer name + directory context + file count (e.g., `"routes — api/ — 5 files"` if all files share a common parent dir, otherwise `"routes — 5 files"`)
+  - `type`: the layer name itself (e.g., `"routes"`) — **NOT** `"module"`
+- Computes cross-layer edges from `dep_data["adjacency"]`: if file A (in layer X) imports file B (in layer Y) and X ≠ Y, add/increment an edge from X → Y
+- Returns the same shape as `build_module_graph()`:
+  ```python
+  {
+      "modules": [...],
+      "connections": [...],
+      "internal_edges": {...},
+      "graph_json": {"nodes": [...], "edges": [...]},
+      "mermaid": "...",
+  }
+  ```
+
+> [!NOTE]
+> Keep `build_module_graph()` unchanged — it's still used by the dependency graph view.
+
+**Expected outcome:** A reusable function that produces correctly-typed architecture nodes grouped by semantic role.
+
+---
+
+## Change 3 — Fix `visualize_architecture()` endpoint in visualize.py ✅ DONE
+
+**File:** [visualize.py](file:///Applications/Projects/CodeKavi/backend/codekavi/routes/visualize.py#L178-L241)
+
+**What to do:**
+Rewrite the `visualize_architecture()` endpoint to use `build_semantic_module_graph()` instead of hardcoding `type: "module"`.
+
+**Replace the primary path (lines 190-207):**
+
+```python
+result, _ = await _load_repo(repo_id, cache)
+
+from codekavi.graph import build_semantic_module_graph
+
+dep_data = result.get("dep_data", {})
+file_profiles = result.get("file_profiles", [])
+
+semantic_graph = build_semantic_module_graph(dep_data, file_profiles)
+graph_json = semantic_graph["graph_json"]
+viz_nodes = graph_json["nodes"]    # already has correct layer types
+viz_edges = graph_json["edges"]
+```
+
+**Fix the adjacency fallback (lines 209-224):** This path already uses `_detect_layer(src)` — it's fine, just verify it uses the updated return values from Change 1.
+
+**Fix the final fallback (lines 226-236):** Replace `"type": "module"` with `_detect_layer(mod)`:
+```python
+viz_nodes = [
+    {"id": mod, "label": mod, "type": _detect_layer(mod)}
+    for mod in sorted(module_counts)
+][:40]
+```
+
+**Add diagnostics to the response:**
+```python
+diagnostics = _build_diagnostics(dep_data, file_profiles, edge_count=len(viz_edges), node_count=len(viz_nodes))
+
+return {
+    "type": "architecture_graph",
+    "data": {"nodes": viz_nodes, "edges": viz_edges, "diagnostics": diagnostics},
+}
+```
+
+**Expected outcome:** The `/api/visualize/architecture/{repo_id}` endpoint returns nodes with correct layer types, producing multi-lane architecture diagrams.
+
+---
+
+## Change 4 — Fix `_auto_viz_architecture()` in orchestrator.py ✅ DONE
+
+**File:** [orchestrator.py](file:///Applications/Projects/CodeKavi/backend/codekavi/orchestrator.py#L673-L717)
+
+**What to do:**
+Replace the 44-line inline directory grouping method with a call to the shared `build_semantic_module_graph()`.
+
+**Replace the entire `_auto_viz_architecture()` method (lines 673-717):**
+
+```python
+def _auto_viz_architecture(self) -> dict:
+    """Build module-level architecture graph from file classifications."""
+    from codekavi.graph import build_semantic_module_graph
+
+    semantic = build_semantic_module_graph(
+        dep_data=self.analysis,
+        file_profiles=self.classification or [],
+    )
+    return semantic["graph_json"]
+```
+
+**Expected outcome:** The report view's embedded architecture diagram uses the same semantic grouping as the visualize tab. Both paths are consistent.
+
+---
+
+## Change 5 — Add path alias resolution to analyzer.py ✅ DONE
+
+**File:** [analyzer.py](file:///Applications/Projects/CodeKavi/backend/codekavi/analyzer.py)
+
+**What to do:**
+Resolve `@/` and `~/` import paths using `tsconfig.json` / `jsconfig.json` so that modern JS/TS projects produce edges.
+
+**Step 5a — Add `_load_path_aliases()` function:**
+
+```python
+_alias_cache: dict[str, dict[str, str]] = {}
+
+def _load_path_aliases(repo_root: str) -> dict[str, str]:
+    """Parse tsconfig.json/jsconfig.json to resolve path alias prefixes."""
+    if repo_root in _alias_cache:
+        return _alias_cache[repo_root]
+
+    aliases: dict[str, str] = {}
+    for config_name in ("tsconfig.json", "jsconfig.json"):
+        config_path = os.path.join(repo_root, config_name)
+        if not os.path.isfile(config_path):
+            continue
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            # Strip JS-style comments (tsconfig allows them)
+            import re
+            raw = re.sub(r"//.*?$", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.DOTALL)
+            config = json.loads(raw)
+            compiler_opts = config.get("compilerOptions", {})
+            base_url = compiler_opts.get("baseUrl", ".")
+            paths = compiler_opts.get("paths", {})
+            for alias_pattern, targets in paths.items():
+                if not targets:
+                    continue
+                # e.g. "@/*" -> ["src/*"]
+                alias_prefix = alias_pattern.rstrip("*")     # "@/"
+                target_prefix = targets[0].rstrip("*")       # "src/"
+                resolved = os.path.normpath(os.path.join(repo_root, base_url, target_prefix))
+                aliases[alias_prefix] = resolved
+            break  # use the first config found
+        except Exception as e:
+            logger.debug(f"Failed to parse {config_name}: {e}")
+
+    _alias_cache[repo_root] = aliases
+    return aliases
+```
+
+**Step 5b — Modify `_resolve_js_path()`** — add `path_aliases` parameter:
+
+At [line 367-368](file:///Applications/Projects/CodeKavi/backend/codekavi/analyzer.py#L367-L368), before returning `None`, check aliases:
+
+```python
+def _resolve_js_path(
+    import_path: str, file_dir: str, repo_root: str,
+    known_files: set[str] | None = None,
+    path_aliases: dict[str, str] | None = None,  # NEW
+) -> str | None:
+    # Check path aliases BEFORE rejecting non-relative imports
+    if path_aliases and not import_path.startswith(".") and not import_path.startswith("/"):
+        for alias_prefix, resolved_dir in path_aliases.items():
+            if import_path.startswith(alias_prefix):
+                rewritten = os.path.join(resolved_dir, import_path[len(alias_prefix):])
+                # Recursively resolve as a relative path from repo root
+                return _resolve_js_path(
+                    "./" + os.path.relpath(rewritten, file_dir),
+                    file_dir, repo_root, known_files, None  # no aliases in recursion
+                )
+
+    # Skip node_modules / bare specifiers
+    if not import_path.startswith(".") and not import_path.startswith("/"):
+        return None  # external package
+    # ... rest unchanged
+```
+
+**Step 5c — Thread aliases through `analyze_dependencies()`:**
+
+In the JS/TS extraction code path, load aliases once and pass them:
+```python
+path_aliases = _load_path_aliases(repo_root)
+# ... then in every _resolve_js_path() call:
+resolved = _resolve_js_path(import_path, file_dir, repo_root, known_files, path_aliases)
+```
+
+**Expected outcome:** Imports like `@/components/Button` resolve to `src/components/Button.tsx`, producing edges that connect the architecture graph.
+
+---
+
+## Change 6 — Add `frontend` layer to ArchitectureGraph.tsx ✅ DONE
+
+**File:** [ArchitectureGraph.tsx](file:///Applications/Projects/CodeKavi/frontend/components/report/viz/ArchitectureGraph.tsx)
+
+**What to do:**
+
+1. Add `"frontend"` to the `layerColors` map (around line 35):
+   ```ts
+   frontend: { bg: "#2d1a3a", border: "#f472b6", text: "#f9a8d4" },
    ```
-   (`"1"` = implicit pre-stamp era; start at `"2"` so every existing entry —
-   all lacking the key — is stale and flushes.)
 
-2. In `set()` (line 172), stamp the version after `_make_serializable`, before
-   writing any tier:
-   ```python
-   serializable["_analysis_version"] = ANALYSIS_VERSION
+2. Add `"frontend"` to the `layerOrder` array (line 52):
+   ```ts
+   const layerOrder = ["routes", "services", "models", "database", "utils", "config", "tests", "frontend", "module", "other"];
    ```
 
-3. In `get()` (line 146), gate each tier hit on the version. Replace each
-   `if result:` with a version check so a stale entry is neither returned nor
-   promoted to a lower tier:
-   ```python
-   if result and result.get("_analysis_version") == ANALYSIS_VERSION:
-       return result   # (L1)  / promote + return (L2, L3)
+**Expected outcome:** Frontend-related nodes (components, hooks, styles, stores) get their own pink/magenta swim-lane instead of falling into "other".
+
+---
+
+## Change 7 — Improve empty-state messaging in VizContainer.tsx ✅ DONE
+
+**File:** [VizContainer.tsx](file:///Applications/Projects/CodeKavi/frontend/components/report/viz/VizContainer.tsx)
+
+**What to do:**
+
+1. Update the `hasEdgelessNodes` message for `architecture_graph` to be more specific:
+   ```tsx
+   <EmptyViz message="Modules detected but no connections resolved. This project may use path aliases (@/, ~/) or only import external packages. Try the Dependency Graph for file-level detail." />
    ```
-   Fall through to the next tier (and ultimately `return None`) on mismatch.
-   Add a small private helper `_is_current(result)` to avoid repeating the
-   comparison three times.
 
-That is the entire fix. No route, session, or fingerprint changes needed —
-`ensure_repo_loaded` and `lookup_by_signature` already treat `get() → None` as
-"recompute".
+2. If `data.diagnostics` exists, pass it to `DiagnosticsBanner` so the user sees resolution rate info.
 
-### Deliberate simplifications (ponytail)
+**Expected outcome:** Users get actionable guidance when the architecture graph can't show connections, instead of a generic message.
 
-- **Stale entries are not actively evicted**, only ignored. They get
-  overwritten by `set()` on re-analysis (same `repo_id`) or orphaned in L3
-  when signature dedup re-points to a new `repo_id`. Orphans age out of Redis
-  via `REDIS_TTL_SECONDS`; L3/Supabase orphans persist but are unreferenced.
-  Add active eviction only if L3 row growth ever matters —
-  `# ponytail: ignore-not-evict; add DELETE on mismatch if L3 rows grow`.
-- A single global `ANALYSIS_VERSION` invalidates *all* repos on any bump, not
-  just the affected language/path. Correct and trivial; per-component
-  versioning is unjustified complexity for a value bumped by hand a few times.
+---
 
-## Verification
+## Summary — Execution Order
 
-1. **Unit-level (self-contained, no network):** in `backend/`, confirm the
-   stamp/gate round-trips and that a legacy (unstamped) dict is rejected:
-   ```
-   venv/bin/python -c "
-   from codekavi.cache import AnalysisCache, ANALYSIS_VERSION
-   c = AnalysisCache()
-   c.set('r1', {'graph_json': {'edges': [1,2,3]}, 'repo_name': 'x', 'owner': ''})
-   assert c.get('r1')['graph_json']['edges'] == [1,2,3]        # fresh hit
-   c._memory['r2'] = {'graph_json': {'edges': []}}             # legacy, unstamped
-   assert c.get('r2') is None                                  # treated as miss
-   print('cache version gate OK')
-   "
-   ```
-2. **Fresh-analysis edge sanity (already green):**
-   `venv/bin/python dep_debug.py --repo "../test repos/sanku-backend"` →
-   `stats` shows resolved edges > 0 (was 23). Confirms the recompute target is
-   correct.
-3. **End-to-end (browser, per prior session flow):** re-run analysis of
-   sanku-backend through the UI (`/repo/[repoId]/visualize`). Because the old
-   zero-edge entry is now a version miss, the pipeline recomputes and the
-   Dependency Graph renders connections instead of "No Connections Resolved."
-   Optionally confirm the served `graph_json.edges` is non-empty via
-   `GET /api/graph/{repo_id}?format=json`.
+| Change | File | Fixes | Can be tested independently? |
+|---|---|---|---|
+| **1** | `config.py` | Layer name alignment | ✅ Yes — run existing tests |
+| **2** | `graph.py` | New semantic grouping function | ✅ Yes — unit test the new function |
+| **3** | `visualize.py` | Visualize tab architecture endpoint | ✅ Yes — test via API call |
+| **4** | `orchestrator.py` | Report view architecture diagram | ✅ Yes — test via report generation |
+| **5** | `analyzer.py` | Path alias resolution | ✅ Yes — test with a `@/`-heavy repo |
+| **6** | `ArchitectureGraph.tsx` | Frontend swim-lane for "frontend" | ✅ Yes — visual check |
+| **7** | `VizContainer.tsx` | Better empty-state messages | ✅ Yes — visual check |
 
-## Out of scope
-
-- tsconfig `@/` path-alias resolution (known, separate gap).
-- Go/Rust resolvers hardcoded to `None` (separate follow-up).
-- HTML/vanilla-JS extractor (none exists).
+> [!TIP]
+> **Recommended order:** 1 → 2 → 3 → 4 → 6 → 7 → 5. Changes 1–4 fix the core bug (single "module" block). Change 5 (path alias resolution) is independent and can be done last.
