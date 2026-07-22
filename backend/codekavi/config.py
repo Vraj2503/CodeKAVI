@@ -250,14 +250,33 @@ def detect_layer(file_path: str) -> str:
     """
     path_lower = file_path.lower()
     checks = [
-        (["route", "controller", "api", "endpoint"], "api"),
-        (["model", "schema", "entity"], "model"),
-        (["service", "logic", "handler", "pipeline", "rag"], "service"),
-        (["db", "database", "repo", "migration"], "database"),
-        (["util", "helper", "lib", "common"], "utility"),
-        (["config", "setting", "constant"], "config"),
-        (["component", "page", "layout", "ui", "css", "style", "theme"], "frontend"),
-        (["test", "spec"], "test"),
+        (["route", "controller", "api", "endpoint", "view", "screen", "page"], "routes"),
+        (["model", "schema", "entity", "type", "interface", "dto"], "models"),
+        (["service", "logic", "handler", "pipeline", "rag", "middleware", "orchestrat"], "services"),
+        (["db", "database", "repo", "migration", "prisma", "drizzle", "sequelize"], "database"),
+        (["util", "helper", "lib", "common", "shared", "tool", "script", "cli"], "utils"),
+        (["config", "setting", "constant", "env"], "config"),
+        (
+            [
+                "component",
+                "layout",
+                "ui",
+                "css",
+                "style",
+                "theme",
+                "hook",
+                "composable",
+                "store",
+                "redux",
+                "zustand",
+                "state",
+                "asset",
+                "static",
+                "public",
+            ],
+            "frontend",
+        ),
+        (["test", "spec", "__test__", "__spec__"], "tests"),
     ]
     for keywords, layer in checks:
         if any(kw in path_lower for kw in keywords):

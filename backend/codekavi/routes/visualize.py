@@ -187,28 +187,20 @@ async def visualize_architecture(
     Zero LLM cost — uses module groupings from /analyze.
     """
     result, _ = await _load_repo(repo_id, cache)
-    module_graph = result.get("module_graph", {})
-    graph_json = module_graph.get("graph_json") if isinstance(module_graph, dict) else None
-    graph_json_nodes = graph_json.get("nodes", []) if isinstance(graph_json, dict) else []
 
-    if graph_json_nodes:
-        nodes = graph_json_nodes
-        edges = graph_json.get("edges", [])
+    from codekavi.graph import build_semantic_module_graph
 
-        # Normalize nodes for the frontend ArchitectureGraph component
-        viz_nodes = [
-            {
-                "id": n.get("id", ""),
-                "label": n.get("label", n.get("id", "")),
-                "type": "module",
-            }
-            for n in nodes
-        ]
-        viz_edges = [{"source": e.get("source", ""), "target": e.get("target", "")} for e in edges]
-    else:
+    dep_data = result.get("dep_data", {})
+    file_profiles = result.get("file_profiles", [])
+
+    semantic_graph = build_semantic_module_graph(dep_data, file_profiles)
+    graph_json = semantic_graph["graph_json"]
+    viz_nodes = graph_json["nodes"]
+    viz_edges = graph_json["edges"]
+
+    if not viz_nodes:
         # Fallback: build from dep_data adjacency (same as dependency graph)
-        analysis = result.get("dep_data", {})
-        adjacency = analysis.get("adjacency", {})
+        adjacency = dep_data.get("adjacency", {})
         viz_nodes = []
         viz_edges = []
         seen = set()
@@ -233,11 +225,13 @@ async def visualize_architecture(
             for fp in result.get("file_profiles", []):
                 mod = _get_module_name(fp.get("path", ""), depth=1)
                 module_counts[mod] = module_counts.get(mod, 0) + 1
-            viz_nodes = [{"id": mod, "label": mod, "type": "module"} for mod in sorted(module_counts)][:40]
+            viz_nodes = [{"id": mod, "label": mod, "type": _detect_layer(mod)} for mod in sorted(module_counts)][:40]
+
+    diagnostics = _build_diagnostics(dep_data, file_profiles, edge_count=len(viz_edges), node_count=len(viz_nodes))
 
     return {
         "type": "architecture_graph",
-        "data": {"nodes": viz_nodes, "edges": viz_edges},
+        "data": {"nodes": viz_nodes, "edges": viz_edges, "diagnostics": diagnostics},
     }
 
 

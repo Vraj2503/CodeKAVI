@@ -286,8 +286,15 @@ def _extract_js_ts_imports(
     on shared tree-sitter state, without paying the allocation cost per file.
     """
     is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
+    path_aliases = _load_path_aliases(repo_root)
     return _extract_js_ts_imports_with_source(
-        filepath, source, repo_root, is_ts=is_ts, known_files=known_files, raw_imports_cache=raw_imports_cache
+        filepath,
+        source,
+        repo_root,
+        is_ts=is_ts,
+        known_files=known_files,
+        raw_imports_cache=raw_imports_cache,
+        path_aliases=path_aliases,
     )
 
 
@@ -298,6 +305,7 @@ def _extract_js_ts_imports_with_source(
     is_ts: bool,
     known_files: set[str] | None = None,
     raw_imports_cache: list[dict] | None = None,
+    path_aliases: dict[str, str] | None = None,
 ) -> list[dict]:
     """Shared JS/TS extraction that picks the right language and a pooled per-thread Parser."""
     imports: list[dict[str, Any]] = []
@@ -307,7 +315,9 @@ def _extract_js_ts_imports_with_source(
         for item in raw_imports_cache:
             raw_path = item["raw"]
             line = item["line"]
-            resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
+            resolved = _resolve_js_path(
+                raw_path, file_dir, repo_root, known_files=known_files, path_aliases=path_aliases
+            )
             imports.append(
                 {
                     "raw": raw_path,
@@ -330,7 +340,9 @@ def _extract_js_ts_imports_with_source(
             if name == "path":
                 raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
-                resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
+                resolved = _resolve_js_path(
+                    raw_path, file_dir, repo_root, known_files=known_files, path_aliases=path_aliases
+                )
                 imports.append(
                     {
                         "raw": raw_path,
@@ -346,7 +358,9 @@ def _extract_js_ts_imports_with_source(
             for node in nodes:
                 raw_path = node.text.decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
-                resolved = _resolve_js_path(raw_path, file_dir, repo_root, known_files=known_files)
+                resolved = _resolve_js_path(
+                    raw_path, file_dir, repo_root, known_files=known_files, path_aliases=path_aliases
+                )
                 imports.append(
                     {
                         "raw": raw_path,
@@ -359,21 +373,73 @@ def _extract_js_ts_imports_with_source(
     return imports
 
 
+_alias_cache: dict[str, dict[str, str]] = {}
+
+
+def _load_path_aliases(repo_root: str) -> dict[str, str]:
+    """Parse tsconfig.json/jsconfig.json paths (e.g. '@/*' -> 'src/*') into
+    a prefix -> absolute-target-dir map, so `@/foo` resolves like `./foo`."""
+    if repo_root in _alias_cache:
+        return _alias_cache[repo_root]
+
+    aliases: dict[str, str] = {}
+    for config_name in ("tsconfig.json", "jsconfig.json"):
+        config_path = os.path.join(repo_root, config_name)
+        if not os.path.isfile(config_path):
+            continue
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                raw = f.read()
+            raw = re.sub(r"//.*?$", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.DOTALL)
+            config = json.loads(raw)
+            compiler_opts = config.get("compilerOptions", {})
+            base_url = compiler_opts.get("baseUrl", ".")
+            paths = compiler_opts.get("paths", {})
+            for alias_pattern, targets in paths.items():
+                if not targets:
+                    continue
+                alias_prefix = alias_pattern.rstrip("*")
+                target_prefix = targets[0].rstrip("*")
+                resolved = os.path.normpath(os.path.join(repo_root, base_url, target_prefix))
+                aliases[alias_prefix] = resolved
+            break  # use the first config found
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            logger.debug("dep_graph.path_alias_parse_failed config=%s error=%s", config_name, e)
+
+    _alias_cache[repo_root] = aliases
+    return aliases
+
+
 def _resolve_js_path(
-    import_path: str, file_dir: str, repo_root: str, known_files: set[str] | None = None
+    import_path: str,
+    file_dir: str,
+    repo_root: str,
+    known_files: set[str] | None = None,
+    path_aliases: dict[str, str] | None = None,
 ) -> str | None:
     """Resolve a JS/TS import path to a file relative to repo root."""
-    # Skip node_modules / bare specifiers
-    if not import_path.startswith(".") and not import_path.startswith("/"):
-        return None  # external package
+    aliased_candidate = None
+    if path_aliases and not import_path.startswith(".") and not import_path.startswith("/"):
+        for alias_prefix, resolved_dir in path_aliases.items():
+            if import_path.startswith(alias_prefix):
+                aliased_candidate = os.path.normpath(os.path.join(resolved_dir, import_path[len(alias_prefix) :]))
+                break
 
-    if import_path.startswith("/"):
-        base = repo_root
-        import_path = import_path[1:]
+    if aliased_candidate is not None:
+        candidate = aliased_candidate
     else:
-        base = file_dir
+        # Skip node_modules / bare specifiers
+        if not import_path.startswith(".") and not import_path.startswith("/"):
+            return None  # external package
 
-    candidate = os.path.normpath(os.path.join(base, import_path))
+        if import_path.startswith("/"):
+            base = repo_root
+            import_path = import_path[1:]
+        else:
+            base = file_dir
+
+        candidate = os.path.normpath(os.path.join(base, import_path))
 
     # Reject imports that resolve outside the repo root (e.g. `../../../../etc/passwd`)
     # to prevent arbitrary-file-read into embeddings and chat history.
