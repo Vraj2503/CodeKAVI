@@ -40,11 +40,11 @@ coverage.xml
 node_modules/
 supabase_migrations/
 
-
+#cache
 .codekavi-fingerprints/
-Task.md
 
 # Sprint planning / audit notes (local only)
+Task.md
 Issues.md
 Sprint1.md
 Sprint2.md
@@ -60,3 +60,8 @@ Understand-Anything/
 
 .claude/
 skills-lock.json
+.gstack/
+
+test repos/
+backend/dep_debug.py
+backend/codekavi/routes/test_analyze_import_scope.py

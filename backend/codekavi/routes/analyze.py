@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import PlainTextResponse, StreamingResponse
 
+from codekavi.analyzer import analyze_dependencies, patch_dep_graph
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
 from codekavi.classifier import classify_files, summarize_roles
@@ -217,8 +218,6 @@ async def analyze(
                     partial_files = [f for f in repo_data.files if f.path in changed_paths]
 
                     # Analyze ONLY changed files
-                    from codekavi.analyzer import analyze_dependencies, patch_dep_graph
-
                     partial_dep = await _run_sync(
                         analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
                     )
@@ -628,8 +627,6 @@ async def analyze_stream(
                         }
 
                         partial_files = [f for f in repo_data.files if f.path in changed_paths]
-
-                        from codekavi.analyzer import analyze_dependencies, patch_dep_graph
 
                         partial_dep = await _run_sync(
                             analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict

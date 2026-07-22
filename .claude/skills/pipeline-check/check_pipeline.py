@@ -23,9 +23,7 @@ except ImportError:
 try:
     import requests
 except ImportError:
-    print(
-        "requests is required. Install it with: pip install requests", file=sys.stderr
-    )
+    print("requests is required. Install it with: pip install requests", file=sys.stderr)
     sys.exit(1)
 
 DEFAULT_REPO = "https://github.com/navdeep-G/samplemod"
@@ -73,6 +71,7 @@ def mint_token(jwt_secret: str) -> str:
     payload = {
         "sub": "pipeline-check",
         "role": "authenticated",
+        "aud": "authenticated",
         "iat": now,
         "exp": now + 3600,
     }
@@ -81,12 +80,8 @@ def mint_token(jwt_secret: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--repo-url", default=DEFAULT_REPO, help="Public repo URL to analyze"
-    )
-    parser.add_argument(
-        "--backend-url", default=DEFAULT_BACKEND, help="Base URL of the running backend"
-    )
+    parser.add_argument("--repo-url", default=DEFAULT_REPO, help="Public repo URL to analyze")
+    parser.add_argument("--backend-url", default=DEFAULT_BACKEND, help="Base URL of the running backend")
     parser.add_argument(
         "--no-cleanup",
         action="store_true",
@@ -111,9 +106,7 @@ def main() -> int:
         resp.raise_for_status()
     except Exception as e:
         print(f"Backend not reachable at {health_url} ({e}).")
-        print(
-            "Start it first: cd backend && make run   (or: docker compose up backend redis)"
-        )
+        print("Start it first: cd backend && make run   (or: docker compose up backend redis)")
         return 1
     print(f"[ok] backend healthy at {args.backend_url}")
 
@@ -164,24 +157,16 @@ def main() -> int:
         print(f"FAILED: pipeline reported an error stage: {error_message}")
         return 1
 
-    missing = [
-        label
-        for pct, label, optional in EXPECTED_STAGES
-        if pct not in seen and not optional
-    ]
+    missing = [label for pct, label, optional in EXPECTED_STAGES if pct not in seen and not optional]
     if missing:
         print(f"FAILED: pipeline stopped early — missing stages: {', '.join(missing)}")
         return 1
 
-    print(
-        f"PASSED: all pipeline stages completed in {time.time() - start:.1f}s (repo_id={repo_id})"
-    )
+    print(f"PASSED: all pipeline stages completed in {time.time() - start:.1f}s (repo_id={repo_id})")
 
     if repo_id and not args.no_cleanup:
         try:
-            requests.delete(
-                f"{args.backend_url}/api/cleanup/{repo_id}", headers=headers, timeout=10
-            )
+            requests.delete(f"{args.backend_url}/api/cleanup/{repo_id}", headers=headers, timeout=10)
             print(f"[ok] cleaned up repo_id={repo_id}")
         except Exception as e:
             print(f"[warn] cleanup failed (non-fatal): {e}")

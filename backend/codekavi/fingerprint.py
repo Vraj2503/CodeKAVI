@@ -40,6 +40,13 @@ _STRUCTURE_QUERY_STR = """
     (export_statement source: (string (string_fragment) @export_from_path))
     (export_statement
         (export_clause (export_specifier name: (identifier) @export_name)))
+    (call_expression
+        function: (identifier) @fname
+        arguments: (arguments (string (string_fragment) @import_path))
+        (#eq? @fname "require"))
+    (call_expression
+        function: (import)
+        arguments: (arguments (string (string_fragment) @import_path)))
     (function_declaration name: (identifier) @fn_name)
     (class_declaration name: (identifier) @class_name)
     (method_definition name: (property_identifier) @method_name)
@@ -53,6 +60,13 @@ _STRUCTURE_QUERY_STR_TS = """
     (export_statement source: (string (string_fragment) @export_from_path))
     (export_statement
         (export_clause (export_specifier name: (identifier) @export_name)))
+    (call_expression
+        function: (identifier) @fname
+        arguments: (arguments (string (string_fragment) @import_path))
+        (#eq? @fname "require"))
+    (call_expression
+        function: (import)
+        arguments: (arguments (string (string_fragment) @import_path)))
     (function_declaration name: (identifier) @fn_name)
     (class_declaration name: (type_identifier) @class_name)
     (method_definition name: (property_identifier) @method_name)
