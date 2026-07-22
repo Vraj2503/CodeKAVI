@@ -25,6 +25,12 @@ _REDIS_PREFIX = "codekavi:result:"
 # T4.4 — Redis key prefix for the cross-user signature index.
 _REDIS_SIG_PREFIX = "codekavi:sig:"
 
+# Bump whenever analyzer/fingerprint/graph-export logic changes in a way
+# that alters cached output. A mismatch makes cached results a cache miss,
+# forcing transparent re-analysis. Current bump: fix UnboundLocalError in
+# analyze route that cached empty (zero-edge) dep graphs on the FULL_UPDATE path.
+ANALYSIS_VERSION = "3"
+
 
 def _make_serializable(obj: Any) -> Any:
     """Recursively convert sets to sorted lists for JSON serialization."""
@@ -39,6 +45,11 @@ def _make_serializable(obj: Any) -> Any:
     if hasattr(obj, "dict"):
         return _make_serializable(obj.dict())
     return obj
+
+
+def _is_current(result: dict) -> bool:
+    """A cached result is usable only if it was written by this analysis version."""
+    return result.get("_analysis_version") == ANALYSIS_VERSION
 
 
 class AnalysisCache:
@@ -122,17 +133,14 @@ class AnalysisCache:
 
             options = ClientOptions(postgrest_client_timeout=10)
             self._supabase = create_client(supabase_url, supabase_key, options=options)
-            
+
             # Explicitly configure HTTP connection pooling limits for Supabase under high concurrency
             limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
             old_session = self._supabase.postgrest.session
             self._supabase.postgrest.session = SyncClient(
-                base_url=old_session.base_url,
-                headers=old_session.headers,
-                timeout=old_session.timeout,
-                limits=limits
+                base_url=old_session.base_url, headers=old_session.headers, timeout=old_session.timeout, limits=limits
             )
-            
+
             self._supabase_available = True
             logger.info("Supabase L3 cache connected with connection pooling")
             return self._supabase
@@ -147,22 +155,24 @@ class AnalysisCache:
         """
         Walk the cache chain: L1 → L2 → L3.
         On a hit at a higher tier, populate lower tiers.
+        A version-stamp mismatch (result predates the current analyzer/graph
+        logic) is treated as a miss so it falls through to re-analysis.
         Returns the result dict or None.
         """
         # L1: in-memory
         result = self._memory.get(repo_id)
-        if result:
+        if result and _is_current(result):
             return result
 
         # L2: Redis
         result = self._redis_get(repo_id)
-        if result:
+        if result and _is_current(result):
             self._memory[repo_id] = result  # populate L1
             return result
 
         # L3: Supabase
         result = self._supabase_get(repo_id)
-        if result:
+        if result and _is_current(result):
             self._memory[repo_id] = result  # populate L1
             self._redis_set(repo_id, result)  # populate L2
             return result
@@ -172,6 +182,7 @@ class AnalysisCache:
     def set(self, repo_id: str, result: dict) -> None:
         """Write to all 3 tiers."""
         serializable = _make_serializable(result)
+        serializable["_analysis_version"] = ANALYSIS_VERSION
 
         # L1
         self._memory[repo_id] = serializable
@@ -180,7 +191,6 @@ class AnalysisCache:
         json_str = json.dumps(serializable)
         self._redis_set_raw(repo_id, json_str)
         self._supabase_set_raw(repo_id, json_str, result.get("repo_name", ""), result.get("owner", ""))
-
 
     def delete(self, repo_id: str) -> None:
         """Evict from all 3 tiers."""
@@ -276,24 +286,25 @@ class AnalysisCache:
             # Use raw HTTP via httpx to avoid json.loads and supabase-py's internal json.dumps,
             # saving significant CPU on 10MB+ payloads.
             import httpx
-            
+
             url = f"{settings.supabase_url}/rest/v1/analysis_cache"
             headers = {
                 "apikey": settings.supabase_service_key,
                 "Authorization": f"Bearer {settings.supabase_service_key}",
                 "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates"
+                "Prefer": "resolution=merge-duplicates",
             }
-            
+
             # Construct the payload string manually to embed the raw json_str
             import json
+
             payload_str = (
                 f'{{"repo_id": {json.dumps(repo_id)}, '
                 f'"repo_name": {json.dumps(repo_name)}, '
                 f'"owner": {json.dumps(owner)}, '
                 f'"result_json": {json_str}}}'
             )
-            
+
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(url, headers=headers, content=payload_str)
                 response.raise_for_status()

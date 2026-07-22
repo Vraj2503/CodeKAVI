@@ -81,7 +81,7 @@ async def visualize_dependencies(
     # export_graph_json enriches nodes with role/importance/language/degree
     # and already seeds standalone (edge-less) files as nodes, so no separate
     # fallback seeding is needed here.
-    graph_export = export_graph_json(analysis, file_profiles=file_profiles, max_nodes=60)
+    graph_export = export_graph_json(analysis, file_profiles=file_profiles, max_nodes=settings.graph_max_nodes)
     nodes: list[dict[str, Any]] = [{**n, "type": _detect_layer(n["id"])} for n in graph_export["nodes"]]
     edges: list[dict[str, Any]] = [{"source": e["source"], "target": e["target"]} for e in graph_export["edges"]]
 
