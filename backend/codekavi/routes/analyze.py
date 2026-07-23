@@ -481,7 +481,7 @@ async def with_keepalive(async_gen_func):
     """
     import asyncio
 
-    q = asyncio.Queue()
+    q: asyncio.Queue = asyncio.Queue()
 
     async def producer():
         try:

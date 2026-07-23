@@ -21,7 +21,7 @@ import {
   useImperativeHandle,
 } from "react";
 import * as d3 from "d3";
-// @ts-ignore — bundled version runs synchronously, avoids web-worker issues in Next.js
+// bundled version runs synchronously, avoids web-worker issues in Next.js
 import ELK from "elkjs/lib/elk.bundled.js";
 
 /* ── Types ────────────────────────────────────────────────── */

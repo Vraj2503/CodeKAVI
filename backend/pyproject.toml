@@ -49,6 +49,7 @@ skip-magic-trailing-comma = false
 # ─────────────────────────────────────────
 [tool.mypy]
 python_version = "3.12"
+exclude = ["cloned_repos/", "output/", "venv/"]
 ignore_missing_imports = true
 warn_return_any = false
 warn_unused_configs = true
@@ -60,10 +61,10 @@ no_implicit_optional = true
 # pytest
 # ─────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["codekavi"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --ignore=tests/fixtures/"
+addopts = "-v --tb=short"
 
 # ─────────────────────────────────────────
 # coverage

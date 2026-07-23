@@ -4,19 +4,19 @@ import json
 import os
 import subprocess
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - fcntl is POSIX-only
-    fcntl = None
-
-from codekavi.pipeline_models import FileEntry
+    fcntl = None  # type: ignore[assignment]
 
 import tree_sitter_javascript as tsjs
 import tree_sitter_typescript as tsts
 from tree_sitter import Language, Parser
+
+from codekavi.pipeline_models import FileEntry
 
 try:
     from codekavi.config import EXTENSION_LANGUAGE_MAP, FILENAME_LANGUAGE_MAP
@@ -87,7 +87,7 @@ _LANG_BY_EXT = {
 }
 
 
-class ChangeClassification(str, Enum):
+class ChangeClassification(StrEnum):
     SKIP = "SKIP"
     PARTIAL_UPDATE = "PARTIAL_UPDATE"
     ARCHITECTURE_UPDATE = "ARCHITECTURE_UPDATE"
@@ -284,11 +284,14 @@ def _python_structure_signature(source: str) -> dict:
     for node in body:
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, (ast.List, ast.Tuple)):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                exports.append(elt.value)
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "__all__"
+                    and isinstance(node.value, (ast.List, ast.Tuple))
+                ):
+                    for elt in node.value.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            exports.append(elt.value)
 
     return {
         "imports_hash": _hash_python_signature(imports),
@@ -337,7 +340,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     enriched_classes: list[ClassFingerprint] = []
 
     # We will build a simple map of classes to their methods to assemble ClassFingerprint
-    class_methods = {}
+    class_methods: dict[str, list[str]] = {}
     current_class = None
 
     for node, name in _each(captures):
@@ -516,7 +519,7 @@ def compare_and_classify_repo(
             prev = cached[rel_path]
             if prev.content_hash == current_hash:
                 change_type = "NONE"
-                sig = {
+                sig: dict[str, Any] = {
                     "imports_hash": prev.imports_hash,
                     "exports_hash": prev.exports_hash,
                     "structure_hash": prev.structure_hash,

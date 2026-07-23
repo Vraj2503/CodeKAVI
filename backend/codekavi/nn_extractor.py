@@ -16,6 +16,8 @@ import math
 import re
 from typing import Any
 
+from codekavi.utils import BoundedContentCache
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -247,8 +249,8 @@ def _compute_block_dims(
     - height/depth: proportional to spatial dimensions (log-scaled)
     - width: proportional to channel/feature count (log-scaled)
     """
-    MIN_DIM, MAX_DIM = 8.0, 80.0
-    MIN_WIDTH, MAX_WIDTH = 1.5, 25.0
+    min_dim, max_dim = 8.0, 80.0
+    min_width, max_width = 1.5, 25.0
 
     def _log_scale(val: Any, lo: float, hi: float) -> float:
         if not isinstance(val, (int, float)):
@@ -264,23 +266,23 @@ def _compute_block_dims(
 
     if output_shape:
         if len(output_shape) >= 3:  # [C, H, W]
-            height = _log_scale(output_shape[-2], MIN_DIM, MAX_DIM)
-            depth = _log_scale(output_shape[-1], MIN_DIM, MAX_DIM)
-            width = _log_scale(output_shape[0], MIN_WIDTH, MAX_WIDTH)
+            height = _log_scale(output_shape[-2], min_dim, max_dim)
+            depth = _log_scale(output_shape[-1], min_dim, max_dim)
+            width = _log_scale(output_shape[0], min_width, max_width)
         elif len(output_shape) == 2:  # [C, L] (1D)
-            height = _log_scale(output_shape[-1], MIN_DIM, MAX_DIM)
+            height = _log_scale(output_shape[-1], min_dim, max_dim)
             depth = 10.0
-            width = _log_scale(output_shape[0], MIN_WIDTH, MAX_WIDTH)
+            width = _log_scale(output_shape[0], min_width, max_width)
         elif len(output_shape) == 1:  # [features]
-            height = _log_scale(output_shape[0], MIN_DIM, MAX_DIM)
+            height = _log_scale(output_shape[0], min_dim, max_dim)
             depth = 10.0
             width = 3.0
 
     # Fallback from params
     elif "out_channels" in params:
-        width = _log_scale(params["out_channels"], MIN_WIDTH, MAX_WIDTH)
+        width = _log_scale(params["out_channels"], min_width, max_width)
     elif "out_features" in params:
-        height = _log_scale(params["out_features"], MIN_DIM, MAX_DIM)
+        height = _log_scale(params["out_features"], min_dim, max_dim)
         depth = 10.0
         width = 3.0
 
@@ -321,7 +323,7 @@ def _get_call_name(node: ast.Call) -> str | None:
     func = node.func
     if isinstance(func, ast.Attribute):
         parts = []
-        current = func
+        current: ast.expr = func
         while isinstance(current, ast.Attribute):
             parts.append(current.attr)
             current = current.value
@@ -645,16 +647,14 @@ def _collect_layers_from_value(
     last = call_name.split(".")[-1] if call_name else ""
     if last in _LAYER_CONTAINERS:
         # Flatten container elements (positional args, incl. list/tuple/dict literals).
-        idx = 0
         elements: list[ast.Call] = []
         for arg in value.args:
             elements.extend(_flatten_layer_elements(arg))
         for kw in value.keywords:
             if kw.arg == "layers":
                 elements.extend(_flatten_layer_elements(kw.value))
-        for el in elements:
+        for idx, el in enumerate(elements):
             _collect_layers_from_value(el, f"{base_id}_{idx}", layers, layer_order, alias_map)
-            idx += 1
         return
 
     layer = _make_layer_dict(value, base_id, alias_map)
@@ -710,8 +710,9 @@ def _extract_module_class(
                     _collect_layers_from_value(node.value, target.attr, layers, layer_order, alias_map)
         elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             func = node.value.func
-            if isinstance(func, ast.Attribute) and func.attr == "append" and node.value.args:
-                layer = _make_layer_dict(node.value.args[0], f"append_{dynamic_idx}", alias_map)
+            arg0 = node.value.args[0] if node.value.args else None
+            if isinstance(func, ast.Attribute) and func.attr == "append" and isinstance(arg0, ast.Call):
+                layer = _make_layer_dict(arg0, f"append_{dynamic_idx}", alias_map)
                 if layer is not None:
                     layers.append(layer)
                     layer_order.append(layer["id"])
@@ -734,7 +735,7 @@ def _extract_module_class(
         if layer_order:
             connections.append({"from_id": layer_order[-1], "to_id": "output", "type": "sequential-unverified"})
 
-    total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+    total_params = sum(layer.get("param_count", 0) or 0 for layer in layers)
 
     return {
         "name": class_node.name,
@@ -752,7 +753,7 @@ def _extract_module_class(
 
 
 def _extract_forward_connections(
-    forward_node: ast.FunctionDef,
+    forward_node: ast.FunctionDef | ast.AsyncFunctionDef,
     layer_order: list[str],
     connections: list[dict],
     layers: list[dict],
@@ -765,14 +766,13 @@ def _extract_forward_connections(
     for node in ast.walk(forward_node):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             target = node.targets[0]
-            if isinstance(target, ast.Name):
-                # Check if RHS is self.layer(x)
-                if isinstance(node.value, ast.Call):
-                    call_name = _get_call_name(node.value)
-                    if call_name and call_name.startswith("self."):
-                        layer_name = call_name.split("self.")[-1]
-                        if layer_name in layer_order:
-                            call_sequence.append(layer_name)
+            # Check if RHS is self.layer(x)
+            if isinstance(target, ast.Name) and isinstance(node.value, ast.Call):
+                call_name = _get_call_name(node.value)
+                if call_name and call_name.startswith("self."):
+                    layer_name = call_name.split("self.")[-1]
+                    if layer_name in layer_order:
+                        call_sequence.append(layer_name)
         elif isinstance(node, ast.Return) and isinstance(node.value, ast.Call):
             # M-02: `return self.layer(x)` is an extremely common terminal
             # statement (e.g. ResNet-style `return self.fc(x)`) and was
@@ -846,7 +846,7 @@ def _extract_sequential(
         return None
 
     connections = _sequential_connections(layers)
-    total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+    total_params = sum(layer.get("param_count", 0) or 0 for layer in layers)
 
     return {
         "name": model_name,
@@ -910,9 +910,10 @@ def _extract_imperative_sequential(
         if not (isinstance(func, ast.Attribute) and func.attr == "add" and isinstance(func.value, ast.Name)):
             continue
         var_name = func.value.id
-        if var_name not in tracked or not call.args:
+        arg0 = call.args[0] if call.args else None
+        if var_name not in tracked or not isinstance(arg0, ast.Call):
             continue
-        add_calls[var_name].append((call.lineno, call.args[0]))
+        add_calls[var_name].append((call.lineno, arg0))
 
     for var_name, calls in add_calls.items():
         calls.sort(key=lambda pair: pair[0])  # ast.walk is unordered
@@ -924,7 +925,7 @@ def _extract_imperative_sequential(
         if not layers:
             continue
 
-        total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+        total_params = sum(layer.get("param_count", 0) or 0 for layer in layers)
         models.append(
             {
                 "name": var_name,
@@ -1078,9 +1079,9 @@ def _build_functional_model(
         return None
 
     connections.append({"from_id": final_id, "to_id": "output", "type": "sequential"})
-    layers.sort(key=lambda l: var_lineno.get(id_to_var.get(l["id"], ""), 0))
+    layers.sort(key=lambda layer: var_lineno.get(id_to_var.get(layer["id"], ""), 0))
 
-    total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+    total_params = sum(layer.get("param_count", 0) or 0 for layer in layers)
     return {
         "name": model_name,
         "file": file_path,
@@ -1149,10 +1150,7 @@ def _is_ml_file(alias_map: dict[str, str] | None) -> bool:
     """Whether the file's imports reference a known ML framework root."""
     if not alias_map:
         return False
-    for origin in alias_map.values():
-        if origin.split(".")[0] in _ML_FRAMEWORK_ROOTS:
-            return True
-    return False
+    return any(origin.split(".")[0] in _ML_FRAMEWORK_ROOTS for origin in alias_map.values())
 
 
 def _iter_heuristic_scopes(tree: ast.Module) -> list[tuple[str, list[ast.stmt], int, int]]:
@@ -1210,7 +1208,7 @@ def _extract_heuristic_models(
 
         stem = file_path.rsplit("/", 1)[-1]
         stem = stem.rsplit(".", 1)[0] if "." in stem else stem
-        total_params = sum(l.get("param_count", 0) or 0 for l in layers)
+        total_params = sum(layer.get("param_count", 0) or 0 for layer in layers)
         models.append(
             {
                 "name": name if name != "module" else stem,
@@ -1440,7 +1438,7 @@ def select_nn_candidates(file_profiles: list, dep_data: Any) -> list[dict]:
 
 async def extract_all_models(
     ml_model_files: list[dict],
-    content_cache: dict[str, str] | None = None,
+    content_cache: dict[str, str] | BoundedContentCache | None = None,
     repo_root: str = "",
 ) -> list[dict]:
     """Extract NN models from all ML model files.

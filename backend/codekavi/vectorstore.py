@@ -1,7 +1,7 @@
+import asyncio
 import contextlib
 import logging
 import re
-import asyncio
 import time
 import uuid
 from typing import Any, ClassVar
@@ -298,13 +298,14 @@ class ZillizClient:
             base_expr += ' and layer not in ["frontend", "test"]'
 
         all_hits = []
+        collection = self.collection
 
         # Function to perform a search safely
         def do_search(vector, provider_name):
             expr = f"{base_expr} and provider == '{provider_name}'"
             try:
-                self.collection.load()
-                results = self.collection.search(
+                collection.load()
+                results = collection.search(
                     data=[vector],
                     anns_field="vector",
                     param=search_params,

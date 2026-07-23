@@ -12,14 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from codekavi.auth import verify_supabase_token
 from codekavi.cache import AnalysisCache
+from codekavi.exceptions import RateLimitError
 from codekavi.limiter import per_minute
 from codekavi.llm import get_provider
 from codekavi.llm.providers import Message
 from codekavi.quota import get_token_tracker
+from codekavi.routes._errors import internal_error
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ChatRequest
-from codekavi.exceptions import RateLimitError
-from codekavi.routes._errors import internal_error
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
@@ -283,8 +283,9 @@ async def delete_session(session_id: str, user_id: str = Depends(verify_supabase
     Uses the backend service key to bypass frontend RLS if a DELETE policy is missing.
     """
     try:
+        from supabase import ClientOptions, create_client
+
         from codekavi.settings import settings
-        from supabase import create_client, ClientOptions
 
         options = ClientOptions(postgrest_client_timeout=10)
         supabase = create_client(settings.supabase_url, settings.supabase_service_key, options=options)

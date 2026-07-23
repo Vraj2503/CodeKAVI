@@ -42,7 +42,7 @@ async def user_or_ip_identifier(request: Request) -> str:
         return f"user:{user_id}:{request.scope['path']}"
 
     forwarded = request.headers.get("X-Forwarded-For")
-    ip = forwarded.split(",")[0] if forwarded else request.client.host
+    ip = forwarded.split(",")[0] if forwarded else (request.client.host if request.client else "unknown")
     return f"ip:{ip}:{request.scope['path']}"
 
 

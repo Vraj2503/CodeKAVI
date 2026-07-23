@@ -223,7 +223,7 @@ def normalize_role(raw: Any) -> str:
 
 
 def normalize_complexity(raw: Any) -> int:
-    """Return canonical int complexity score (1‒9). Never raises.
+    """Return canonical int complexity score (1-9). Never raises.
 
     Resolution order:
       1. int passthrough if already numeric
@@ -264,13 +264,7 @@ def normalize_complexity(raw: Any) -> int:
     # Step 4: token-level alias lookup.
     # Split on whitespace and common delimiters so "moderate complexity",
     # "3/5", "complex (high)" all resolve to a known alias.
-    tokens = (
-        text.replace(",", " ")
-        .replace("/", " ")
-        .replace("(", " ")
-        .replace(")", " ")
-        .split()
-    )
+    tokens = text.replace(",", " ").replace("/", " ").replace("(", " ").replace(")", " ").split()
     for token in tokens:
         if token in COMPLEXITY_ALIASES:
             return COMPLEXITY_ALIASES[token]

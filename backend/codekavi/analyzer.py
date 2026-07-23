@@ -1049,7 +1049,7 @@ def _detect_entry_points(
     adjacency: dict[str, set],
     reverse_adjacency: dict[str, set],
     content_cache: dict[str, str] | BoundedContentCache | None = None,
-) -> tuple[list[dict], dict[str, set]]:
+) -> tuple[list[dict], dict[str, list[str]]]:
     """
     Detect likely entry point files using heuristics:
       1. Filename matches common entry point patterns
@@ -1060,7 +1060,7 @@ def _detect_entry_points(
     """
     entry_points = []
     scored: dict[str, dict] = {}
-    file_signals: dict[str, set] = {}
+    file_signals: dict[str, list[str]] = {}
 
     # Extensions that are actual source code (not docs/config)
     source_extensions = {
@@ -1150,7 +1150,7 @@ def _detect_entry_points(
             if "React" in content or "useState" in content or "useEffect" in content or "Component" in content:
                 signals.add("is_react")
 
-            file_signals[fpath] = signals
+            file_signals[fpath] = sorted(signals)
 
         # ── Heuristic 3: graph topology ──
         # Files that import others but nobody imports them = likely entry points

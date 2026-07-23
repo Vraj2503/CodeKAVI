@@ -23,8 +23,6 @@ const sectionOrder = [
   "mindmap",
 ] as const;
 
-
-
 // ── Main ReportView ──
 
 interface ReportViewProps {
@@ -41,11 +39,14 @@ interface StatsData {
   entry_points: string[];
 }
 
-export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: ReportViewProps) {
+export function ReportView({
+  repoId,
+  repoName,
+  needsReanalysis,
+  onReanalyze,
+}: ReportViewProps) {
   const [stats, setStats] = useState<StatsData | null>(null);
-  const [sections, setSections] = useState<Map<string, SectionData>>(
-    new Map()
-  );
+  const [sections, setSections] = useState<Map<string, SectionData>>(new Map());
   const [completedSections, setCompletedSections] = useState<string[]>([]);
   const [isComplete, setIsComplete] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
@@ -83,7 +84,7 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
         ...(prompt ? { prompt } : {}),
       });
     },
-    [repoId, startStream]
+    [repoId, startStream],
   );
 
   // Let the user manually generate instead of auto-starting
@@ -156,8 +157,8 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
             Analysis Data Expired
           </h2>
           <p className="text-muted-foreground max-w-md mb-6">
-            The cached analysis for this repository has expired.
-            Please re-analyze the repository before generating a report.
+            The cached analysis for this repository has expired. Please
+            re-analyze the repository before generating a report.
           </p>
           {onReanalyze && (
             <button
@@ -180,7 +181,9 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
             Ready to Generate Report
           </h2>
           <p className="text-muted-foreground max-w-md mb-8">
-            Click the button below to generate a comprehensive, AI-powered explanation of this repository's architecture, dependencies, and data flow.
+            Click the button below to generate a comprehensive, AI-powered
+            explanation of this repository&apos;s architecture, dependencies,
+            and data flow.
           </p>
           <button
             onClick={openModal}
@@ -191,8 +194,6 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
           </button>
         </div>
       )}
-
-
 
       {/* Sections */}
       <div className="px-6 pb-20 space-y-4">
@@ -220,7 +221,7 @@ export function ReportView({ repoId, repoName, needsReanalysis, onReanalyze }: R
 
         {/* Dynamic / Fallback Sections (ordered by completion) */}
         {completedSections
-          .filter((name) => !sectionOrder.includes(name as any))
+          .filter((name) => !(sectionOrder as readonly string[]).includes(name))
           .map((name) => {
             const section = sections.get(name);
             if (!section) return null;

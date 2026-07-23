@@ -50,7 +50,7 @@ def generate_deterministic_tour(
     # Build the full node set. Kahn's needs every node — both sources and
     # targets — regardless of whether they appear as a key in adjacency.
     all_nodes: set[str] = set(adjacency.keys())
-    for src, targets in adjacency.items():
+    for _src, targets in adjacency.items():
         target_list = targets if isinstance(targets, list) else [targets]
         all_nodes.update(target_list)
 
@@ -60,7 +60,7 @@ def generate_deterministic_tour(
     # In-degree map keyed only over known nodes (avoids KeyError if an edge
     # points at an unknown target).
     in_degree: dict[str, int] = {n: 0 for n in all_nodes}
-    for src, targets in adjacency.items():
+    for _src, targets in adjacency.items():
         target_list = targets if isinstance(targets, list) else [targets]
         for t in target_list:
             if t in in_degree:

@@ -32,8 +32,8 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+from codekavi.pipeline_models import DepGraph, FileEntry, FileProfile
 from codekavi.utils import BoundedContentCache
-from codekavi.pipeline_models import FileEntry, DepGraph, FileProfile
 
 # ─────────────────────────────────────────────
 # Filename pattern → role hints
@@ -225,7 +225,7 @@ def _content_signals(
     Read up to 4KB of a source file and detect structural signals.
     Returns a dict of boolean flags.
     """
-    signals = {
+    signals: dict[str, Any] = {
         "has_main_guard": False,
         "has_main_function": False,
         "starts_server": False,
@@ -599,13 +599,13 @@ def _determine_role(
 
     # ── 9.5 ML/DL roles ──
     if signals.get("has_ml_model_def") and signals.get("ml_frameworks"):
-        tags = ["ml", "model"] + signals.get("ml_frameworks", [])
+        tags = ["ml", "model", *signals.get("ml_frameworks", [])]
         candidates.append(("ml_model", 0.90, tags))
     elif signals.get("has_ml_training") and signals.get("ml_frameworks"):
-        tags = ["ml", "training"] + signals.get("ml_frameworks", [])
+        tags = ["ml", "training", *signals.get("ml_frameworks", [])]
         candidates.append(("ml_training", 0.85, tags))
     elif signals.get("has_ml_pipeline") and signals.get("ml_frameworks"):
-        tags = ["ml", "pipeline"] + signals.get("ml_frameworks", [])
+        tags = ["ml", "pipeline", *signals.get("ml_frameworks", [])]
         candidates.append(("ml_pipeline", 0.82, tags))
 
     # ── 10. Graph-based roles (only for source files with connections) ──

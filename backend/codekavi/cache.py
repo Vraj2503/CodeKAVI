@@ -127,9 +127,9 @@ class AnalysisCache:
             return None
 
         try:
-            from supabase import create_client, ClientOptions
-            from postgrest.utils import SyncClient
             import httpx
+            from postgrest.utils import SyncClient
+            from supabase import ClientOptions, create_client
 
             options = ClientOptions(postgrest_client_timeout=10)
             self._supabase = create_client(supabase_url, supabase_key, options=options)
