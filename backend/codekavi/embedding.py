@@ -1,8 +1,7 @@
 import asyncio
 import logging
-import aiohttp
-from typing import Any
 
+import aiohttp
 from google import genai
 from google.genai import types
 
@@ -93,10 +92,12 @@ class GeminiEmbedding:
                 response = await asyncio.to_thread(
                     client.models.embed_content,
                     model=self.model,
-                    contents=texts,
+                    contents=texts,  # type: ignore[arg-type]
                     config=self.config,
                 )
-                return [e.values for e in response.embeddings]
+                if not response.embeddings:
+                    raise ValueError("Gemini returned no embeddings")
+                return [e.values or [] for e in response.embeddings]
 
             except Exception as e:
                 err_str = str(e)

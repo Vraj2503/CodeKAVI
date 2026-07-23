@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export function mockChatResponse() {
   const responses = [
     "Here is how this works in the codebase. You can find the main logic in `src/index.ts` where it initializes the application.",
@@ -99,12 +100,12 @@ export function mockVizResponse(type: string) {
           id: f,
           label: f.split("/").pop() || f,
           type: Object.keys(mm.roles)[0] || "file",
-        }))
+        })),
       );
       // Entry-point / cross-cutting files outside any module
       nodes.push(
         { id: "src/index.ts", label: "index.ts", type: "file" },
-        { id: "src/app.ts", label: "app.ts", type: "file" }
+        { id: "src/app.ts", label: "app.ts", type: "file" },
       );
 
       // Hand-authored file-level edges — believable dependency flow
@@ -115,28 +116,61 @@ export function mockVizResponse(type: string) {
         { source: "src/app.ts", target: "src/routes/api.routes.ts" },
         { source: "src/app.ts", target: "src/routes/web.routes.ts" },
         // routes → services
-        { source: "src/routes/auth.routes.ts", target: "src/services/userService.ts" },
-        { source: "src/routes/auth.routes.ts", target: "src/services/notificationService.ts" },
-        { source: "src/routes/api.routes.ts", target: "src/services/orderService.ts" },
-        { source: "src/routes/api.routes.ts", target: "src/services/productService.ts" },
-        { source: "src/routes/web.routes.ts", target: "src/services/productService.ts" },
+        {
+          source: "src/routes/auth.routes.ts",
+          target: "src/services/userService.ts",
+        },
+        {
+          source: "src/routes/auth.routes.ts",
+          target: "src/services/notificationService.ts",
+        },
+        {
+          source: "src/routes/api.routes.ts",
+          target: "src/services/orderService.ts",
+        },
+        {
+          source: "src/routes/api.routes.ts",
+          target: "src/services/productService.ts",
+        },
+        {
+          source: "src/routes/web.routes.ts",
+          target: "src/services/productService.ts",
+        },
         // routes → utils
         { source: "src/routes/auth.routes.ts", target: "src/utils/jwt.ts" },
         // services → models
         { source: "src/services/userService.ts", target: "src/models/User.ts" },
-        { source: "src/services/userService.ts", target: "src/models/Order.ts" },
-        { source: "src/services/orderService.ts", target: "src/models/Order.ts" },
-        { source: "src/services/orderService.ts", target: "src/models/User.ts" },
-        { source: "src/services/productService.ts", target: "src/models/Product.ts" },
+        {
+          source: "src/services/userService.ts",
+          target: "src/models/Order.ts",
+        },
+        {
+          source: "src/services/orderService.ts",
+          target: "src/models/Order.ts",
+        },
+        {
+          source: "src/services/orderService.ts",
+          target: "src/models/User.ts",
+        },
+        {
+          source: "src/services/productService.ts",
+          target: "src/models/Product.ts",
+        },
         // services → utils
         { source: "src/services/userService.ts", target: "src/utils/hash.ts" },
-        { source: "src/services/notificationService.ts", target: "src/utils/jwt.ts" },
+        {
+          source: "src/services/notificationService.ts",
+          target: "src/utils/jwt.ts",
+        },
         // models → database
         { source: "src/models/User.ts", target: "src/database/postgres.ts" },
         { source: "src/models/Order.ts", target: "src/database/postgres.ts" },
         { source: "src/models/Product.ts", target: "src/database/redis.ts" },
         // components → utils
-        { source: "src/components/Form.tsx", target: "src/components/Button.tsx" },
+        {
+          source: "src/components/Form.tsx",
+          target: "src/components/Button.tsx",
+        },
         { source: "src/components/Form.tsx", target: "src/utils/hash.ts" },
       ];
 
@@ -149,10 +183,12 @@ export function mockVizResponse(type: string) {
         const key = `${ms}|${mt}`;
         moduleEdgeMap.set(key, (moduleEdgeMap.get(key) || 0) + 1);
       }
-      const moduleEdges = Array.from(moduleEdgeMap.entries()).map(([k, weight]) => {
-        const [source, target] = k.split("|");
-        return { source, target, weight };
-      });
+      const moduleEdges = Array.from(moduleEdgeMap.entries()).map(
+        ([k, weight]) => {
+          const [source, target] = k.split("|");
+          return { source, target, weight };
+        },
+      );
 
       // Compute in/out weights from the aggregated edges
       const inWeight = new Map<string, number>();
@@ -330,7 +366,7 @@ export function mockVizResponse(type: string) {
       const nn_models = mockAnalyzeResponse().nn_models;
       return {
         models: nn_models,
-        count: nn_models.length
+        count: nn_models.length,
       };
 
     default:
@@ -357,8 +393,22 @@ export function mockAnalyzeResponse(): any {
     files: [],
     file_profiles: [],
     role_summary: { ml_model: 1 } as any,
-    graph: { nodes: [], edges: [], metadata: { total_nodes: 0, total_edges: 0, connected_nodes: 0, groups: [] } },
-    module_graph: { modules: [], connections: [], graph_json: { nodes: [], edges: [] }, mermaid: "" },
+    graph: {
+      nodes: [],
+      edges: [],
+      metadata: {
+        total_nodes: 0,
+        total_edges: 0,
+        connected_nodes: 0,
+        groups: [],
+      },
+    },
+    module_graph: {
+      modules: [],
+      connections: [],
+      graph_json: { nodes: [], edges: [] },
+      mermaid: "",
+    },
     cycles: { has_cycles: false, cycle_count: 0, cycles: [], summary: "" },
     mermaid: { file_level: "", module_level: "" },
     nn_models: [
@@ -376,11 +426,17 @@ export function mockAnalyzeResponse(): any {
             id: "conv1",
             type: "Conv2d",
             category: "convolution",
-            params: { in_channels: 3, out_channels: 64, kernel_size: 7, stride: 2, padding: 3 },
+            params: {
+              in_channels: 3,
+              out_channels: 64,
+              kernel_size: 7,
+              stride: 2,
+              padding: 3,
+            },
             output_shape: [64, 112, 112],
             param_count: 9408,
             activation: "ReLU",
-            block_dims: { width: 10, height: 10, depth: 8, x: 0, y: 0, z: 0 }
+            block_dims: { width: 10, height: 10, depth: 8, x: 0, y: 0, z: 0 },
           },
           {
             id: "bn1",
@@ -389,7 +445,7 @@ export function mockAnalyzeResponse(): any {
             params: { num_features: 64 },
             output_shape: [64, 112, 112],
             param_count: 128,
-            block_dims: { width: 4, height: 10, depth: 8, x: 0, y: 0, z: 0 }
+            block_dims: { width: 4, height: 10, depth: 8, x: 0, y: 0, z: 0 },
           },
           {
             id: "pool1",
@@ -398,17 +454,23 @@ export function mockAnalyzeResponse(): any {
             params: { kernel_size: 3, stride: 2, padding: 1 },
             output_shape: [64, 56, 56],
             param_count: 0,
-            block_dims: { width: 6, height: 6, depth: 8, x: 0, y: 0, z: 0 }
+            block_dims: { width: 6, height: 6, depth: 8, x: 0, y: 0, z: 0 },
           },
           {
             id: "layer1_conv",
             type: "Conv2d",
             category: "convolution",
-            params: { in_channels: 64, out_channels: 256, kernel_size: 3, stride: 1, padding: 1 },
+            params: {
+              in_channels: 64,
+              out_channels: 256,
+              kernel_size: 3,
+              stride: 1,
+              padding: 1,
+            },
             output_shape: [256, 56, 56],
             param_count: 147456,
             activation: "ReLU",
-            block_dims: { width: 6, height: 6, depth: 15, x: 0, y: 0, z: 0 }
+            block_dims: { width: 6, height: 6, depth: 15, x: 0, y: 0, z: 0 },
           },
           {
             id: "fc",
@@ -418,8 +480,8 @@ export function mockAnalyzeResponse(): any {
             output_shape: [1000],
             param_count: 257000,
             activation: "Softmax",
-            block_dims: { width: 2, height: 20, depth: 2, x: 0, y: 0, z: 0 }
-          }
+            block_dims: { width: 2, height: 20, depth: 2, x: 0, y: 0, z: 0 },
+          },
         ],
         connections: [
           { from_id: "conv1", to_id: "bn1", type: "sequential" },
@@ -427,13 +489,13 @@ export function mockAnalyzeResponse(): any {
           { from_id: "pool1", to_id: "layer1_conv", type: "sequential" },
           { from_id: "layer1_conv", to_id: "fc", type: "sequential" },
           // Mock skip connection to test UI
-          { from_id: "pool1", to_id: "fc", type: "skip", label: "Residual" }
+          { from_id: "pool1", to_id: "fc", type: "skip", label: "Residual" },
         ],
         blocks: [
           { name: "Stem", layers: ["conv1", "bn1", "pool1"], has_skip: false },
-          { name: "ResBlock1", layers: ["layer1_conv", "fc"], has_skip: true }
-        ]
-      }
-    ]
+          { name: "ResBlock1", layers: ["layer1_conv", "fc"], has_skip: true },
+        ],
+      },
+    ],
   };
 }

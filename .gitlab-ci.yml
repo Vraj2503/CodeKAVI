@@ -50,6 +50,12 @@ frontend-lint:
 frontend-build:
   stage: build
   image: node:22-alpine
+  needs:
+    - frontend-lint
   <<: *frontend-cache
   script:
     - npm run build
+  artifacts:
+    paths:
+      - frontend/.next/
+    expire_in: 1 week

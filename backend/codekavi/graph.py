@@ -180,7 +180,7 @@ def export_graph_json(
             collapsed_edge_set.add(key)
             collapsed_edges.append({**e, "source": new_src, "target": new_tgt})
 
-        nodes = kept_top + [collapsed_node]
+        nodes = [*kept_top, collapsed_node]
         deduped_edges = collapsed_edges
 
     logger.info(
@@ -645,7 +645,7 @@ def build_semantic_module_graph(dep_data: dict, file_profiles: list[dict]) -> di
     swim-lane nodes for the architecture diagram. Same return shape as
     build_module_graph().
     """
-    file_to_layer = {p["path"]: ROLE_TO_LAYER.get(p.get("role"), "other") for p in file_profiles}
+    file_to_layer = {p["path"]: ROLE_TO_LAYER.get(p.get("role") or "", "other") for p in file_profiles}
 
     layer_files: dict[str, list[str]] = defaultdict(list)
     for path, layer in file_to_layer.items():

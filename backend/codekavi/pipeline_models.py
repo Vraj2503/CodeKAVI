@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
 from typing import Any
+
+from pydantic import BaseModel
+
 
 class FileEntry(BaseModel):
     path: str
@@ -58,18 +60,18 @@ class AnalysisResult(BaseModel):
     repo_name: str
     owner: str
     github_url: str
-    
+
     files: list[dict[str, Any]]
     languages: dict[str, int]
     total_files: int
     total_lines: int
-    
+
     dependencies: dict[str, Any]
     file_profiles: list[dict[str, Any]]
-    
+
     graph_json: str
     mermaid_file: str
     module_graph: dict[str, Any]
     cycles: list[list[str]]
-    
+
     model_config = {"extra": "allow"}

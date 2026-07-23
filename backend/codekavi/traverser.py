@@ -6,7 +6,6 @@ files/directories, and collects structured metadata for each file.
 import os
 
 from codekavi.config import (
-    EXTENSION_LANGUAGE_MAP,
     FILENAME_LANGUAGE_MAP,
     IGNORED_DIRS,
     IGNORED_EXTENSIONS,
@@ -15,7 +14,7 @@ from codekavi.config import (
     MAX_NOTEBOOK_SIZE_BYTES,
     detect_language,
 )
-from codekavi.pipeline_models import RepoData, FileEntry
+from codekavi.pipeline_models import FileEntry, RepoData
 from codekavi.settings import settings
 
 # M-24: never read these into FileEntry.content — a committed .env or key
@@ -103,7 +102,7 @@ def traverse_repo(clone_path: str) -> RepoData:
 
     def _walk_tree(current_path: str) -> list[dict]:
         nonlocal total_size, preloaded_content_bytes
-        entries = []
+        entries: list[dict] = []
         dirs = []
         files = []
 
@@ -174,7 +173,7 @@ def traverse_repo(clone_path: str) -> RepoData:
             content = None
             if file_size < 100 * 1024 and preloaded_content_bytes + file_size <= settings.max_content_cache_bytes:
                 try:
-                    with open(f_path, "r", encoding="utf-8") as f_obj:
+                    with open(f_path, encoding="utf-8") as f_obj:
                         content = f_obj.read()
                     preloaded_content_bytes += file_size
                 except UnicodeDecodeError:
