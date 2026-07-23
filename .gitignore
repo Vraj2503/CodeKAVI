@@ -64,6 +64,9 @@ skills-lock.json
 .agents/
 .codex/
 .tokensave/
+.impeccable/
+.github/hooks/
+.github/skills/
 
 test repos/
 backend/dep_debug.py
