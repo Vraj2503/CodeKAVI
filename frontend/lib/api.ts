@@ -2,14 +2,20 @@
 import { supabase } from "./supabase";
 
 const API_BASE = "/api";
-import { mockChatResponse, mockVizResponse, mockExplanationResponse } from "./mockData";
+import {
+  mockChatResponse,
+  mockVizResponse,
+  mockExplanationResponse,
+} from "./mockData";
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (session?.access_token) {
       return {
-        "Authorization": `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${session.access_token}`,
       };
     }
   } catch (e) {
@@ -181,47 +187,47 @@ export interface VizResponse {
 // ── Neural Network Model Types ──
 
 export interface NNBlockDims {
-    height: number;
-    depth: number;
-    width: number;
+  height: number;
+  depth: number;
+  width: number;
 }
 
 export interface NNLayer {
-    id: string;
-    type: string;
-    category: string;
-    params: Record<string, any>;
-    output_shape?: number[];
-    param_count?: number;
-    activation?: string;
-    block_dims?: NNBlockDims;
+  id: string;
+  type: string;
+  category: string;
+  params: Record<string, any>;
+  output_shape?: number[];
+  param_count?: number;
+  activation?: string;
+  block_dims?: NNBlockDims;
 }
 
 export interface NNConnection {
-    from_id: string;
-    to_id: string;
-    type: "sequential" | "skip" | "concat" | "add";
-    label?: string;
+  from_id: string;
+  to_id: string;
+  type: "sequential" | "skip" | "concat" | "add";
+  label?: string;
 }
 
 export interface NNBlock {
-    name: string;
-    layers: string[];
-    has_skip: boolean;
+  name: string;
+  layers: string[];
+  has_skip: boolean;
 }
 
 export interface NNModel {
-    name: string;
-    file: string;
-    line: number;
-    framework: string;
-    type: "class" | "sequential" | "functional";
-    total_params?: number;
-    input_shape?: number[];
-    output_shape?: number[];
-    layers: NNLayer[];
-    connections: NNConnection[];
-    blocks?: NNBlock[];
+  name: string;
+  file: string;
+  line: number;
+  framework: string;
+  type: "class" | "sequential" | "functional";
+  total_params?: number;
+  input_shape?: number[];
+  output_shape?: number[];
+  layers: NNLayer[];
+  connections: NNConnection[];
+  blocks?: NNBlock[];
 }
 
 export interface ExplanationResponse {
@@ -230,6 +236,76 @@ export interface ExplanationResponse {
   model: string;
 }
 
+// ── Semantic Graph Types (Phase 1) ──
+
+export interface RepoGraphLayer {
+  id: string;
+  name: string;
+  label: string;
+  file_count: number;
+  tier: number;
+}
+
+export interface RepoGraphContainer {
+  id: string;
+  layer_id: string;
+  name: string;
+  strategy: "folder" | "community";
+  file_ids: string[];
+}
+
+export interface RepoGraphFile {
+  id: string;
+  path: string;
+  name: string;
+  container_id: string | null;
+  layer_id: string | null;
+  role: string | null;
+  role_label: string | null;
+  importance: number;
+  in_degree: number;
+  out_degree: number;
+  language: string | null;
+  size: number;
+  kind: "file";
+  parent: null;
+  flags: string[];
+}
+
+export interface RepoGraphEdge {
+  source: string;
+  target: string;
+  level: "file" | "container" | "layer";
+  count: number;
+}
+
+export interface RepoGraphPortal {
+  from_layer: string;
+  to_layer: string;
+  connection_count: number;
+}
+
+export interface RepoGraphInsights {
+  cycles: string[][];
+  orphans: string[];
+  central: string[];
+  entry_points: string[];
+}
+
+export interface RepoGraphPayload {
+  fingerprint: string;
+  layers: RepoGraphLayer[];
+  containers: RepoGraphContainer[];
+  files: RepoGraphFile[];
+  edges: RepoGraphEdge[];
+  portals: RepoGraphPortal[];
+  insights: RepoGraphInsights;
+}
+
+/** `res.ok` is true for 202, so callers must branch on `status` before touching `data`. */
+export type RepoGraphResult =
+  { status: "ok"; data: RepoGraphPayload } | { status: "re-analyzing" };
+
 // ── API Functions ──
 
 /**
@@ -237,7 +313,7 @@ export interface ExplanationResponse {
  * Returns null if the repo has expired (404), throws on other errors.
  */
 export async function restoreRepo(
-  repoId: string
+  repoId: string,
 ): Promise<AnalyzeResponse | null> {
   if (repoId === "dev-mock-repo") {
     const { mockAnalyzeResponse } = await import("./mockData");
@@ -265,10 +341,7 @@ export async function restoreRepo(
   }
 }
 
-
-export async function analyzeRepo(
-  githubUrl: string
-): Promise<AnalyzeResponse> {
+export async function analyzeRepo(githubUrl: string): Promise<AnalyzeResponse> {
   const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_BASE}/analyze`, {
     method: "POST",
@@ -284,8 +357,12 @@ export async function analyzeRepo(
     try {
       const errJson = JSON.parse(errText);
       errDetail = errJson.detail || errJson.error || errDetail;
-      if (typeof errDetail === 'object') {
-        if (Array.isArray(errDetail) && errDetail.length > 0 && errDetail[0].msg) {
+      if (typeof errDetail === "object") {
+        if (
+          Array.isArray(errDetail) &&
+          errDetail.length > 0 &&
+          errDetail[0].msg
+        ) {
           errDetail = errDetail.map((e: any) => e.msg).join(", ");
         } else {
           errDetail = JSON.stringify(errDetail);
@@ -319,7 +396,12 @@ export interface AnalysisProgressEvent {
 }
 
 function isStreamCompleteData(data: unknown): data is StreamCompleteData {
-  return typeof data === 'object' && data !== null && 'result' in data && 'total_events' in data;
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "result" in data &&
+    "total_events" in data
+  );
 }
 
 /**
@@ -328,14 +410,22 @@ function isStreamCompleteData(data: unknown): data is StreamCompleteData {
  */
 export async function analyzeRepoStream(
   githubUrl: string,
-  onProgress: (event: AnalysisProgressEvent) => void
+  onProgress: (event: AnalysisProgressEvent) => void,
 ): Promise<AnalyzeResponse> {
   if (githubUrl === "mock://nn") {
     const { mockAnalyzeResponse } = await import("./mockData");
-    onProgress({ stage: "init", progress: 0, message: "Starting mock analysis..." });
-    await new Promise(r => setTimeout(r, 500));
-    onProgress({ stage: "analyzing", progress: 50, message: "Mocking NN models..." });
-    await new Promise(r => setTimeout(r, 500));
+    onProgress({
+      stage: "init",
+      progress: 0,
+      message: "Starting mock analysis...",
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    onProgress({
+      stage: "analyzing",
+      progress: 50,
+      message: "Mocking NN models...",
+    });
+    await new Promise((r) => setTimeout(r, 500));
     onProgress({ stage: "complete", progress: 100, message: "Mock complete." });
     return mockAnalyzeResponse();
   }
@@ -405,9 +495,11 @@ export async function analyzeRepoStream(
   if (!finalData) {
     throw new Error("Analysis stream ended without complete event");
   }
-  
+
   if (!finalData.repo_id) {
-    throw new Error("Received malformed analysis data from server (missing repo_id)");
+    throw new Error(
+      "Received malformed analysis data from server (missing repo_id)",
+    );
   }
 
   return finalData;
@@ -415,15 +507,24 @@ export async function analyzeRepoStream(
 
 export async function chatWithRepo(
   repoId: string,
-  query: string
+  query: string,
 ): Promise<ChatResponse> {
   if (repoId === "dev-mock-repo") {
-    return new Promise((resolve) => setTimeout(() => resolve({
-      success: true,
-      repo_id: repoId,
-      answer: mockChatResponse(),
-      sources: [{ file_path: "src/index.ts", score: 0.95 }, { file_path: "src/utils.ts", score: 0.88 }]
-    }), 1000));
+    return new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            success: true,
+            repo_id: repoId,
+            answer: mockChatResponse(),
+            sources: [
+              { file_path: "src/index.ts", score: 0.95 },
+              { file_path: "src/utils.ts", score: 0.88 },
+            ],
+          }),
+        1000,
+      ),
+    );
   }
 
   const authHeaders = await getAuthHeaders();
@@ -454,13 +555,19 @@ export async function chatWithRepo(
 export async function fetchVisualization(
   repoId: string,
   type: VizType,
-  useLlm: boolean = false
+  useLlm: boolean = false,
 ): Promise<VizResponse> {
   if (repoId === "dev-mock-repo") {
-    return new Promise((resolve) => setTimeout(() => resolve({
-      type,
-      data: mockVizResponse(type)
-    }), 500));
+    return new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            type,
+            data: mockVizResponse(type),
+          }),
+        500,
+      ),
+    );
   }
 
   const authHeaders = await getAuthHeaders();
@@ -489,14 +596,20 @@ export async function fetchVisualization(
 
 export async function fetchVisualizationExplanation(
   repoId: string,
-  vizType: string
+  vizType: string,
 ): Promise<ExplanationResponse> {
   if (repoId === "dev-mock-repo") {
-    return new Promise((resolve) => setTimeout(() => resolve({
-      explanation: mockExplanationResponse(vizType),
-      tokens_used: 120,
-      model: "mock-model"
-    }), 1000));
+    return new Promise((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            explanation: mockExplanationResponse(vizType),
+            tokens_used: 120,
+            model: "mock-model",
+          }),
+        1000,
+      ),
+    );
   }
 
   const authHeaders = await getAuthHeaders();
@@ -515,4 +628,33 @@ export async function fetchVisualizationExplanation(
   }
 
   return res.json();
+}
+
+/**
+ * Fetch the Phase 1 semantic graph. A 202 means the repo is re-analyzing —
+ * `res.ok` is true for 202 too, so that branch must be checked first
+ * (review N-2: a naive `!res.ok` check renders re-analyzing as an error).
+ */
+export async function fetchRepoGraph(
+  repoId: string,
+  signal?: AbortSignal,
+): Promise<RepoGraphResult> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/graph/semantic/${repoId}`, {
+    headers: authHeaders,
+    signal,
+  });
+
+  if (res.status === 202) {
+    return { status: "re-analyzing" };
+  }
+
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to load graph" }));
+    throw new Error(err.detail || `Failed to load graph (${res.status})`);
+  }
+
+  return { status: "ok", data: await res.json() };
 }

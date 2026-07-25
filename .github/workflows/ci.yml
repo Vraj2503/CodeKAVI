@@ -38,6 +38,8 @@ jobs:
         run: |
           cd backend
           pytest
+          # Guard: fail if the suite ever silently empties again
+          test "$(pytest --co -q 2>/dev/null | grep -c '::')" -gt 0
 
   frontend-lint-build:
     runs-on: ubuntu-latest

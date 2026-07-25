@@ -9,6 +9,8 @@ import logging
 import os
 import threading
 
+from fastapi import HTTPException
+
 from codekavi.cache import AnalysisCache
 from codekavi.config import CLONE_BASE_DIR
 from codekavi.settings import settings
@@ -42,22 +44,38 @@ def find_clone_path_by_repo_id(repo_id: str) -> str | None:
     return None
 
 
-def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None, str | None]:
+def assert_repo_owner(result: dict, user_id: str) -> None:
+    """
+    Deny access to an analysis owned by a different user.
+
+    Legacy rows written before owner_user_id existed have no owner on
+    record — treated as public/read-only rather than denied, since there's
+    no recorded owner to deny access on behalf of.
+    """
+    owner = result.get("owner_user_id")
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=404, detail="Repo not found.")  # 404 > 403: no existence oracle
+
+
+def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tuple[dict | None, str | None]:
     """
     Ensure repo analysis is available for a repo_id.
 
     Cache chain: L1 (memory) → L2 (Redis) → L3 (Supabase) → re-analyze from clone → None.
 
-    Returns (result_dict, clone_path) or (None, None).
+    Returns (result_dict, clone_path) or (None, None). Raises 404 if the
+    cached result belongs to a different authenticated user.
     """
     # Fast path: check L1 memory
     clone_path = cache.get_session_path(repo_id)
     result = cache.get(repo_id)
     if result and clone_path:
+        assert_repo_owner(result, user_id)
         return result, clone_path
 
     # If we got a result from L2/L3 but no clone_path, try to find it on disk
     if result and not clone_path:
+        assert_repo_owner(result, user_id)
         clone_path = find_clone_path_by_repo_id(repo_id)
         if clone_path:
             cache.set_session_path(repo_id, clone_path)
@@ -123,6 +141,7 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache) -> tuple[dict | None,
             result = {
                 "repo_name": repo_name,
                 "owner": "",
+                "owner_user_id": user_id,
                 "repo_data": repo_data_dict,
                 "dep_data": dep_data_dict,
                 "file_profiles": file_profiles_dicts,

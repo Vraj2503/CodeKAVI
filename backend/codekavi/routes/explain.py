@@ -94,7 +94,7 @@ async def explain_repo(
     _enforce_user_quota(user_id=user_id)
 
     try:
-        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 
@@ -221,7 +221,7 @@ async def explain_single_file(
     Generate an LLM explanation for a single file in a previously analyzed repo.
     """
     try:
-        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 
@@ -274,7 +274,7 @@ async def explain_repo_stream(
     Stream explanation sections via Server-Sent Events (SSE).
     """
     try:
-        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 

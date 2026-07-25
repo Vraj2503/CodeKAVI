@@ -40,7 +40,7 @@ from codekavi.pipeline_models import DepGraph
 from codekavi.routes._errors import internal_error, scrub_message
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import AnalyzeRequest
-from codekavi.session import ensure_repo_loaded, save_analysis
+from codekavi.session import assert_repo_owner, ensure_repo_loaded, save_analysis
 from codekavi.settings import settings
 from codekavi.traverser import traverse_repo
 from codekavi.utils import BoundedContentCache
@@ -177,7 +177,7 @@ async def analyze(
 
         if change_class == ChangeClassification.SKIP:
             try:
-                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
                 if cached_result:
                     logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
                     _cached_rd = cached_result.get("repo_data", repo_data)
@@ -203,7 +203,7 @@ async def analyze(
 
         elif change_class == ChangeClassification.PARTIAL_UPDATE:
             try:
-                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
                 if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
                     logger.info(f"PARTIAL_UPDATE detected for {repo_id}. Merging changed files.")
                     changed_paths = {
@@ -391,6 +391,7 @@ async def analyze(
         result_data = {
             "repo_name": clone_info["repo_name"],
             "owner": clone_info["owner"],
+            "owner_user_id": user_id,
             "repo_data": repo_data,
             "dep_data": dep_data,
             "file_profiles": file_profiles,
@@ -599,7 +600,7 @@ async def analyze_stream(
 
             if change_class == ChangeClassification.SKIP:
                 try:
-                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
                     if cached_result:
                         logger.info(f"Skipping analysis for {repo_id}: NO STRUCTURAL CHANGES.")
                         yield _sse_event(
@@ -614,7 +615,7 @@ async def analyze_stream(
 
             elif change_class == ChangeClassification.PARTIAL_UPDATE:
                 try:
-                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
                     if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
                         logger.info(f"PARTIAL_UPDATE detected for {repo_id} in background. Merging changed files.")
                         changed_paths = {
@@ -826,6 +827,7 @@ async def analyze_stream(
             stream_result_data = {
                 "repo_name": clone_info["repo_name"],
                 "owner": clone_info["owner"],
+                "owner_user_id": user_id,
                 "repo_data": repo_data,
                 "dep_data": dep_data,
                 "file_profiles": file_profiles,
@@ -915,7 +917,7 @@ async def get_graph(
     in a specific export format.
     """
     try:
-        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -956,7 +958,7 @@ async def restore_repo(
 ):
     """Restore analysis results from cache chain for a previously analyzed repo."""
     try:
-        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+        result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -1009,6 +1011,10 @@ async def cleanup(
     user_id: str = Depends(verify_supabase_token),
 ):
     """Remove a previously cloned repo by its ID."""
+    existing = await _run_sync(cache.get, repo_id)
+    if existing:
+        assert_repo_owner(existing, user_id)
+
     clone_path = await _run_sync(cache.get_session_path, repo_id)
     await _run_sync(cache.delete, repo_id)
     await _run_sync(cache.delete_session, repo_id)

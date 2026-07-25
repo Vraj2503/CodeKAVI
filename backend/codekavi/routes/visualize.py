@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 # ── Helpers ──
 
 
-async def _load_repo(repo_id: str, cache: AnalysisCache):
+async def _load_repo(repo_id: str, cache: AnalysisCache, user_id: str):
     """Load repo analysis data. Raises HTTPException if not found."""
     try:
-        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache)
+        result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -74,7 +74,7 @@ async def visualize_dependencies(
     Returns BOTH file-level graph (nodes/edges) AND module-level data
     (modules/connections) so the frontend can render either view.
     """
-    result, _ = await _load_repo(repo_id, cache)
+    result, _ = await _load_repo(repo_id, cache, user_id)
     analysis = result.get("dep_data", {})
     file_profiles = result.get("file_profiles", [])
 
@@ -152,7 +152,7 @@ async def visualize_complexity(
     Build complexity treemap from file classifications.
     Zero LLM cost — uses importance scores from /analyze.
     """
-    result, _ = await _load_repo(repo_id, cache)
+    result, _ = await _load_repo(repo_id, cache, user_id)
     classification = result.get("file_profiles", [])
 
     children = []
@@ -186,7 +186,7 @@ async def visualize_architecture(
     Build module-level architecture graph from module_graph data.
     Zero LLM cost — uses module groupings from /analyze.
     """
-    result, _ = await _load_repo(repo_id, cache)
+    result, _ = await _load_repo(repo_id, cache, user_id)
 
     from codekavi.graph import build_semantic_module_graph
 
@@ -253,7 +253,7 @@ async def visualize_dataflow(
     static-only result — with a `fallback_reason` on the metadata — if the
     LLM call fails, returns invalid JSON, or the user is out of quota.
     """
-    result, _ = await _load_repo(repo_id, cache)
+    result, _ = await _load_repo(repo_id, cache, user_id)
     analysis = result.get("dep_data", {})
     file_profiles = result.get("file_profiles", [])
 
@@ -362,7 +362,7 @@ async def visualize_mindmap(
     Build mind map. Static by default (zero LLM cost).
     Set use_llm=true for LLM-enhanced categorization.
     """
-    result, _clone_path = await _load_repo(repo_id, cache)
+    result, _clone_path = await _load_repo(repo_id, cache, user_id)
     classification = result.get("file_profiles", [])
 
     if body.use_llm:
@@ -476,7 +476,7 @@ async def explain_visualization(
     This is a SEPARATE endpoint from the visualization data itself.
     Only called when user explicitly clicks "Explain This Graph".
     """
-    result, _clone_path = await _load_repo(body.repo_id, cache)
+    result, _clone_path = await _load_repo(body.repo_id, cache, user_id)
 
     # M-22: this endpoint is LLM-only (no static fallback) yet never gated
     # on the per-user daily quota — mirror the check every other LLM route
@@ -608,14 +608,14 @@ async def visualize_neural_network(
     repo_id: str,
     model: str | None = None,
     cache: AnalysisCache = Depends(get_cache),
-    _user: str = Depends(verify_supabase_token),
+    user_id: str = Depends(verify_supabase_token),
 ):
     """Return extracted neural network model architectures for PlotNeuralNet-style rendering.
 
     Zero LLM cost — returns pre-extracted data from analysis cache.
     Optionally filter to a specific model with ?model=ModelName.
     """
-    result, _ = await _load_repo(repo_id, cache)
+    result, _ = await _load_repo(repo_id, cache, user_id)
 
     nn_models = result.get("nn_models", [])
 

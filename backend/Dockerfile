@@ -22,12 +22,17 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 appuser
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY . .
+COPY --chown=appuser:appuser . .
+
+RUN mkdir -p /app/cloned_repos /app/output/reports && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 

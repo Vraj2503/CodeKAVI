@@ -347,9 +347,8 @@ class ZillizClient:
                     )
 
         # 3. Combine and sort
-        # Distance metric is COSINE in Milvus/Zilliz.
-        # Lower distance (closer to 0) means more similar.
-        all_hits.sort(key=lambda x: x["score"])
+        # Distance metric is COSINE in Milvus/Zilliz: hit.distance IS cosine similarity — higher is more similar.
+        all_hits.sort(key=lambda x: x["score"], reverse=True)
 
         # 4. Deduplicate based on file_path + start_line + end_line
         # (in case the same chunk was somehow indexed twice, though unlikely with our flag)

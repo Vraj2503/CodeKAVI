@@ -20,6 +20,7 @@ from codekavi.quota import get_token_tracker
 from codekavi.routes._errors import internal_error
 from codekavi.routes.dependencies import get_cache
 from codekavi.schemas import ChatRequest
+from codekavi.session import assert_repo_owner
 from codekavi.utils import run_sync as _run_sync
 
 router = APIRouter()
@@ -122,6 +123,7 @@ async def chat_repo(
         if last_validated is not None and (time.time() - last_validated) < _VALIDATION_TTL:
             l1_result = cache._memory.get(repo_id)
             if l1_result is not None:
+                assert_repo_owner(l1_result, user_id)
                 result = l1_result
                 _skip_full_load = True
                 logger.debug(
@@ -133,7 +135,7 @@ async def chat_repo(
         if not _skip_full_load:
             from codekavi.session import ensure_repo_loaded
 
-            result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache)
+            result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
             if result:
                 _validated_repos[repo_id] = time.time()
 

@@ -13,15 +13,21 @@ import {
   Loader2,
   FileText,
   BarChart3,
+  Network,
   PanelLeftClose,
-  PanelLeft
+  PanelLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AnalyzeResponse } from "@/lib/api";
 import { ScrollArea } from "./ui/ScrollArea";
 import { Skeleton } from "./ui/Skeleton";
 import { FileTree } from "./ui/FileTree";
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./ui/Tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "./ui/Tooltip";
 
 interface SidebarProps {
   repoData: AnalyzeResponse | null;
@@ -50,7 +56,9 @@ export function Sidebar({
     ? "report"
     : pathname.includes("/visualize")
       ? "visualize"
-      : "chat";
+      : pathname.includes("/graph")
+        ? "graph"
+        : "chat";
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -60,18 +68,46 @@ export function Sidebar({
   };
 
   const tabs = [
-    { key: "chat", label: "Chat", icon: MessageSquare, href: `/repo/${repoId}/chat` },
-    { key: "report", label: "Report", icon: FileText, href: `/repo/${repoId}/report` },
-    { key: "visualize", label: "Visualize", icon: BarChart3, href: `/repo/${repoId}/visualize` },
+    {
+      key: "chat",
+      label: "Chat",
+      icon: MessageSquare,
+      href: `/repo/${repoId}/chat`,
+    },
+    {
+      key: "report",
+      label: "Report",
+      icon: FileText,
+      href: `/repo/${repoId}/report`,
+    },
+    {
+      key: "visualize",
+      label: "Visualize",
+      icon: BarChart3,
+      href: `/repo/${repoId}/visualize`,
+    },
+    {
+      key: "graph",
+      label: "Graph",
+      icon: Network,
+      href: `/repo/${repoId}/graph`,
+    },
   ];
 
   return (
-    <aside className={cn(
-      "flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden transition-all duration-300",
-      isCollapsed ? "w-14" : "w-80"
-    )}>
+    <aside
+      className={cn(
+        "flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden transition-all duration-300",
+        isCollapsed ? "w-14" : "w-80",
+      )}
+    >
       {/* View Mode Tabs */}
-      <div className={cn("flex border-b border-border/40 p-2", isCollapsed ? "flex-col gap-2" : "gap-1")}>
+      <div
+        className={cn(
+          "flex border-b border-border/40 p-2",
+          isCollapsed ? "flex-col gap-2" : "gap-1",
+        )}
+      >
         <TooltipProvider delayDuration={100}>
           {tabs.map((tab) => (
             <Tooltip key={tab.key}>
@@ -83,7 +119,7 @@ export function Sidebar({
                     isCollapsed ? "p-3" : "flex-1 px-3 py-2",
                     activeTab === tab.key
                       ? "bg-primary/20 border border-primary/50 text-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                   )}
                 >
                   <tab.icon size={isCollapsed ? 20 : 14} />
@@ -91,9 +127,7 @@ export function Sidebar({
                 </Link>
               </TooltipTrigger>
               {isCollapsed && (
-                <TooltipContent side="right">
-                  {tab.label}
-                </TooltipContent>
+                <TooltipContent side="right">{tab.label}</TooltipContent>
               )}
             </Tooltip>
           ))}
@@ -101,7 +135,12 @@ export function Sidebar({
       </div>
 
       {/* Toggle Header (Always visible) */}
-      <div className={cn("flex items-center border-b border-border/30", isCollapsed ? "justify-center p-3" : "justify-between px-4 py-3")}>
+      <div
+        className={cn(
+          "flex items-center border-b border-border/30",
+          isCollapsed ? "justify-center p-3" : "justify-between px-4 py-3",
+        )}
+      >
         {!isCollapsed && (
           <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
             Source Repository
@@ -109,14 +148,26 @@ export function Sidebar({
         )}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className={cn("p-1.5 rounded-lg hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground", !isCollapsed && "-mr-1.5")}
+          className={cn(
+            "p-1.5 rounded-lg hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground",
+            !isCollapsed && "-mr-1.5",
+          )}
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {isCollapsed ? <PanelLeft className="w-5 h-5" /> : <PanelLeftClose className="w-4 h-4" />}
+          {isCollapsed ? (
+            <PanelLeft className="w-5 h-5" />
+          ) : (
+            <PanelLeftClose className="w-4 h-4" />
+          )}
         </button>
       </div>
 
-      <div className={cn("flex flex-col flex-1 min-h-0 transition-opacity duration-300", isCollapsed ? "hidden" : "flex")}>
+      <div
+        className={cn(
+          "flex flex-col flex-1 min-h-0 transition-opacity duration-300",
+          isCollapsed ? "hidden" : "flex",
+        )}
+      >
         {activeTab === "visualize" ? (
           <div className="flex-1 flex flex-col min-h-0">
             {/* Header / Repo Name */}
@@ -135,7 +186,10 @@ export function Sidebar({
             <ScrollArea className="flex-1 px-3 py-4">
               <div className="space-y-1.5">
                 {VIZ_CONFIG.filter((viz) => {
-                  if (viz.type === "neural_network" && (!repoData?.nn_models || repoData.nn_models.length === 0)) {
+                  if (
+                    viz.type === "neural_network" &&
+                    (!repoData?.nn_models || repoData.nn_models.length === 0)
+                  ) {
                     return false;
                   }
                   return true;
@@ -150,20 +204,28 @@ export function Sidebar({
                         "w-full flex flex-col items-start p-3 rounded-xl transition-all duration-200 text-left border",
                         isActive
                           ? "bg-primary/10 border-primary/20 shadow-sm"
-                          : "hover:bg-accent/40 border-transparent text-muted-foreground hover:text-foreground"
+                          : "hover:bg-accent/40 border-transparent text-muted-foreground hover:text-foreground",
                       )}
                     >
                       <div className="flex items-center gap-2.5">
-                        <div className={cn(
-                          "p-1.5 rounded-md",
-                          isActive ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
-                        )}>
+                        <div
+                          className={cn(
+                            "p-1.5 rounded-md",
+                            isActive
+                              ? "bg-primary/20 text-primary"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
                           <Icon size={16} />
                         </div>
-                        <span className={cn(
-                          "text-sm font-semibold",
-                          isActive ? "text-foreground" : "text-muted-foreground"
-                        )}>
+                        <span
+                          className={cn(
+                            "text-sm font-semibold",
+                            isActive
+                              ? "text-foreground"
+                              : "text-muted-foreground",
+                          )}
+                        >
                           {viz.label}
                         </span>
                       </div>
@@ -186,7 +248,10 @@ export function Sidebar({
             <div className="p-4 border-t border-border/30 bg-muted/10">
               <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-background/30 p-3 rounded-xl border border-border/40">
                 <div className="w-2 h-2 rounded-full bg-primary animate-pulse mt-1 flex-shrink-0" />
-                <span className="leading-relaxed">On-demand generation (zero LLM tokens unless insights requested)</span>
+                <span className="leading-relaxed">
+                  On-demand generation (zero LLM tokens unless insights
+                  requested)
+                </span>
               </div>
             </div>
           </div>
@@ -208,7 +273,7 @@ export function Sidebar({
                       "bg-background/50 border border-border/50",
                       "text-foreground placeholder:text-muted-foreground",
                       "focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20",
-                      "transition-all duration-200"
+                      "transition-all duration-200",
                     )}
                   />
                 </div>
@@ -220,7 +285,7 @@ export function Sidebar({
                     "bg-primary text-primary-foreground shadow-md shadow-primary/20",
                     "hover:bg-primary/90 active:scale-[0.98]",
                     "disabled:opacity-40 disabled:cursor-not-allowed",
-                    "transition-all duration-200"
+                    "transition-all duration-200",
                   )}
                 >
                   {isAnalyzing ? (
@@ -288,7 +353,10 @@ export function Sidebar({
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <Stat label="Files" value={repoData.total_files} />
-                        <Stat label="Size" value={repoData.total_size_formatted} />
+                        <Stat
+                          label="Size"
+                          value={repoData.total_size_formatted}
+                        />
                         <Stat
                           label="Languages"
                           value={Object.keys(repoData.languages || {}).length}
@@ -310,11 +378,14 @@ export function Sidebar({
                           .sort(([, a], [, b]) => b - a)
                           .map(([lang, count]) => {
                             const max = Math.max(
-                              ...Object.values(repoData.languages || {})
+                              ...Object.values(repoData.languages || {}),
                             );
                             const pct = (count / max) * 100;
                             return (
-                              <div key={lang} className="flex items-center gap-2">
+                              <div
+                                key={lang}
+                                className="flex items-center gap-2"
+                              >
                                 <span className="text-[12px] text-foreground/80 w-20 truncate text-right">
                                   {lang}
                                 </span>
@@ -322,7 +393,10 @@ export function Sidebar({
                                   <motion.div
                                     initial={{ width: 0 }}
                                     animate={{ width: `${pct}%` }}
-                                    transition={{ duration: 0.8, ease: "easeOut" }}
+                                    transition={{
+                                      duration: 0.8,
+                                      ease: "easeOut",
+                                    }}
                                     className="h-full rounded-full bg-gradient-to-r from-primary to-ring"
                                   />
                                 </div>
