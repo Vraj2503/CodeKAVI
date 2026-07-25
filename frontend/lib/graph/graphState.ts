@@ -1,5 +1,12 @@
 import type { GraphFlag } from "./flags";
 
+// Plan step 9: repos above this size render overview-only by default — file
+// nodes still require drilling into a layer then expanding a container (see
+// open_layer/close_layer below, which always clear expandedContainers), but
+// large repos additionally surface a banner explaining why rather than
+// leaving the user to discover the constraint via a slow ELK layout.
+export const LARGE_REPO_FILE_THRESHOLD = 1500;
+
 export interface GraphViewState {
   activeLayerId: string | null;
   expandedContainers: ReadonlySet<string>;

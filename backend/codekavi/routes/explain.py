@@ -53,7 +53,7 @@ def _arch_fallback(reason: str) -> dict:
 
 def _is_provider_failure(exc: BaseException) -> bool:
     """True for the LLM-side failures that should trigger the deterministic fallback."""
-    return isinstance(exc, (RateLimitError, ProviderError, asyncio.TimeoutError))
+    return isinstance(exc, RateLimitError | ProviderError | asyncio.TimeoutError)
 
 
 def _enforce_user_quota(user_id: str | None) -> int:
@@ -95,6 +95,8 @@ async def explain_repo(
 
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 
@@ -222,6 +224,8 @@ async def explain_single_file(
     """
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 
@@ -275,6 +279,8 @@ async def explain_repo_stream(
     """
     try:
         result, clone_path = await run_sync(ensure_repo_loaded, repo_id, cache, user_id)
+    except HTTPException:
+        raise
     except Exception as e:
         raise internal_error(e, context="explain: failed to load repo") from e
 

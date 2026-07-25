@@ -10,10 +10,12 @@ import {
   type NodeTypes,
   type NodeMouseHandler,
 } from "@xyflow/react";
+import { useTheme } from "@/components/ui/theme-provider";
 import { useRepoGraph } from "@/hooks/useRepoGraph";
 import {
   graphViewReducer,
   initialGraphViewState,
+  LARGE_REPO_FILE_THRESHOLD,
 } from "@/lib/graph/graphState";
 import {
   buildOverviewGraph,
@@ -47,6 +49,12 @@ export interface GraphCanvasProps {
 function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   const { status, data: payload, error } = useRepoGraph(repoId);
   const [state, dispatch] = useReducer(graphViewReducer, initialGraphViewState);
+  // Native React Flow chrome (Background, Controls, attribution) ships with its
+  // own light-only default theme and doesn't read the app's CSS class — without
+  // this it renders near-invisible on the dark surface (review: zoom controls
+  // disappear in dark mode).
+  const { resolvedTheme } = useTheme();
+  const colorMode = resolvedTheme === "light" ? "light" : "dark";
 
   // ELK stage 1 (per layer) and stage 2 (per expanded container) results,
   // cached for the lifetime of this payload — cheap since a repo's layout
@@ -196,6 +204,8 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
       containerLayouts[state.activeLayerId]?.usedFallback) ||
     [...state.expandedContainers].some((id) => fileLayouts[id]?.usedFallback);
   const hasNoEdges = payload.edges.length === 0 && payload.files.length > 0;
+  const isLargeRepo = payload.files.length > LARGE_REPO_FILE_THRESHOLD;
+  const showLargeRepoNotice = isLargeRepo && !state.activeLayerId;
 
   return (
     <div className="relative h-full w-full">
@@ -214,6 +224,13 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
             No dependencies could be resolved — files are grouped by role only.
           </p>
         )}
+        {showLargeRepoNotice && (
+          <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50 max-w-xs">
+            {payload.files.length.toLocaleString()} files — showing layer
+            overview only. Open a layer, then a container, to see individual
+            files.
+          </p>
+        )}
         {usedLayoutFallback && (
           <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20 max-w-xs">
             Automatic layout failed; showing a fallback grid.
@@ -227,6 +244,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
         nodeTypes={NODE_TYPES}
         onNodeClick={handleNodeClick}
         onPaneClick={handlePaneClick}
+        colorMode={colorMode}
         fitView
       >
         <Background />

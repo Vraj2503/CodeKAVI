@@ -126,7 +126,10 @@ def traverse_repo(clone_path: str) -> RepoData:
         files.sort(key=lambda x: x[0])
 
         for d_name, d_path in dirs:
-            rel_path = os.path.relpath(d_path, clone_path)
+            # Normalized to forward slashes so paths are comparable regardless
+            # of host OS — analyzer.py's resolvers do the same for every path
+            # they compute, and compare them all against this file's `path`.
+            rel_path = os.path.relpath(d_path, clone_path).replace("\\", "/")
             children = _walk_tree(d_path)
             entries.append(
                 {
@@ -138,7 +141,7 @@ def traverse_repo(clone_path: str) -> RepoData:
             )
 
         for f_name, f_path, stat_res in files:
-            rel_path = os.path.relpath(f_path, clone_path)
+            rel_path = os.path.relpath(f_path, clone_path).replace("\\", "/")
             file_size = stat_res.st_size
 
             skip_reason = _get_skip_reason(f_path, file_size)
@@ -188,7 +191,7 @@ def traverse_repo(clone_path: str) -> RepoData:
                 language=language,
                 size=file_size,
                 size_formatted=_format_size(file_size),
-                depth=rel_path.count(os.sep),
+                depth=rel_path.count("/"),
                 mtime=stat_res.st_mtime,
                 content=content,
             )

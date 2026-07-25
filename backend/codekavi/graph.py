@@ -78,7 +78,7 @@ def export_graph_json(
         out_deg = len(adjacency.get(file_path, []))
 
         # Determine group from top-level directory
-        parts = file_path.split(os.sep)
+        parts = file_path.split("/")
         group = parts[0] if len(parts) > 1 else "(root)"
 
         node = {
@@ -591,13 +591,13 @@ def _get_module_name(filepath: str, depth: int) -> str:
     depth=1: 'src/utils/helper.py' → 'src'
     depth=2: 'src/utils/helper.py' → 'src/utils'
     """
-    parts = filepath.split(os.sep)
+    parts = filepath.split("/")
     if len(parts) <= depth:
         # File is at root or shallower than requested depth
         if len(parts) == 1:
             return "(root)"
-        return os.sep.join(parts[:-1])
-    return os.sep.join(parts[:depth])
+        return "/".join(parts[:-1])
+    return "/".join(parts[:depth])
 
 
 def _common_dir_label(files: list[str]) -> str | None:

@@ -191,4 +191,55 @@ describe("GraphCanvas", () => {
     expect(screen.queryByText("b.ts")).toBeNull();
     expect(screen.getByText("a.ts")).toBeTruthy();
   });
+
+  it("warns on large repos in overview and hides the warning once a layer is opened", async () => {
+    const manyFiles: RepoGraphPayload["files"] = Array.from(
+      { length: 1501 },
+      (_, i) => ({
+        id: `f${i}`,
+        path: `routes/f${i}.ts`,
+        name: `f${i}.ts`,
+        container_id: "c1",
+        layer_id: "routes",
+        role: null,
+        role_label: null,
+        importance: 1,
+        in_degree: 0,
+        out_degree: 0,
+        language: "ts",
+        size: 10,
+        kind: "file",
+        parent: null,
+        flags: [],
+      }),
+    );
+    mockUseRepoGraph.mockReturnValue({
+      status: "success",
+      data: payload({
+        files: manyFiles,
+        containers: [
+          {
+            id: "c1",
+            layer_id: "routes",
+            name: "routes/api",
+            strategy: "folder",
+            file_ids: manyFiles.map((f) => f.id),
+          },
+        ],
+        edges: [],
+      }),
+      error: null,
+    });
+    mockLayoutContainers.mockResolvedValue({
+      positions: { c1: { id: "c1", x: 0, y: 0, width: 200, height: 120 } },
+      usedFallback: false,
+    });
+
+    render(<GraphCanvas repoId="r1" />);
+    expect(screen.getByText(/1,501 files/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Routes"));
+    await screen.findByText("routes/api");
+    expect(screen.queryByText(/1,501 files/)).toBeNull();
+  });
 });

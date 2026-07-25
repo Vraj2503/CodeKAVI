@@ -563,7 +563,7 @@ def _extract_java_imports(source: str, repo_root: str) -> list[dict]:
         # Try to resolve to a file
         parts = raw.replace(".*", "").split(".")
         candidate = os.path.join(repo_root, *parts) + ".java"
-        resolved = os.path.relpath(candidate, repo_root) if os.path.isfile(candidate) else None
+        resolved = os.path.relpath(candidate, repo_root).replace("\\", "/") if os.path.isfile(candidate) else None
         imports.append({"raw": raw, "resolved": resolved, "line": line, "type": "import"})
     return imports
 
@@ -580,7 +580,7 @@ def _extract_c_cpp_includes(filepath: str, source: str, repo_root: str) -> list[
         full_match = match.group(0)
         if '"' in full_match:
             candidate = os.path.normpath(os.path.join(file_dir, raw))
-            resolved = os.path.relpath(candidate, repo_root) if os.path.isfile(candidate) else None
+            resolved = os.path.relpath(candidate, repo_root).replace("\\", "/") if os.path.isfile(candidate) else None
         else:
             resolved = None
         imports.append({"raw": raw, "resolved": resolved, "line": line, "type": "include"})
@@ -601,7 +601,7 @@ def _extract_ruby_requires(filepath: str, source: str, repo_root: str) -> list[d
                 imports.append(
                     {
                         "raw": raw,
-                        "resolved": os.path.relpath(candidate + ext, repo_root),
+                        "resolved": os.path.relpath(candidate + ext, repo_root).replace("\\", "/"),
                         "line": line,
                         "type": "require_relative",
                     }
@@ -636,7 +636,7 @@ def _extract_php_imports(filepath: str, source: str, repo_root: str) -> list[dic
         line = source[: match.start()].count("\n") + 1
         file_dir = os.path.dirname(filepath)
         candidate = os.path.normpath(os.path.join(file_dir, raw))
-        resolved = os.path.relpath(candidate, repo_root) if os.path.isfile(candidate) else None
+        resolved = os.path.relpath(candidate, repo_root).replace("\\", "/") if os.path.isfile(candidate) else None
         imports.append({"raw": raw, "resolved": resolved, "line": line, "type": "include"})
 
     for match in re.finditer(r"use\s+([\w\\]+)", source):
@@ -1162,7 +1162,7 @@ def _detect_entry_points(
             reasons.append("graph_source_node")
 
         # Root-level files are more likely entry points
-        depth = fpath.count(os.sep)
+        depth = fpath.count("/")
         if depth == 0 and is_source:
             score += 1
             reasons.append("root_level")
@@ -1174,8 +1174,9 @@ def _detect_entry_points(
                 "reasons": reasons,
             }
 
-    # Sort by score descending
-    entry_points = sorted(scored.values(), key=lambda x: x["score"], reverse=True)
+    # Sort by score descending; ties broken by path so output is deterministic
+    # regardless of PYTHONHASHSEED-randomized set iteration order.
+    entry_points = sorted(scored.values(), key=lambda x: (-x["score"], x["file"]))
     return entry_points, file_signals
 
 
@@ -1220,8 +1221,10 @@ def _find_central_files(
             }
         )
 
-    # Sort by score, return top results
-    file_scores.sort(key=lambda x: x["score"], reverse=True)
+    # Sort by score, ties broken by path so the top-30 cutoff is deterministic
+    # regardless of PYTHONHASHSEED-randomized set iteration order (the actual
+    # cutoff, not just the order, changes across restarts without this).
+    file_scores.sort(key=lambda x: (-x["score"], x["file"]))
     return file_scores[:30]  # Top 30 most central files
 
 

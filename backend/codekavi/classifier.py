@@ -465,7 +465,7 @@ def classify_files(
             max_in=max_in,
             role=role,
             entry_score=entry_point_scores.get(rel_path, 0),
-            depth=rel_path.count(os.sep),
+            depth=rel_path.count("/"),
         )
 
         profiles.append(
@@ -477,8 +477,8 @@ def classify_files(
                 role=role,
                 role_label=role_label,
                 role_confidence=round(confidence, 2),
-                depends_on=list(depends_on) if isinstance(depends_on, (list, set)) else depends_on,
-                used_by=list(used_by) if isinstance(used_by, (list, set)) else used_by,
+                depends_on=list(depends_on) if isinstance(depends_on, list | set) else depends_on,
+                used_by=list(used_by) if isinstance(used_by, list | set) else used_by,
                 in_degree=in_degree,
                 out_degree=out_degree,
                 importance_score=round(importance, 2),
@@ -718,7 +718,7 @@ def _matches_patterns(text: str, patterns: list[str]) -> bool:
 
 def _is_doc_path(path: str) -> bool:
     """Check if the path is in a documentation directory."""
-    parts = path.lower().split(os.sep)
+    parts = path.lower().split("/")
     return any(p in {"docs", "doc", "documentation", "wiki"} for p in parts)
 
 
