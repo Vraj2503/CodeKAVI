@@ -21,6 +21,7 @@ import {
 import { useTheme } from "@/components/ui/theme-provider";
 import { useRepoGraph } from "@/hooks/useRepoGraph";
 import { useTour } from "@/hooks/useTour";
+import { useQuestionTour } from "@/hooks/useQuestionTour";
 import {
   graphViewReducer,
   initialGraphViewState,
@@ -158,7 +159,10 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
 
   const [tourOpen, setTourOpen] = useState(false);
   const [tourMode, setTourMode] = useState<TourMode>("learn");
-  const tour = useTour(repoId, tourMode);
+  const [tourQuestion, setTourQuestion] = useState<string | null>(null);
+  const modeTour = useTour(repoId, tourMode);
+  const questionTour = useQuestionTour(repoId, tourQuestion);
+  const tour = tourQuestion ? questionTour : modeTour;
 
   // Bring a tour step's file into view: open its layer/container so the node
   // exists at all, then hand off to the E7 camera trap (lib/graph/cameraTrap)
@@ -318,12 +322,19 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
           <TourPanel
             repoId={repoId}
             mode={tourMode}
-            onModeChange={setTourMode}
+            onModeChange={(m) => {
+              setTourQuestion(null);
+              setTourMode(m);
+            }}
             status={tour.status}
             steps={tour.steps}
             error={tour.error}
             onClose={() => setTourOpen(false)}
             onStepChange={handleTourStepChange}
+            deletedCount={modeTour.deletedCount}
+            activeQuestion={tourQuestion}
+            onAskQuestion={setTourQuestion}
+            onClearQuestion={() => setTourQuestion(null)}
           />
         </div>
       )}

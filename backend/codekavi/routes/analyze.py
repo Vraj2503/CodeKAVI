@@ -405,7 +405,7 @@ async def analyze(
         # Fingerprint check for incremental analysis
         from codekavi.fingerprint import compare_and_classify_repo
 
-        fingerprints, change_class = await _run_sync(
+        fingerprints, deleted_paths, change_class = await _run_sync(
             compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
         )
 
@@ -471,6 +471,17 @@ async def analyze(
             # signature dedup (T4.4) can never rebind the signature index
             # to a requester's repo_id whose result was never cached.
             "_origin_repo_id": repo_id,
+            # H1: diff-tour input — what changed since the fingerprints this
+            # analysis was compared against. Absent on a repo's first-ever
+            # analysis, which get_repo_diff_tour treats as "no prior analysis"
+            # rather than "nothing changed" (an empty dict here would mean).
+            # Deleted paths (in the old fingerprint cache, gone from
+            # current_files) are marked "DELETED" — they have no graph node
+            # to become a step, but assemble_diff_tour counts them for H4's banner.
+            "last_change_map": {
+                **{path: fp.change_type for path, fp in fingerprints.items()},
+                **{path: "DELETED" for path in deleted_paths},
+            },
         }
         # H-02: route through the task registry so shutdown can wait for this
         # to actually finish before draining the executors it runs on.
@@ -661,7 +672,7 @@ async def analyze_stream(
             # Fingerprint check for incremental analysis
             from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
 
-            fingerprints, change_class = await _run_sync(
+            fingerprints, deleted_paths, change_class = await _run_sync(
                 compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
             )
 
@@ -728,6 +739,12 @@ async def analyze_stream(
                 "nn_models": nn_models,
                 # H-01: see non-streaming /analyze — pins dedup to the origin repo_id.
                 "_origin_repo_id": repo_id,
+                # H1: see non-streaming /analyze — diff-tour input, including
+                # deleted paths for H4's banner (see comment there).
+                "last_change_map": {
+                    **{path: fp.change_type for path, fp in fingerprints.items()},
+                    **{path: "DELETED" for path in deleted_paths},
+                },
             }
             # H-02: route through the task registry so shutdown can wait for
             # this to actually finish before draining the executors it runs on.

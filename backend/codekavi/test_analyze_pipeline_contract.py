@@ -126,7 +126,7 @@ def _patch_pipeline_stages(monkeypatch):
     monkeypatch.setattr("codekavi.fingerprint.save_fingerprints", lambda *a, **k: None)
     monkeypatch.setattr(
         "codekavi.fingerprint.compare_and_classify_repo",
-        lambda *a, **k: ({}, ChangeClassification.FULL_UPDATE),
+        lambda *a, **k: ({}, set(), ChangeClassification.FULL_UPDATE),
     )
 
 

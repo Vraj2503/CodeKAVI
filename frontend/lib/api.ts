@@ -308,7 +308,7 @@ export type RepoGraphResult =
 
 // ── Tour Types (Phase 2, E5/E6) ──
 
-export type TourMode = "learn" | "recall";
+export type TourMode = "learn" | "recall" | "diff";
 
 export interface TourStep {
   order: number;
@@ -317,11 +317,14 @@ export interface TourStep {
   title: string;
   facts: string[];
   questions: string[];
+  change_type?: "STRUCTURAL" | "COSMETIC";
 }
 
 export interface TourResponse {
-  mode: TourMode;
+  mode: TourMode | "question";
   steps: TourStep[];
+  /** H4: only present on diff-tour responses — files removed since last analysis. */
+  deleted_count?: number;
 }
 
 // ── API Functions ──
@@ -677,16 +680,41 @@ export async function fetchRepoGraph(
   return { status: "ok", data: await res.json() };
 }
 
-/** Fetch E5's assembled tour (learn or recall mode). No 202 handling needed —
- * the tour is only requested once the graph itself has already loaded. */
+/** Fetch a tour. "diff" (H3) hits its own endpoint; learn/recall (E5) share
+ * one behind a ?mode= param. No 202 handling needed — the tour is only
+ * requested once the graph itself has already loaded. */
 export async function fetchTour(
   repoId: string,
   mode: TourMode,
   signal?: AbortSignal,
 ): Promise<TourResponse> {
   const authHeaders = await getAuthHeaders();
+  const url =
+    mode === "diff"
+      ? `${API_BASE}/graph/semantic/${repoId}/tour/diff`
+      : `${API_BASE}/graph/semantic/${repoId}/tour?mode=${mode}`;
+  const res = await fetch(url, { headers: authHeaders, signal });
+
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to load tour" }));
+    throw new Error(err.detail || `Failed to load tour (${res.status})`);
+  }
+
+  return res.json();
+}
+
+/** G3: question-driven tour — the only tour endpoint that costs tokens
+ * (embeds ``q``), so it's fetched on explicit submit, not on every keystroke. */
+export async function fetchQuestionTour(
+  repoId: string,
+  q: string,
+  signal?: AbortSignal,
+): Promise<TourResponse> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(
-    `${API_BASE}/graph/semantic/${repoId}/tour?mode=${mode}`,
+    `${API_BASE}/graph/semantic/${repoId}/tour/question?q=${encodeURIComponent(q)}`,
     { headers: authHeaders, signal },
   );
 
@@ -694,7 +722,9 @@ export async function fetchTour(
     const err = await res
       .json()
       .catch(() => ({ detail: "Failed to load tour" }));
-    throw new Error(err.detail || `Failed to load tour (${res.status})`);
+    const detail =
+      typeof err.detail === "string" ? err.detail : err.detail?.message;
+    throw new Error(detail || `Failed to load tour (${res.status})`);
   }
 
   return res.json();

@@ -241,7 +241,7 @@ def build_cycle_partners(cycles: list[list[str]]) -> dict[str, list[str]]:
     return {path: sorted(others) for path, others in partners.items()}
 
 
-def _file_facts(file: dict) -> list[str]:
+def _file_facts(file: dict, step: dict[str, Any] | None = None) -> list[str]:
     facts = [file.get("role_label") or "File"]
     in_degree, out_degree = file.get("in_degree", 0), file.get("out_degree", 0)
     facts.append(f"{in_degree} file(s) depend on this; it depends on {out_degree}")
@@ -312,7 +312,12 @@ def assemble_question_tour(graph: dict, search_results: list[dict[str, Any]]) ->
     return _decorate_tour(graph, "question", steps)
 
 
-def _decorate_tour(graph: dict, mode: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+def _decorate_tour(
+    graph: dict,
+    mode: str,
+    steps: list[dict[str, Any]],
+    facts_fn: Any = _file_facts,
+) -> dict[str, Any]:
     files_by_id = {f["id"]: f for f in graph.get("files", [])}
     cycle_partners = build_cycle_partners(graph.get("insights", {}).get("cycles", []))
 
@@ -322,12 +327,75 @@ def _decorate_tour(graph: dict, mode: str, steps: list[dict[str, Any]]) -> dict[
             {
                 **step,
                 "title": files_by_id[step["node_ids"][0]]["name"],
-                "facts": _file_facts(files_by_id[step["node_ids"][0]]),
+                "facts": facts_fn(files_by_id[step["node_ids"][0]], step),
                 "questions": generate_questions(files_by_id[step["node_ids"][0]], cycle_partners),
             }
             for step in steps
         ],
     }
+
+
+# H2: STRUCTURAL surfaces before COSMETIC — a changed import/export/function
+# is more likely to need a look than a reformatted comment.
+_DIFF_TYPE_ORDER = {"STRUCTURAL": 0, "COSMETIC": 1}
+
+
+def generate_diff_tour(graph: dict, change_map: dict[str, str]) -> list[dict[str, Any]]:
+    """H2: diff-tour step order — files from ``change_map`` (H1's
+    ``last_change_map``) restricted to STRUCTURAL/COSMETIC changes that still
+    have a node in the current graph. STRUCTURAL first, COSMETIC after;
+    importance desc within each group, path as the final tie-break.
+
+    Paths in ``change_map`` with no matching graph node — deleted since the
+    last analysis — have nothing to highlight on the canvas, so they're
+    dropped here; ``assemble_diff_tour`` counts them instead (H4's banner).
+    """
+    files_by_id = {f["id"]: f for f in graph.get("files", [])}
+    changed = [
+        (path, change_type)
+        for path, change_type in change_map.items()
+        if change_type in _DIFF_TYPE_ORDER and path in files_by_id
+    ]
+    changed.sort(
+        key=lambda pc: (
+            _DIFF_TYPE_ORDER[pc[1]],
+            -(files_by_id[pc[0]].get("importance") or 0),
+            pc[0],
+        )
+    )
+
+    return [
+        {
+            "order": i,
+            "node_ids": [path],
+            "layer_id": files_by_id[path].get("layer_id"),
+            "change_type": change_type,
+        }
+        for i, (path, change_type) in enumerate(changed, start=1)
+    ]
+
+
+def _diff_facts(file: dict, step: dict[str, Any] | None = None) -> list[str]:
+    change_type = (step or {}).get("change_type")
+    if change_type == "STRUCTURAL":
+        return [file.get("role_label") or "File", "Structural change — imports, exports, or functions changed"]
+    return [file.get("role_label") or "File", "Cosmetic change — content edited, structure unchanged"]
+
+
+def assemble_diff_tour(graph: dict, change_map: dict[str, str]) -> dict[str, Any]:
+    """H2/H3 support: diff tour assembled from ``change_map`` (H1's
+    ``last_change_map``), decorated with change-kind facts instead of the
+    usual role/fan-in line.
+
+    ``deleted_count`` is paths present in ``change_map`` but no longer a
+    graph node — H4 renders this as a one-line banner above the stepper
+    rather than inventing steps with no node to highlight.
+    """
+    files_by_id = {f["id"]: f for f in graph.get("files", [])}
+    steps = generate_diff_tour(graph, change_map)
+    result = _decorate_tour(graph, "diff", steps, facts_fn=_diff_facts)
+    result["deleted_count"] = sum(1 for path in change_map if path not in files_by_id)
+    return result
 
 
 def generate_questions(file: dict, cycle_partners: dict[str, list[str]] | None = None) -> list[str]:

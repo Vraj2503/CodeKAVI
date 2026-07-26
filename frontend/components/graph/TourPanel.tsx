@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { TourMode, TourStep } from "@/lib/api";
 import type { TourStatus } from "@/hooks/useTour";
@@ -16,11 +16,18 @@ export interface TourPanelProps {
   onClose: () => void;
   /** Fired whenever the visibly-current step changes (mount, mode switch, next/prev). */
   onStepChange?: (step: TourStep) => void;
+  /** H4: diff-tour-only — files removed since last analysis, rendered as a banner. */
+  deletedCount?: number | null;
+  /** G3: question-driven tour, layered over the mode tabs — null when inactive. */
+  activeQuestion?: string | null;
+  onAskQuestion?: (question: string) => void;
+  onClearQuestion?: () => void;
 }
 
 const MODES: { value: TourMode; label: string }[] = [
   { value: "learn", label: "Learn" },
   { value: "recall", label: "Recall" },
+  { value: "diff", label: "What changed" },
 ];
 
 /** E6: stepper panel over the E5 tour endpoint. Ordering/prose come from the
@@ -34,8 +41,13 @@ export function TourPanel({
   error,
   onClose,
   onStepChange,
+  deletedCount,
+  activeQuestion,
+  onAskQuestion,
+  onClearQuestion,
 }: TourPanelProps) {
   const [index, setIndex] = useState(0);
+  const [questionInput, setQuestionInput] = useState("");
   const { progress, markSeen, toggleAnswerable } = useTourProgress(repoId);
 
   // Reset to the first step whenever a new step list arrives (mode switch) —
@@ -88,6 +100,58 @@ export function TourPanel({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      {onAskQuestion &&
+        (activeQuestion ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2 py-1">
+            <span className="truncate text-muted-foreground">
+              Results for &ldquo;{activeQuestion}&rdquo;
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setQuestionInput("");
+                onClearQuestion?.();
+              }}
+              aria-label="back to tour"
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <form
+            className="flex items-center gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const q = questionInput.trim();
+              if (q) onAskQuestion(q);
+            }}
+          >
+            <input
+              type="text"
+              value={questionInput}
+              onChange={(e) => setQuestionInput(e.target.value)}
+              placeholder="Ask a question about this repo…"
+              className="w-full rounded-full border bg-transparent px-2 py-1 text-xs outline-none placeholder:text-muted-foreground/60 focus:border-[hsl(var(--viz-highlight))]"
+            />
+            <button
+              type="submit"
+              disabled={!questionInput.trim()}
+              aria-label="ask"
+              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Search className="h-3.5 w-3.5" />
+            </button>
+          </form>
+        ))}
+
+      {mode === "diff" && !activeQuestion && !!deletedCount && (
+        <p className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-destructive">
+          {deletedCount} file{deletedCount === 1 ? "" : "s"} deleted since last
+          analysis
+        </p>
+      )}
 
       {status === "loading" && (
         <p className="text-muted-foreground">Loading tour…</p>

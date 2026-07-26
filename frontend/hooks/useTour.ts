@@ -9,11 +9,18 @@ export interface TourState {
   status: TourStatus;
   steps: TourStep[];
   error: string | null;
+  /** H4: deleted-file count, only set by the diff tour. */
+  deletedCount: number | null;
 }
 
-const INITIAL_STATE: TourState = { status: "loading", steps: [], error: null };
+const INITIAL_STATE: TourState = {
+  status: "loading",
+  steps: [],
+  error: null,
+  deletedCount: null,
+};
 
-/** Fetch E5's tour for the given mode. Re-fetches whenever repoId or mode changes. */
+/** Fetch E5/H3's tour for the given mode. Re-fetches whenever repoId or mode changes. */
 export function useTour(repoId: string, mode: TourMode): TourState {
   const [state, setState] = useState<TourState>(INITIAL_STATE);
   const abortRef = useRef<AbortController | null>(null);
@@ -34,7 +41,12 @@ export function useTour(repoId: string, mode: TourMode): TourState {
     fetchTour(repoId, mode, controller.signal)
       .then((data) => {
         if (controller.signal.aborted) return;
-        setState({ status: "success", steps: data.steps, error: null });
+        setState({
+          status: "success",
+          steps: data.steps,
+          error: null,
+          deletedCount: data.deleted_count ?? null,
+        });
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
@@ -42,6 +54,7 @@ export function useTour(repoId: string, mode: TourMode): TourState {
           status: "error",
           steps: [],
           error: err instanceof Error ? err.message : "Failed to load tour",
+          deletedCount: null,
         });
       });
 

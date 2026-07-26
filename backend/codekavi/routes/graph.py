@@ -24,7 +24,7 @@ from codekavi.quota import get_token_tracker
 from codekavi.routes._errors import internal_error
 from codekavi.routes.dependencies import get_cache
 from codekavi.routes.visualize import _load_repo
-from codekavi.tour_generator import assemble_question_tour, assemble_tour
+from codekavi.tour_generator import assemble_diff_tour, assemble_question_tour, assemble_tour
 from codekavi.utils import run_sync
 
 router = APIRouter()
@@ -98,6 +98,43 @@ async def get_repo_question_tour(
         payload = assemble_question_tour(graph, search_results)
     except Exception as e:
         raise internal_error(e, context="get_repo_question_tour: assembly failed") from e
+
+    return Response(
+        content=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/graph/semantic/{repo_id}/tour/diff", dependencies=[Depends(per_minute(30))])
+async def get_repo_diff_tour(
+    repo_id: str,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """H3: diff tour (H2) from H1's ``last_change_map``. Zero LLM calls, same
+    free tier as the other structural endpoints.
+
+    A repo with no cached analysis at all already 404s in ``_load_repo``
+    ("Run /api/analyze first"). The 404 here is the other case: a cached
+    result that predates ``last_change_map`` (analyzed before this feature
+    shipped) — no change data to diff, not the same as "nothing changed"
+    (which is a present, possibly-empty map and a 200 with zero steps).
+    """
+    result, _ = await _load_repo(repo_id, cache, user_id)
+
+    change_map = result.get("last_change_map")
+    if change_map is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No change data for this repo yet. Re-run /api/analyze to enable the diff tour.",
+        )
+
+    try:
+        graph = await run_sync(assemble_graph, result)
+        payload = assemble_diff_tour(graph, change_map)
+    except Exception as e:
+        raise internal_error(e, context="get_repo_diff_tour: assembly failed") from e
 
     return Response(
         content=json.dumps(payload, separators=(",", ":")).encode("utf-8"),

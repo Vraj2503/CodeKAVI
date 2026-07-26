@@ -488,7 +488,7 @@ def compare_and_classify_repo(
     current_files: list[FileEntry],
     content_cache: dict[str, str] | None = None,
     executor_type: str | None = None,
-) -> tuple[dict[str, FileFingerprint], ChangeClassification]:
+) -> tuple[dict[str, FileFingerprint], set[str], ChangeClassification]:
     """
     Compute fingerprints for current_files, compare with cached, and classify.
 
@@ -501,6 +501,8 @@ def compare_and_classify_repo(
 
     Returns:
       - dict of updated FileFingerprints
+      - set of paths that were fingerprinted before but aren't in
+        current_files anymore (deleted since the last analysis)
       - ChangeClassification indicating the extent of the update required
     """
     cached = load_fingerprints(repo_id)
@@ -581,4 +583,5 @@ def compare_and_classify_repo(
     else:
         classification = ChangeClassification.PARTIAL_UPDATE
 
-    return updated, classification
+    deleted_paths = set(cached) - set(updated)
+    return updated, deleted_paths, classification
