@@ -11,9 +11,15 @@ function storageKey(repoId: string): string {
   return `codekavi-tour-progress-${repoId}`;
 }
 
-/** Stable across learn/recall mode switches — keyed by topology, not order. */
+/** Stable across learn/recall mode switches — keyed by file identity, not order.
+ *
+ * Every generator emits one step per file, each carrying its own file's
+ * layer_id (tour_generator.py:181, 215, 303, 370), so layer_id is NOT unique
+ * per step — keying on it first collapsed every file in a layer onto one key,
+ * bleeding seen/answerable state across steps. node_ids is the stable
+ * per-step identity; layer_id is only a fallback for a file with no node id. */
 export function stepKey(step: TourStep): string {
-  return step.layer_id ?? step.node_ids.join(",");
+  return step.node_ids.join(",") || (step.layer_id ?? "");
 }
 
 export function questionKey(step: TourStep, questionIndex: number): string {

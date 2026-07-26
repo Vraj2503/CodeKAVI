@@ -217,7 +217,14 @@ async function layout(graph: ElkNode): Promise<LayoutResult> {
       };
     }
     return { positions, usedFallback: false };
-  } catch {
+  } catch (error) {
+    // The bare `catch {}` this replaces swallowed the reason entirely, so a
+    // grid fallback was indistinguishable from a timeout, a worker crash, or
+    // an ELK input error. graph.id is already `layer:<id>` / `container:<id>`.
+    console.error(
+      `[elkLayout] ${graph.id} fell back to grid after ${nodeBoxes.length} nodes / ${graph.edges?.length ?? 0} edges:`,
+      error,
+    );
     const grid = gridFallback(nodeBoxes);
     const positions: Record<string, NodeBox> = {};
     for (const box of nodeBoxes) {
