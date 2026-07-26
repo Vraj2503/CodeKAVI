@@ -20,6 +20,7 @@ import re
 from collections.abc import AsyncIterator
 
 from codekavi.config import EXTENSION_LANGUAGE_MAP, detect_layer
+from codekavi.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 from codekavi.llm.providers import get_provider
 from codekavi.normalizer import normalize_node_type, normalize_viz_data, validate_section
 from codekavi.settings import settings
@@ -259,7 +260,7 @@ class ExplanationOrchestrator:
         "Use markdown formatting with headers, bullet points, and code blocks. "
         "Do NOT generate ASCII diagrams, mermaid syntax, or any kind of "
         "visual diagram in your response. Write prose and structured "
-        "markdown only. Visualization data is handled separately."
+        "markdown only. Visualization data is handled separately.\n\n" + UNTRUSTED_CODE_DISCLAIMER
     )
 
     def _prompt_overview(self, file_contents: dict) -> dict:

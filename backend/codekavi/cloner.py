@@ -23,6 +23,49 @@ CLONE_TIMEOUT_S = 120  # 2 minutes max
 # results are now persisted in Redis/Supabase and survive repo cleanup.
 MAX_REPO_AGE_HOURS = 24
 
+# How often to poll on-disk clone size while `git clone` is running (seconds).
+CLONE_SIZE_POLL_INTERVAL_S = 0.5
+
+
+def _dir_size_bytes(path: str) -> int:
+    """Sum file sizes under path. Used to watch a clone grow in real time."""
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            with contextlib.suppress(OSError):
+                total += os.path.getsize(os.path.join(root, f))
+    return total
+
+
+def _clone_with_size_guard(clone_url: str, clone_path: str, env: dict) -> None:
+    """Run `git clone` while polling on-disk size, killing it early if the repo
+    exceeds ``repo_size_limit_bytes`` — IMPL-11: reject oversized repos during
+    the transfer instead of after a full download completes.
+    """
+    proc = subprocess.Popen(
+        ["git", "clone", "--depth", "1", clone_url, clone_path],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    start = time.monotonic()
+    limit = settings.repo_size_limit_bytes
+    while proc.poll() is None:
+        elapsed = time.monotonic() - start
+        if elapsed > CLONE_TIMEOUT_S:
+            proc.kill()
+            proc.wait()
+            raise RuntimeError(f"git clone timed out after {CLONE_TIMEOUT_S}s")
+        if os.path.isdir(clone_path) and _dir_size_bytes(clone_path) > limit:
+            proc.kill()
+            proc.wait()
+            raise ValueError(f"Repository exceeds size limit of {limit} bytes.")
+        time.sleep(CLONE_SIZE_POLL_INTERVAL_S)
+
+    if proc.returncode != 0:
+        stderr = proc.stderr.read().decode("utf-8", errors="ignore") if proc.stderr else ""
+        raise RuntimeError(f"git clone failed: {stderr}")
+
 
 def parse_github_url(url: str) -> RepoSourceInfo:
     """
@@ -78,19 +121,7 @@ def clone_repo(github_url: str) -> dict:
         clone_env["GIT_HTTP_LOW_SPEED_LIMIT"] = "1000"  # bytes/sec min
         clone_env["GIT_HTTP_LOW_SPEED_TIME"] = "30"  # seconds before timeout
 
-        try:
-            subprocess.run(
-                ["git", "clone", "--depth", "1", parsed["clone_url"], clone_path],
-                env=clone_env,
-                timeout=CLONE_TIMEOUT_S,
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(f"git clone timed out after {CLONE_TIMEOUT_S}s") from e
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr.decode("utf-8", errors="ignore") if e.stderr else str(e)
-            raise RuntimeError(f"git clone failed: {stderr}") from e
+        _clone_with_size_guard(parsed["clone_url"], clone_path, clone_env)
 
         # Enforce file count and size limits
         total_size = 0

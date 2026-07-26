@@ -201,8 +201,9 @@ async def index_repository(
                 # overlapping chunks correctly
                 search_start = char_offset + 1
 
-            if len(chunk) > 65000:
-                chunk = chunk[:65000]
+            encoded_chunk = chunk.encode("utf-8")
+            if len(encoded_chunk) > 65000:
+                chunk = encoded_chunk[:65000].decode("utf-8", "ignore")
 
             current_batch_texts.append(chunk)
             current_batch_metadata.append(

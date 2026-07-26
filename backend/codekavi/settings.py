@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # Rate Limiting
     rate_limit_ip_rpm: int = Field(default=60, validation_alias="RATE_LIMIT_IP_RPM")
     rate_limit_user_rpm: int = Field(default=20, validation_alias="RATE_LIMIT_USER_RPM")
+    # Number of trusted reverse proxies in front of the app that append to
+    # X-Forwarded-For. The IP this many hops from the end of the chain is the
+    # last one written by our own infra; anything left of that is client-supplied
+    # and spoofable.
+    trusted_proxy_hops: int = Field(default=1, validation_alias="TRUSTED_PROXY_HOPS")
 
     # Daily Quotas
     daily_user_token_quota: int = Field(default=200_000, validation_alias="DAILY_USER_TOKEN_QUOTA")
@@ -73,9 +78,9 @@ class Settings(BaseSettings):
     # T4.1 — Quota/breaker tunables.
     # If True, /explain and /chat will return HTTP 429 once a user exceeds
     # their daily token quota; if False they get a soft warning + degraded
-    # output. Default OFF — production should set to true once observability
-    # confirms the cost model is right.
-    enforce_token_quota: bool = Field(default=False, validation_alias="ENFORCE_TOKEN_QUOTA")
+    # output. Default ON — set ENFORCE_TOKEN_QUOTA=false to opt out (e.g. while
+    # tuning the cost model in a non-prod env).
+    enforce_token_quota: bool = Field(default=True, validation_alias="ENFORCE_TOKEN_QUOTA")
     # M-07 — validate_providers() makes real (billed) LLM calls at startup.
     # Default OFF so cold starts (including scale-to-zero/CI) don't burn
     # untracked spend; opt in explicitly per-environment.
@@ -102,6 +107,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def parsed_cors_origins() -> list[str]:
+    """CORS_ORIGINS, split and trimmed once — reused by validate_config and main.py."""
+    return [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
 
 def validate_config() -> None:
@@ -132,6 +142,6 @@ def validate_config() -> None:
     # advertises a wildcard origin to credentialed traffic — every read
     # endpoint becomes world-readable from any origin. Reject at config time;
     # operators that genuinely want a wildcard must disable credentials.
-    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    origins = parsed_cors_origins()
     if "*" in origins:
         raise ValueError("CORS_ORIGINS='*' is not allowed with credentialed CORS; list explicit origins.")

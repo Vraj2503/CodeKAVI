@@ -6,8 +6,8 @@ Endpoints:
 """
 
 import logging
-import time
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from codekavi.auth import verify_supabase_token
@@ -15,6 +15,7 @@ from codekavi.cache import AnalysisCache
 from codekavi.exceptions import RateLimitError
 from codekavi.limiter import per_minute
 from codekavi.llm import get_provider
+from codekavi.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 from codekavi.llm.providers import Message
 from codekavi.quota import get_token_tracker
 from codekavi.routes._errors import internal_error
@@ -27,9 +28,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Sprint-4 / C4 — skip redundant ensure_repo_loaded calls.
-# Maps repo_id → timestamp of last successful validation.
-_validated_repos: dict[str, float] = {}
+# Set of repo_ids validated within the last _VALIDATION_TTL seconds.
 _VALIDATION_TTL = 300  # seconds (5 minutes)
+_validated_repos: TTLCache = TTLCache(maxsize=2048, ttl=_VALIDATION_TTL)
 
 
 # Keywords that signal a technical/architecture question
@@ -119,25 +120,20 @@ async def chat_repo(
         # Sprint-4 / C4: skip the full L1→L2→L3 cache walk when the repo
         # was already validated recently and L1 still holds its data.
         _skip_full_load = False
-        last_validated = _validated_repos.get(repo_id)
-        if last_validated is not None and (time.time() - last_validated) < _VALIDATION_TTL:
+        if repo_id in _validated_repos:
             l1_result = cache._memory.get(repo_id)
             if l1_result is not None:
                 assert_repo_owner(l1_result, user_id)
                 result = l1_result
                 _skip_full_load = True
-                logger.debug(
-                    "C4: skipped ensure_repo_loaded for %s (L1 hit, validated %.1fs ago)",
-                    repo_id,
-                    time.time() - last_validated,
-                )
+                logger.debug("C4: skipped ensure_repo_loaded for %s (L1 hit, recently validated)", repo_id)
 
         if not _skip_full_load:
             from codekavi.session import ensure_repo_loaded
 
             result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
             if result:
-                _validated_repos[repo_id] = time.time()
+                _validated_repos[repo_id] = True
 
         if not result:
             raise HTTPException(
@@ -227,6 +223,7 @@ async def chat_repo(
             "6. When discussing RAG: cover chunking strategy, embedding model "
             "choice, retrieval method, context window management, and "
             "prompt engineering.\n\n"
+            f"{UNTRUSTED_CODE_DISCLAIMER}\n\n"
             f"--- RETRIEVED CONTEXT ---\n{combined_context}\n--------------------------"
         )
 

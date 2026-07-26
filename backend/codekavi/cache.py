@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Any
 
+from cachetools import LRUCache, TTLCache
+
 from codekavi.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -64,15 +66,15 @@ class AnalysisCache:
     """
 
     def __init__(self):
-        # L1: in-memory
-        self._memory: dict[str, dict] = {}
-        self._sessions: dict[str, str] = {}  # repo_id → clone_path
+        # L1: in-memory, capped so it can't outgrow the process
+        self._memory: TTLCache = TTLCache(maxsize=256, ttl=REDIS_TTL_SECONDS)
+        self._sessions: LRUCache = LRUCache(maxsize=1024)  # repo_id → clone_path
 
         # T4.4 — cross-user deduplication index (signature → repo_id).
         # ``f"{owner}/{repo}@{commit_sha}"`` is keyed against the repo_id whose
         # analysis produced it. Subsequent callers probing the same commit get
         # the cached result without re-running the pipeline.
-        self._signatures: dict[str, str] = {}
+        self._signatures: LRUCache = LRUCache(maxsize=4096)
 
         # L2: Redis (lazy init)
         self._redis = None

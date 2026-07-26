@@ -1,17 +1,26 @@
 "use client";
 
 import "@xyflow/react/dist/style.css";
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
   Controls,
+  useReactFlow,
   type NodeTypes,
   type NodeMouseHandler,
 } from "@xyflow/react";
 import { useTheme } from "@/components/ui/theme-provider";
 import { useRepoGraph } from "@/hooks/useRepoGraph";
+import { useTour } from "@/hooks/useTour";
 import {
   graphViewReducer,
   initialGraphViewState,
@@ -26,6 +35,7 @@ import {
   layoutContainerChildren,
   type LayoutResult,
 } from "@/lib/graph/elkLayout";
+import { runCameraTrap } from "@/lib/graph/cameraTrap";
 import type { GraphFlag } from "@/lib/graph/flags";
 import { FileNode } from "./FileNode";
 import { ContainerNode } from "./ContainerNode";
@@ -34,6 +44,8 @@ import { PortalNode } from "./PortalNode";
 import { GraphBreadcrumb } from "./GraphBreadcrumb";
 import { FlagFilter } from "./FlagFilter";
 import { NodePanel } from "./NodePanel";
+import { TourPanel } from "./TourPanel";
+import type { TourMode, TourStep } from "@/lib/api";
 
 const NODE_TYPES: NodeTypes = {
   layer: LayerNode,
@@ -49,6 +61,7 @@ export interface GraphCanvasProps {
 function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   const { status, data: payload, error } = useRepoGraph(repoId);
   const [state, dispatch] = useReducer(graphViewReducer, initialGraphViewState);
+  const reactFlow = useReactFlow();
   // Native React Flow chrome (Background, Controls, attribution) ships with its
   // own light-only default theme and doesn't read the app's CSS class — without
   // this it renders near-invisible on the dark surface (review: zoom controls
@@ -143,6 +156,39 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     );
   }, []);
 
+  const [tourOpen, setTourOpen] = useState(false);
+  const [tourMode, setTourMode] = useState<TourMode>("learn");
+  const tour = useTour(repoId, tourMode);
+
+  // Bring a tour step's file into view: open its layer/container so the node
+  // exists at all, then hand off to the E7 camera trap (lib/graph/cameraTrap)
+  // to frame it once it has measured dimensions.
+  const cameraTrapCancelRef = useRef<(() => void) | null>(null);
+  const handleTourStepChange = useCallback(
+    (step: TourStep) => {
+      const fileId = step.node_ids[0];
+      if (!fileId || !payload) return;
+      const file = payload.files.find((f) => f.id === fileId);
+      if (!file) return;
+
+      if (file.layer_id && file.layer_id !== state.activeLayerId) {
+        dispatch({ type: "open_layer", layerId: file.layer_id });
+      }
+      if (
+        file.container_id &&
+        !state.expandedContainers.has(file.container_id)
+      ) {
+        dispatch({ type: "toggle_container", containerId: file.container_id });
+      }
+      dispatch({ type: "select_file", fileId: file.id });
+
+      cameraTrapCancelRef.current?.();
+      cameraTrapCancelRef.current = runCameraTrap(reactFlow, file.id);
+    },
+    [payload, state.activeLayerId, state.expandedContainers, reactFlow],
+  );
+  useEffect(() => () => cameraTrapCancelRef.current?.(), []);
+
   const { nodes, edges } = useMemo(() => {
     if (!payload) return { nodes: [], edges: [] };
     if (!state.activeLayerId) return buildOverviewGraph(payload, onOpen);
@@ -219,6 +265,14 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
           activeFlags={state.activeFlags}
           onToggle={toggleFlag}
         />
+        <button
+          type="button"
+          onClick={() => setTourOpen((open) => !open)}
+          aria-pressed={tourOpen}
+          className="w-fit rounded-full border bg-card px-2 py-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {tourOpen ? "Exit tour" : "Start tour"}
+        </button>
         {hasNoEdges && (
           <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50 max-w-xs">
             No dependencies could be resolved — files are grouped by role only.
@@ -256,6 +310,20 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
             file={selectedFile}
             cycles={payload.insights.cycles}
             onClose={handlePaneClick}
+          />
+        </div>
+      )}
+      {tourOpen && (
+        <div className="absolute bottom-3 left-3 z-10 w-full max-w-xl px-3 sm:px-0">
+          <TourPanel
+            repoId={repoId}
+            mode={tourMode}
+            onModeChange={setTourMode}
+            status={tour.status}
+            steps={tour.steps}
+            error={tour.error}
+            onClose={() => setTourOpen(false)}
+            onStepChange={handleTourStepChange}
           />
         </div>
       )}

@@ -306,6 +306,24 @@ export interface RepoGraphPayload {
 export type RepoGraphResult =
   { status: "ok"; data: RepoGraphPayload } | { status: "re-analyzing" };
 
+// ── Tour Types (Phase 2, E5/E6) ──
+
+export type TourMode = "learn" | "recall";
+
+export interface TourStep {
+  order: number;
+  node_ids: string[];
+  layer_id: string | null;
+  title: string;
+  facts: string[];
+  questions: string[];
+}
+
+export interface TourResponse {
+  mode: TourMode;
+  steps: TourStep[];
+}
+
 // ── API Functions ──
 
 /**
@@ -657,4 +675,27 @@ export async function fetchRepoGraph(
   }
 
   return { status: "ok", data: await res.json() };
+}
+
+/** Fetch E5's assembled tour (learn or recall mode). No 202 handling needed —
+ * the tour is only requested once the graph itself has already loaded. */
+export async function fetchTour(
+  repoId: string,
+  mode: TourMode,
+  signal?: AbortSignal,
+): Promise<TourResponse> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(
+    `${API_BASE}/graph/semantic/${repoId}/tour?mode=${mode}`,
+    { headers: authHeaders, signal },
+  );
+
+  if (!res.ok) {
+    const err = await res
+      .json()
+      .catch(() => ({ detail: "Failed to load tour" }));
+    throw new Error(err.detail || `Failed to load tour (${res.status})`);
+  }
+
+  return res.json();
 }

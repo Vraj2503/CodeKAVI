@@ -92,14 +92,16 @@ class CircuitBreaker:
             return self._state
 
     def snapshot(self) -> dict:
-        """Cheap, lock-free snapshot for metrics/log endpoints."""
-        return {
-            "name": self.name,
-            "state": self.state,
-            "failures": self._failures,
-            "threshold": self.failure_threshold,
-            "reset_timeout": self.reset_timeout,
-        }
+        """Locked snapshot for metrics/log endpoints — keeps state and failures consistent."""
+        with self._lock:
+            self._maybe_close_to_half_open_locked()
+            return {
+                "name": self.name,
+                "state": self._state,
+                "failures": self._failures,
+                "threshold": self.failure_threshold,
+                "reset_timeout": self.reset_timeout,
+            }
 
     # ── core API ───────────────────────────────────────────────────────
 
@@ -389,6 +391,7 @@ class GroqProvider:
         user_prompt: str,
         temperature: float,
         max_tokens: int,
+        json_mode: bool = False,
     ) -> tuple[str, dict, int]:
         """Shared retry/breaker logic for generate(). Returns (content, usage, latency_ms)."""
         # T4.2 — breaker check before any network I/O.
@@ -407,17 +410,21 @@ class GroqProvider:
 
         loop = asyncio.get_running_loop()
 
+        kwargs: dict[str, Any] = dict(
+            model=self.model_name,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 start_ts = asyncio.get_event_loop().time()
                 response = await loop.run_in_executor(
                     current_io_executor.get(None),
-                    lambda: self._client.chat.completions.create(
-                        model=self.model_name,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    ),
+                    lambda: self._client.chat.completions.create(**kwargs),
                 )
                 self._breaker.record_success()
                 usage_obj = getattr(response, "usage", None)
@@ -468,7 +475,9 @@ class GroqProvider:
         Wraps the sync Groq SDK call in run_in_executor.
         Retries with asyncio.sleep — keeps the event loop responsive.
         """
-        content, usage, latency_ms = await self._generate_core(system_prompt, user_prompt, temperature, max_tokens)
+        content, usage, latency_ms = await self._generate_core(
+            system_prompt, user_prompt, temperature, max_tokens, json_mode
+        )
         tokens = usage.get("total_tokens", 0)
         if tokens:
             _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)
@@ -489,7 +498,9 @@ class GroqProvider:
         real (not estimated) token counts should call this instead of
         ``generate()``, which silently drops usage after recording it.
         """
-        content, usage, latency_ms = await self._generate_core(system_prompt, user_prompt, temperature, max_tokens)
+        content, usage, latency_ms = await self._generate_core(
+            system_prompt, user_prompt, temperature, max_tokens, json_mode
+        )
         tokens = usage.get("total_tokens", 0)
         if tokens:
             _record_llm_usage(user_id=user_id, provider=self.name, tokens=tokens, latency_ms=latency_ms)

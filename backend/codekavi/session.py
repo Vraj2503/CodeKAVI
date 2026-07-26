@@ -174,6 +174,10 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
 
     from fastapi import HTTPException
 
+    # Not an error — HTTPException is the shortest way to short-circuit a
+    # sync function running under run_in_executor and surface 202 Accepted
+    # to every ensure_repo_loaded() caller without threading a sentinel
+    # return value through each of them.
     raise HTTPException(status_code=202, detail={"status": "re-analyzing"})
 
     # (Synchronous block replaced by the async thread above)

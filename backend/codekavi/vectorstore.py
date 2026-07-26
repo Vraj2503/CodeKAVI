@@ -193,17 +193,22 @@ class ZillizClient:
                         f"'{COLLECTION_NAME}' manually."
                     )
 
-                # Safety check: if the existing collection is missing new metadata
-                # fields (language, layer), drop and recreate so indexer can store them.
-                try:
-                    existing_field_names = {f.name for f in self.collection.schema.fields}
-                    if not self._REQUIRED_FIELDS.issubset(existing_field_names):
-                        missing = self._REQUIRED_FIELDS - existing_field_names
-                        logger.warning(f"Collection missing fields {missing}. Dropping and recreating collection.")
-                        utility.drop_collection(COLLECTION_NAME)
-                        return self.setup_collection()
-                except Exception:
-                    pass
+                # Safety check: if the existing collection is missing required
+                # metadata fields, this is a genuine schema incompatibility.
+                # We do NOT auto-drop — dropping deletes every indexed vector
+                # for every user. Surface it loudly and require a deliberate
+                # migration instead.
+                existing_field_names = {f.name for f in self.collection.schema.fields}
+                if not self._REQUIRED_FIELDS.issubset(existing_field_names):
+                    from codekavi.exceptions import VectorStoreError
+
+                    missing = self._REQUIRED_FIELDS - existing_field_names
+                    raise VectorStoreError(
+                        f"Zilliz collection '{COLLECTION_NAME}' is missing required "
+                        f"fields {missing}. Refusing to auto-drop the collection since "
+                        f"that would delete all indexed vectors — migrate or drop "
+                        f"'{COLLECTION_NAME}' manually."
+                    )
 
             return self.collection
 
@@ -270,8 +275,8 @@ class ZillizClient:
         layer_filter: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Embeds the query using both Gemini and Cloudflare, searches Zilliz for both,
-        combines results, and returns the top 'limit' matching code chunks.
+        Embeds the query using Cloudflare, searches Zilliz, and returns the
+        top 'limit' matching code chunks.
         """
         if not self.collection:
             self.collection = self.setup_collection()

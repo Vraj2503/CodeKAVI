@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import time
+from dataclasses import dataclass
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -58,6 +59,239 @@ def safe_cleanup(path: str):
 
 
 router = APIRouter()
+
+
+@dataclass
+class PipelineResult:
+    """Output of ``_run_pipeline`` — everything /analyze and /analyze/stream need
+    to build their (differently-shaped) response and cache entry."""
+
+    dep_data: DepGraph
+    dep_data_dict: dict
+    file_profiles: list
+    file_profiles_dicts: list
+    role_summary: dict
+    graph_json: dict
+    module_graph: dict
+    cycles_data: dict
+    mermaid: dict  # {"file_level": str, "module_level": str} — unified shape (IMPL-13/B-3)
+    selected_files: list
+    nn_models: list
+
+
+async def _run_pipeline(
+    repo_id: str,
+    clone_info: dict,
+    repo_data,
+    content_cache_dict: dict,
+    fingerprints: dict,
+    change_class: ChangeClassification,
+    cache: AnalysisCache,
+    user_id: str,
+):
+    """Shared dependency-analysis → classify → NN-extract → graph-export →
+    select pipeline used by both /analyze and /analyze/stream.
+
+    The two routes differ only in emit strategy (IMPL-13): this yields
+    ``(stage, progress, message, data)`` tuples right before each stage's work
+    starts, so a caller can stop advancing the generator (e.g. on client
+    disconnect) and the not-yet-started stage simply never runs. The final
+    yield is ``("__result__", 100, "", PipelineResult)``.
+    """
+    from codekavi.fingerprint import save_fingerprints
+    from codekavi.metrics import analysis_stage_timer
+
+    await _run_sync(save_fingerprints, repo_id, clone_info["clone_path"], fingerprints)
+
+    dep_data = None
+    if change_class == ChangeClassification.PARTIAL_UPDATE:
+        try:
+            cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
+            if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
+                logger.info(f"PARTIAL_UPDATE detected for {repo_id}. Merging changed files.")
+                changed_paths = {path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")}
+                _cached_rd = cached_result.get("repo_data", {})
+                _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
+                deleted_paths = {f["path"] for f in _cached_rd_dict.get("files", []) if f["path"] not in fingerprints}
+
+                partial_files = [f for f in repo_data.files if f.path in changed_paths]
+                partial_dep = await _run_sync(
+                    analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
+                )
+
+                cached_dep_graph = DepGraph(**cached_result["dep_data"])
+                known_files = {f.path for f in repo_data.files}
+
+                dep_data = patch_dep_graph(
+                    cached_dep_graph,
+                    partial_dep,
+                    changed_paths,
+                    deleted_paths,
+                    known_files,
+                    clone_info["clone_path"],
+                    content_cache_dict,
+                )
+            else:
+                logger.warning("PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
+        except Exception as e:
+            logger.warning(f"PARTIAL_UPDATE exception: {e}. Falling back to FULL_UPDATE.")
+
+    content_cache = BoundedContentCache(settings.max_content_cache_bytes)
+    for k, v in content_cache_dict.items():
+        content_cache[k] = v
+
+    yield ("analyzing", 40, "Analyzing dependencies…", None)
+    if dep_data is None:
+        start_time = time.perf_counter()
+        try:
+            with analysis_stage_timer("analyzing"):
+                dep_data = await _run_sync(
+                    analyze_dependencies, clone_info["clone_path"], repo_data.files, content_cache
+                )
+            duration = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"Stage analyzing completed in {duration:.2f}ms", extra={"stage": "analyzing", "duration_ms": duration}
+            )
+        except Exception as e:
+            dep_data = DepGraph(
+                error=f"Dependency analysis failed: {e}",
+                edges=[],
+                adjacency={},
+                reverse_adjacency={},
+                file_imports={},
+                entry_points=[],
+                file_signals={},
+                central_files=[],
+                stats={},
+            )
+    else:
+        logger.info("Skipped full analyze_dependencies, using patched graph.")
+
+    yield ("analyzing", 60, "Classifying file roles…", None)
+    start_time = time.perf_counter()
+    try:
+        with analysis_stage_timer("classifying"):
+            file_profiles = await _run_sync(
+                classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
+            )
+            role_summary = summarize_roles(file_profiles)
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            f"Stage classifying completed in {duration:.2f}ms", extra={"stage": "classifying", "duration_ms": duration}
+        )
+    except Exception as e:
+        file_profiles = []
+        role_summary = {"error": f"Classification failed: {e}"}
+
+    # NN Model Extraction (before content_cache is cleared)
+    # Candidates come from the parsed import graph (immune to the classifier's
+    # 4KB window / import aliasing), not just the winner-takes-all role label.
+    nn_models = []
+    ml_model_files = select_nn_candidates(file_profiles, dep_data)
+    try:
+        if ml_model_files and content_cache:
+            try:
+                nn_models = await extract_all_models(
+                    ml_model_files,
+                    content_cache=content_cache,
+                    repo_root=clone_info["clone_path"],
+                )
+            except Exception as e:
+                logger.warning(f"NN extraction failed: {e}")
+    finally:
+        # M-09: clear in finally so a failure/cancellation during NN
+        # extraction can't skip cache cleanup and leak content_cache.
+        if content_cache:
+            content_cache.clear()
+            del content_cache
+
+    yield ("graphing", 70, "Building dependency graphs…", None)
+    start_time = time.perf_counter()
+    try:
+        with analysis_stage_timer("graphing"):
+            dep_data_dict = dep_data.model_dump()
+            file_profiles_dicts = [p.model_dump() for p in file_profiles]
+            repo_files_dicts = [f.model_dump() for f in repo_data.files]
+
+            graph_json_future = _run_sync(
+                export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
+            )
+            module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
+            cycles_future = _run_sync(detect_cycles, dep_data_dict)
+
+            results = await asyncio.gather(
+                graph_json_future, module_graph_future, cycles_future, return_exceptions=True
+            )
+
+            graph_json = (
+                results[0]
+                if not isinstance(results[0], Exception)
+                else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
+            )
+            module_graph = (
+                results[1] if not isinstance(results[1], Exception) else {"error": f"Module graph failed: {results[1]}"}
+            )
+            cycles_data = (
+                results[2]
+                if not isinstance(results[2], Exception)
+                else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
+            )
+
+            try:
+                mermaid_file = await _run_sync(export_mermaid, graph_json)
+            except Exception as e:
+                logger.warning(f"Mermaid export failed: {e}")
+                mermaid_file = ""
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
+        )
+    except Exception as e:
+        logger.warning(f"Graph export failed: {e}")
+        graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
+        mermaid_file = ""
+        module_graph = {"error": f"Module graph failed: {e}"}
+        cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+
+        dep_data_dict = dep_data.model_dump()
+        file_profiles_dicts = [p.model_dump() for p in file_profiles]
+        repo_files_dicts = [f.model_dump() for f in repo_data.files]
+
+    # B-3: unified mermaid shape — both routes now return {file_level, module_level}
+    # instead of /analyze's bare string vs /analyze/stream's dict.
+    mermaid = {
+        "file_level": mermaid_file,
+        "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
+    }
+
+    yield ("selecting", 80, "Selecting key files…", None)
+    selector = SmartFileSelector()
+    start_time = time.perf_counter()
+    try:
+        with analysis_stage_timer("selecting"):
+            selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
+        duration = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            f"Stage selecting completed in {duration:.2f}ms", extra={"stage": "selecting", "duration_ms": duration}
+        )
+    except Exception as e:
+        logger.warning(f"Smart file selection failed: {e}")
+        selected_files = []
+
+    result = PipelineResult(
+        dep_data=dep_data,
+        dep_data_dict=dep_data_dict,
+        file_profiles=file_profiles,
+        file_profiles_dicts=file_profiles_dicts,
+        role_summary=role_summary,
+        graph_json=graph_json,
+        module_graph=module_graph,
+        cycles_data=cycles_data,
+        mermaid=mermaid,
+        selected_files=selected_files,
+        nn_models=nn_models,
+    )
+    yield ("__result__", 100, "", result)
 
 
 # ── Routes ──
@@ -169,7 +403,7 @@ async def analyze(
                 f.content = None
 
         # Fingerprint check for incremental analysis
-        from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+        from codekavi.fingerprint import compare_and_classify_repo
 
         fingerprints, change_class = await _run_sync(
             compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
@@ -201,191 +435,24 @@ async def analyze(
             except Exception as e:
                 logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
 
-        elif change_class == ChangeClassification.PARTIAL_UPDATE:
-            try:
-                cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
-                if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
-                    logger.info(f"PARTIAL_UPDATE detected for {repo_id}. Merging changed files.")
-                    changed_paths = {
-                        path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
-                    }
-                    _cached_rd = cached_result.get("repo_data", {})
-                    _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
-                    deleted_paths = {
-                        f["path"] for f in _cached_rd_dict.get("files", []) if f["path"] not in fingerprints
-                    }
+        # IMPL-13: shared with /analyze/stream via _run_pipeline so the two
+        # routes' dependency/classify/graph/select stages can't drift apart.
+        pipeline_result: PipelineResult | None = None
+        async for stage, _progress, _message, data in _run_pipeline(
+            repo_id, clone_info, repo_data, content_cache_dict, fingerprints, change_class, cache, user_id
+        ):
+            if stage == "__result__":
+                pipeline_result = data
+        assert pipeline_result is not None
 
-                    partial_files = [f for f in repo_data.files if f.path in changed_paths]
-
-                    # Analyze ONLY changed files
-                    partial_dep = await _run_sync(
-                        analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
-                    )
-
-                    cached_dep_graph = DepGraph(**cached_result["dep_data"])
-                    known_files = {f.path for f in repo_data.files}
-
-                    dep_data = patch_dep_graph(
-                        cached_dep_graph,
-                        partial_dep,
-                        changed_paths,
-                        deleted_paths,
-                        known_files,
-                        clone_info["clone_path"],
-                        content_cache_dict,
-                    )
-
-                    # We skip full dependency analysis in the next step by caching dep_data
-                    content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-                    for k, v in content_cache_dict.items():
-                        content_cache[k] = v
-
-                else:
-                    logger.warning("PARTIAL_UPDATE failed to load cache. Falling back to FULL_UPDATE.")
-            except Exception as e:
-                logger.warning(f"PARTIAL_UPDATE exception: {e}. Falling back to FULL_UPDATE.")
-
-        await _run_sync(save_fingerprints, repo_id, clone_info["clone_path"], fingerprints)
-
-        # Analyze dependencies and classify roles using a shared BoundedContentCache
-        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-        # Pre-populate BoundedContentCache with already loaded content
-        for k, v in content_cache_dict.items():
-            content_cache[k] = v
-
-        start_time = time.perf_counter()
-        try:
-            if change_class == ChangeClassification.PARTIAL_UPDATE and "dep_data" in locals() and dep_data:
-                logger.info("Skipped full analyze_dependencies, using patched graph.")
-            else:
-                with analysis_stage_timer("analyzing"):
-                    dep_data = await _run_sync(
-                        analyze_dependencies, clone_info["clone_path"], repo_data.files, content_cache
-                    )
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"Stage analyzing completed in {duration:.2f}ms",
-                    extra={"stage": "analyzing", "duration_ms": duration},
-                )
-        except Exception as e:
-            dep_data = DepGraph(
-                error=f"Dependency analysis failed: {e}",
-                edges=[],
-                adjacency={},
-                reverse_adjacency={},
-                file_imports={},
-                entry_points=[],
-                file_signals={},
-                central_files=[],
-                stats={},
-            )
-
-        # Classify file roles
-        start_time = time.perf_counter()
-        try:
-            with analysis_stage_timer("classifying"):
-                file_profiles = await _run_sync(
-                    classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
-                )
-                role_summary = summarize_roles(file_profiles)
-            duration = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                f"Stage classifying completed in {duration:.2f}ms",
-                extra={"stage": "classifying", "duration_ms": duration},
-            )
-        except Exception as e:
-            file_profiles = []
-            role_summary = {"error": f"Classification failed: {e}"}
-
-        # NN Model Extraction (before content_cache is cleared)
-        # Candidates come from the parsed import graph (immune to the classifier's
-        # 4KB window / import aliasing), not just the winner-takes-all role label.
-        nn_models = []
-        ml_model_files = select_nn_candidates(file_profiles, dep_data)
-        try:
-            if ml_model_files and content_cache:
-                try:
-                    nn_models = await extract_all_models(
-                        ml_model_files,
-                        content_cache=content_cache,
-                        repo_root=clone_info["clone_path"],
-                    )
-                except Exception as e:
-                    logger.warning(f"NN extraction failed: {e}")
-        finally:
-            # M-09: clear in finally so a failure/cancellation during NN
-            # extraction can't skip cache cleanup and leak content_cache.
-            if content_cache:
-                content_cache.clear()
-                del content_cache
-
-        # Export graphs
-        start_time = time.perf_counter()
-        try:
-            with analysis_stage_timer("exporting_graph"):
-                dep_data_dict = dep_data.model_dump()
-                file_profiles_dicts = [p.model_dump() for p in file_profiles]
-                repo_files_dicts = [f.model_dump() for f in repo_data.files]
-
-                graph_json_future = _run_sync(
-                    export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
-                )
-                module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
-                cycles_future = _run_sync(detect_cycles, dep_data_dict)
-
-                results = await asyncio.gather(
-                    graph_json_future, module_graph_future, cycles_future, return_exceptions=True
-                )
-
-                graph_json = (
-                    results[0]
-                    if not isinstance(results[0], Exception)
-                    else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
-                )
-                module_graph = (
-                    results[1]
-                    if not isinstance(results[1], Exception)
-                    else {"error": f"Module graph failed: {results[1]}"}
-                )
-                cycles_data = (
-                    results[2]
-                    if not isinstance(results[2], Exception)
-                    else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
-                )
-
-                try:
-                    mermaid_code = await _run_sync(export_mermaid, graph_json)
-                except Exception as e:
-                    logger.warning(f"Mermaid export failed: {e}")
-                    mermaid_code = {"file_level": "", "module_level": ""}
-            duration = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                f"Stage graphing completed in {duration:.2f}ms", extra={"stage": "graphing", "duration_ms": duration}
-            )
-        except Exception as e:
-            logger.warning(f"Graph export failed: {e}")
-            graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-            mermaid_code = {"file_level": "", "module_level": ""}
-            module_graph = {"error": f"Module graph failed: {e}"}
-            cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-
-            dep_data_dict = dep_data.model_dump()
-            file_profiles_dicts = [p.model_dump() for p in file_profiles]
-            repo_files_dicts = [f.model_dump() for f in repo_data.files]
-
-        # Smart file selection
-        selector = SmartFileSelector()
-        start_time = time.perf_counter()
-        try:
-            with analysis_stage_timer("selecting"):
-                selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
-            duration = (time.perf_counter() - start_time) * 1000
-            logger.info(
-                f"Stage selecting completed in {duration:.2f}ms", extra={"stage": "selecting", "duration_ms": duration}
-            )
-        except Exception as e:
-            logger.warning(f"Smart file selection failed: {e}")
-            selected_files = []
+        dep_data_dict = pipeline_result.dep_data_dict
+        file_profiles_dicts = pipeline_result.file_profiles_dicts
+        role_summary = pipeline_result.role_summary
+        graph_json = pipeline_result.graph_json
+        module_graph = pipeline_result.module_graph
+        cycles_data = pipeline_result.cycles_data
+        mermaid = pipeline_result.mermaid
+        nn_models = pipeline_result.nn_models
 
         # Store session and results in 3-tier cache (memory + Redis + Supabase)
         result_data = {
@@ -393,12 +460,12 @@ async def analyze(
             "owner": clone_info["owner"],
             "owner_user_id": user_id,
             "repo_data": repo_data,
-            "dep_data": dep_data,
-            "file_profiles": file_profiles,
+            "dep_data": pipeline_result.dep_data,
+            "file_profiles": pipeline_result.file_profiles,
             "role_summary": role_summary,
             "graph_json": graph_json,
             "module_graph": module_graph,
-            "selected_files": selected_files,
+            "selected_files": pipeline_result.selected_files,
             "nn_models": nn_models,
             # H-01: pin this result to its origin repo_id so cross-user
             # signature dedup (T4.4) can never rebind the signature index
@@ -439,7 +506,7 @@ async def analyze(
             "graph": graph_json,
             "module_graph": module_graph,
             "cycles": cycles_data,
-            "mermaid": mermaid_code,
+            "mermaid": mermaid,
             "nn_models": nn_models,
         }
         return final_result
@@ -613,215 +680,38 @@ async def analyze_stream(
                 except Exception as e:
                     logger.warning(f"Failed to load cached analysis despite no structural changes: {e}")
 
-            elif change_class == ChangeClassification.PARTIAL_UPDATE:
-                try:
-                    cached_result, _ = await _run_sync(ensure_repo_loaded, repo_id, cache, user_id)
-                    if cached_result and "dep_data" in cached_result and "file_profiles" in cached_result:
-                        logger.info(f"PARTIAL_UPDATE detected for {repo_id} in background. Merging changed files.")
-                        changed_paths = {
-                            path for path, fp in fingerprints.items() if fp.change_type in ("STRUCTURAL", "NEW")
-                        }
-                        _cached_rd = cached_result.get("repo_data", {})
-                        _cached_rd_dict = _cached_rd if isinstance(_cached_rd, dict) else _cached_rd.model_dump()
-                        deleted_paths = {
-                            f["path"] for f in _cached_rd_dict.get("files", []) if f["path"] not in fingerprints
-                        }
-
-                        partial_files = [f for f in repo_data.files if f.path in changed_paths]
-
-                        partial_dep = await _run_sync(
-                            analyze_dependencies, clone_info["clone_path"], partial_files, content_cache_dict
-                        )
-
-                        cached_dep_graph = DepGraph(**cached_result["dep_data"])
-                        known_files = {f.path for f in repo_data.files}
-
-                        dep_data = patch_dep_graph(
-                            cached_dep_graph,
-                            partial_dep,
-                            changed_paths,
-                            deleted_paths,
-                            known_files,
-                            clone_info["clone_path"],
-                            content_cache_dict,
-                        )
-
-                        content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-                        for k, v in content_cache_dict.items():
-                            content_cache[k] = v
-
-                    else:
-                        logger.warning("PARTIAL_UPDATE background failed to load cache. Falling back to FULL_UPDATE.")
-                except Exception as e:
-                    logger.warning(f"PARTIAL_UPDATE background exception: {e}. Falling back to FULL_UPDATE.")
-
-            await _run_sync(save_fingerprints, repo_id, clone_info["clone_path"], fingerprints)
-
-            # Stage 3: Analyzing dependencies
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected before dependency analysis of {repo_id}.")
-                safe_cleanup(clone_info["clone_path"])
-                return
-
-            yield _sse_event("analyzing", 40, "Analyzing dependencies…", seq=_next_seq(seq_box))
-
-            if "content_cache" not in locals():
-                content_cache = BoundedContentCache(settings.max_content_cache_bytes)
-                for k, v in content_cache_dict.items():
-                    content_cache[k] = v
-
-            start_time = time.perf_counter()
+            # Stages 3-6 (analyzing/classifying/graphing/selecting), including the
+            # PARTIAL_UPDATE merge and fingerprint save, are shared with /analyze
+            # via _run_pipeline (IMPL-13) so the two routes can't drift apart.
+            pipeline_result: PipelineResult | None = None
+            pipeline_gen = _run_pipeline(
+                repo_id, clone_info, repo_data, content_cache_dict, fingerprints, change_class, cache, user_id
+            )
             try:
-                if change_class == ChangeClassification.PARTIAL_UPDATE and "dep_data" in locals() and dep_data:
-                    logger.info("Skipped background full analyze_dependencies, using patched graph.")
-                else:
-                    with analysis_stage_timer("analyzing"):
-                        dep_data = await _run_sync(
-                            analyze_dependencies, clone_info["clone_path"], repo_data.files, content_cache
-                        )
-                    duration = (time.perf_counter() - start_time) * 1000
-                    logger.info(
-                        f"Stage analyzing completed in {duration:.2f}ms",
-                        extra={"stage": "analyzing", "duration_ms": duration},
-                    )
-            except Exception as e:
-                dep_data = DepGraph(
-                    error=f"Dependency analysis failed: {e}",
-                    edges=[],
-                    adjacency={},
-                    reverse_adjacency={},
-                    file_imports={},
-                    entry_points=[],
-                    file_signals={},
-                    central_files=[],
-                    stats={},
-                )
-
-            # Stage 4: Classifying files
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected before role classification of {repo_id}.")
-                safe_cleanup(clone_info["clone_path"])
-                return
-
-            yield _sse_event("analyzing", 60, "Classifying file roles…", seq=_next_seq(seq_box))
-            start_time = time.perf_counter()
-            try:
-                with analysis_stage_timer("classifying"):
-                    file_profiles = await _run_sync(
-                        classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
-                    )
-                    role_summary = summarize_roles(file_profiles)
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"Stage classifying completed in {duration:.2f}ms",
-                    extra={"stage": "classifying", "duration_ms": duration},
-                )
-            except Exception as e:
-                file_profiles = []
-                role_summary = {"error": f"Classification failed: {e}"}
-
-            # NN Model Extraction
-            # Candidates come from the parsed import graph (immune to the
-            # classifier's 4KB window / import aliasing), not just the role label.
-            nn_models = []
-            ml_model_files = select_nn_candidates(file_profiles, dep_data)
-            try:
-                if ml_model_files and content_cache:
-                    try:
-                        nn_models = await extract_all_models(
-                            ml_model_files,
-                            content_cache=content_cache,
-                            repo_root=clone_info["clone_path"],
-                        )
-                    except Exception as e:
-                        logger.warning(f"NN extraction failed: {e}")
+                async for stage, progress, message, data in pipeline_gen:
+                    if stage == "__result__":
+                        pipeline_result = data
+                        break
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected before {stage} stage of {repo_id}.")
+                        safe_cleanup(clone_info["clone_path"])
+                        return
+                    yield _sse_event(stage, progress, message, seq=_next_seq(seq_box))
             finally:
-                # M-09: clear in finally so a failure/cancellation during NN
-                # extraction can't skip cache cleanup and leak content_cache.
-                if content_cache:
-                    content_cache.clear()
-                    del content_cache
+                await pipeline_gen.aclose()
+            assert pipeline_result is not None
 
-            # Stage 5: Building graphs
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected before graph export of {repo_id}.")
-                safe_cleanup(clone_info["clone_path"])
-                return
-
-            yield _sse_event("graphing", 70, "Building dependency graphs…", seq=_next_seq(seq_box))
-            start_time = time.perf_counter()
-            try:
-                with analysis_stage_timer("graphing"):
-                    dep_data_dict = dep_data.model_dump()
-                    file_profiles_dicts = [p.model_dump() for p in file_profiles]
-                    repo_files_dicts = [f.model_dump() for f in repo_data.files]
-
-                    graph_json_future = _run_sync(
-                        export_graph_json, dep_data_dict, file_profiles_dicts, max_nodes=settings.graph_max_nodes
-                    )
-                    module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
-                    cycles_future = _run_sync(detect_cycles, dep_data_dict)
-
-                    results = await asyncio.gather(
-                        graph_json_future, module_graph_future, cycles_future, return_exceptions=True
-                    )
-
-                    graph_json = (
-                        results[0]
-                        if not isinstance(results[0], Exception)
-                        else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
-                    )
-                    module_graph = (
-                        results[1]
-                        if not isinstance(results[1], Exception)
-                        else {"error": f"Module graph failed: {results[1]}"}
-                    )
-                    cycles_data = (
-                        results[2]
-                        if not isinstance(results[2], Exception)
-                        else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
-                    )
-
-                    try:
-                        mermaid_code = await _run_sync(export_mermaid, graph_json)
-                    except Exception as e:
-                        logger.warning(f"Mermaid export failed: {e}")
-                        mermaid_code = {"file_level": "", "module_level": ""}
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"Stage graphing completed in {duration:.2f}ms",
-                    extra={"stage": "graphing", "duration_ms": duration},
-                )
-            except Exception as e:
-                graph_json = {"error": f"Graph export failed: {e}", "nodes": [], "edges": []}
-                mermaid_code = {"file_level": "", "module_level": ""}
-                module_graph = {"error": f"Module graph failed: {e}"}
-                cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
-
-                dep_data_dict = dep_data.model_dump()
-                file_profiles_dicts = [p.model_dump() for p in file_profiles]
-                repo_files_dicts = [f.model_dump() for f in repo_data.files]
-
-            # Stage 6: Smart file selection
-            if await request.is_disconnected():
-                logger.info(f"Client disconnected before file selection of {repo_id}.")
-                safe_cleanup(clone_info["clone_path"])
-                return
-
-            yield _sse_event("selecting", 80, "Selecting key files…", seq=_next_seq(seq_box))
-            selector = SmartFileSelector()
-            start_time = time.perf_counter()
-            try:
-                with analysis_stage_timer("selecting"):
-                    selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)
-                duration = (time.perf_counter() - start_time) * 1000
-                logger.info(
-                    f"Stage selecting completed in {duration:.2f}ms",
-                    extra={"stage": "selecting", "duration_ms": duration},
-                )
-            except Exception as e:
-                logger.warning(f"Smart file selection failed: {e}")
-                selected_files = []
+            dep_data = pipeline_result.dep_data
+            dep_data_dict = pipeline_result.dep_data_dict
+            file_profiles = pipeline_result.file_profiles
+            file_profiles_dicts = pipeline_result.file_profiles_dicts
+            role_summary = pipeline_result.role_summary
+            graph_json = pipeline_result.graph_json
+            module_graph = pipeline_result.module_graph
+            cycles_data = pipeline_result.cycles_data
+            mermaid_code = pipeline_result.mermaid
+            selected_files = pipeline_result.selected_files
+            nn_models = pipeline_result.nn_models
 
             # Store session and results in 3-tier cache
             stream_result_data = {
@@ -873,10 +763,7 @@ async def analyze_stream(
                 "graph": graph_json,
                 "module_graph": module_graph,
                 "cycles": cycles_data,
-                "mermaid": {
-                    "file_level": mermaid_code,
-                    "module_level": module_graph.get("mermaid", "") if isinstance(module_graph, dict) else "",
-                },
+                "mermaid": mermaid_code,
                 "nn_models": nn_models,
             }
             # T2.4 — final event carries seq + total_events so the client can

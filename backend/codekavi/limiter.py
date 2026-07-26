@@ -15,8 +15,10 @@ rather than crashing the app.
 """
 
 import logging
+import time
 
-from fastapi import Request, Response
+from cachetools import TTLCache
+from fastapi import HTTPException, Request, Response
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter as _RateLimiter
 
@@ -26,6 +28,11 @@ from codekavi.settings import settings
 logger = logging.getLogger(__name__)
 
 _enabled = False
+
+# ponytail: per-process token bucket, not shared across workers/replicas —
+# degraded fallback only while Redis is down. Bounded (like the L1 cache in
+# cache.py) so a flood of distinct IPs/users can't grow this unbounded.
+_local_buckets: TTLCache = TTLCache(maxsize=8192, ttl=60)
 
 
 async def user_or_ip_identifier(request: Request) -> str:
@@ -41,9 +48,27 @@ async def user_or_ip_identifier(request: Request) -> str:
     if user_id:
         return f"user:{user_id}:{request.scope['path']}"
 
-    forwarded = request.headers.get("X-Forwarded-For")
-    ip = forwarded.split(",")[0] if forwarded else (request.client.host if request.client else "unknown")
+    ip = _client_ip(request)
     return f"ip:{ip}:{request.scope['path']}"
+
+
+def _client_ip(request: Request) -> str:
+    """M-09: trust only the hop appended by our own reverse proxy chain.
+
+    X-Forwarded-For is `client, proxy1, proxy2, ...` — each proxy appends the
+    peer it saw. Everything left of the last `trusted_proxy_hops` entries came
+    from the client and is spoofable; take the IP `trusted_proxy_hops` from
+    the end instead of the client-controlled first entry.
+    """
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        chain = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+        hops = settings.trusted_proxy_hops
+        if chain and 0 < hops <= len(chain):
+            return chain[-hops]
+        if chain:
+            return chain[0]
+    return request.client.host if request.client else "unknown"
 
 
 async def init_limiter() -> None:
@@ -71,12 +96,21 @@ async def close_limiter() -> None:
 
 
 class RateLimiter(_RateLimiter):
-    """fastapi-limiter's RateLimiter, but a no-op when Redis never connected."""
+    """fastapi-limiter's RateLimiter. Falls back to a degraded local
+    token bucket when Redis is unreachable, instead of allowing unlimited traffic."""
 
     async def __call__(self, request: Request, response: Response):
-        if not _enabled:
-            return
-        return await super().__call__(request, response)
+        if _enabled:
+            return await super().__call__(request, response)
+
+        key = await user_or_ip_identifier(request)
+        window_seconds = self.milliseconds / 1000
+        now = time.monotonic()
+        window = [t for t in _local_buckets.get(key, []) if now - t < window_seconds]
+        if len(window) >= self.times:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded (degraded local limiter)")
+        window.append(now)
+        _local_buckets[key] = window
 
 
 def per_minute(times: int) -> RateLimiter:

@@ -17,12 +17,47 @@ Behaviour:
 
 Public surface:
   * ``generate_deterministic_tour(dep_data, file_profiles=None, max_steps=25)``
+  * ``generate_learn_tour(graph)`` — learn-mode step order for the graph tour
+    (spec 2026-07-25-graph-and-tour-design.md §8): layer-tier bottom-up,
+    dependency order within a tier.
+  * ``generate_recall_tour(graph)`` — recall-mode step order: importance_score
+    desc, then flagged files.
+  * ``generate_questions(file, cycle_partners=None)`` — flag-to-template
+    interview questions (spec §8); ``build_cycle_partners(cycles)`` builds
+    the lookup ``in_cycle`` questions need.
 """
 
 from __future__ import annotations
 
-from collections import deque
+from collections import defaultdict, deque
 from typing import Any
+
+
+def _kahn_order(all_nodes: set[str], adjacency: dict[str, list[str]]) -> list[str]:
+    """Deterministic Kahn's topological sort. Returns only the nodes reachable
+    by the sort (i.e. not part of a cycle) — the caller decides how to place
+    the rest."""
+    in_degree: dict[str, int] = {n: 0 for n in all_nodes}
+    for _src, targets in adjacency.items():
+        for t in targets if isinstance(targets, list) else [targets]:
+            if t in in_degree:
+                in_degree[t] += 1
+
+    queue: deque[str] = deque(sorted(n for n in all_nodes if in_degree[n] == 0))
+    order: list[str] = []
+    seen: set[str] = set()
+    while queue:
+        node = queue.popleft()
+        if node in seen:
+            continue
+        seen.add(node)
+        order.append(node)
+        for t in sorted(adjacency.get(node, [])):
+            if t in in_degree:
+                in_degree[t] -= 1
+                if in_degree[t] == 0:
+                    queue.append(t)
+    return order
 
 
 def generate_deterministic_tour(
@@ -57,34 +92,7 @@ def generate_deterministic_tour(
     if not all_nodes:
         return []
 
-    # In-degree map keyed only over known nodes (avoids KeyError if an edge
-    # points at an unknown target).
-    in_degree: dict[str, int] = {n: 0 for n in all_nodes}
-    for _src, targets in adjacency.items():
-        target_list = targets if isinstance(targets, list) else [targets]
-        for t in target_list:
-            if t in in_degree:
-                in_degree[t] += 1
-
-    # Kahn's algorithm. Insertion order is sorted so the output is fully
-    # deterministic — running this function twice on identical input yields
-    # byte-identical output.
-    queue: deque[str] = deque(sorted(n for n in all_nodes if in_degree[n] == 0))
-    order: list[str] = []
-    seen: set[str] = set()
-    while queue:
-        node = queue.popleft()
-        if node in seen:
-            continue
-        seen.add(node)
-        order.append(node)
-        targets = adjacency.get(node, [])
-        target_list = targets if isinstance(targets, list) else [targets]
-        for t in sorted(target_list):  # sorted for determinism
-            if t in in_degree:
-                in_degree[t] -= 1
-                if in_degree[t] == 0:
-                    queue.append(t)
+    order = _kahn_order(all_nodes, adjacency)
 
     # Fallthrough: cyclic nodes were never reached by Kahn's. Surface them
     # anyway so the tour covers all known files. Sort by importance desc so
@@ -117,12 +125,238 @@ def generate_deterministic_tour(
                 "role": p.get("role", "unknown"),
                 "role_label": p.get("role_label", "Unknown"),
                 "importance": p.get("importance_score", 0),
-                "description": (
-                    f"{p.get('role_label', 'File') or 'File'} that imports "
-                    f"{len(dep_list)} module(s)"
-                ),
+                "description": (f"{p.get('role_label', 'File') or 'File'} that imports {len(dep_list)} module(s)"),
                 "connections": [d for d in dep_list if isinstance(d, str)][:5],
             }
         )
 
     return tour
+
+
+def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
+    """Learn-mode step order (spec §8): layer-tier bottom-up — config/types
+    before core logic before routes — with dependency order as the tie-break
+    within a tier.
+
+    Unlike ``generate_deterministic_tour``, every file in ``graph["files"]``
+    gets a step even if it has zero edges: orphaned files are exactly what
+    the flag-question mechanism needs to surface, so they can't be silently
+    dropped the way an adjacency-only node set would drop them.
+
+    Args:
+        graph: Output of ``assemble_graph()`` — needs ``files`` (each with
+               ``id``, ``layer_id``, ``importance``) and ``layers`` (each
+               with ``id``, ``tier``), plus file-level ``edges``.
+
+    Returns:
+        Ordered list of ``{order, node_ids, layer_id}`` steps, one per file.
+    """
+    files = graph.get("files", [])
+    if not files:
+        return []
+
+    files_by_id = {f["id"]: f for f in files}
+    tier_by_layer = {layer["id"]: layer.get("tier", 0) for layer in graph.get("layers", [])}
+
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in graph.get("edges", []):
+        if edge.get("level") == "file":
+            adjacency[edge["source"]].append(edge["target"])
+
+    all_nodes = set(files_by_id)
+    order = _kahn_order(all_nodes, adjacency)
+
+    # Cyclic/unreached files, most important first, path as tie-break.
+    remaining = [n for n in all_nodes if n not in set(order)]
+    remaining.sort(key=lambda n: (-(files_by_id[n].get("importance") or 0), n))
+
+    full_order = order + remaining
+    # Stable sort: preserves the dependency/importance order above within
+    # each tier, so "bottom-up by layer" and "dependency order" both hold.
+    full_order.sort(key=lambda n: tier_by_layer.get(files_by_id[n].get("layer_id"), 0))
+
+    return [
+        {
+            "order": i,
+            "node_ids": [file_id],
+            "layer_id": files_by_id[file_id].get("layer_id"),
+        }
+        for i, file_id in enumerate(full_order, start=1)
+    ]
+
+
+def generate_recall_tour(graph: dict) -> list[dict[str, Any]]:
+    """Recall-mode step order (spec §8): importance_score desc, then flagged
+    files — the opposite shape of learn mode. Dependency order front-loads
+    plumbing, which is wrong for someone who already built the thing; what
+    jogs memory is the salient and unusual file, not the one nothing depends
+    on yet.
+
+    Reuses the same tie-break seed as ``generate_deterministic_tour``'s
+    cyclic fallback (``-importance, path``), extended with a flagged-first
+    tie-break so a flagged file outranks an unflagged one at equal importance.
+
+    Args:
+        graph: Output of ``assemble_graph()`` — needs ``files`` (each with
+               ``id``, ``layer_id``, ``importance``, ``flags``).
+
+    Returns:
+        Ordered list of ``{order, node_ids, layer_id}`` steps, one per file.
+    """
+    files = graph.get("files", [])
+    if not files:
+        return []
+
+    order = sorted(files, key=_recall_sort_key)
+
+    return [
+        {
+            "order": i,
+            "node_ids": [f["id"]],
+            "layer_id": f.get("layer_id"),
+        }
+        for i, f in enumerate(order, start=1)
+    ]
+
+
+def _recall_sort_key(file: dict) -> tuple[float, int, str]:
+    return (-(file.get("importance") or 0), 0 if file.get("flags") else 1, file["id"])
+
+
+# graph_assembler's byte-size proxy for "lines" — the pipeline never reads
+# file content to count lines, so this must match GOD_FILE_MIN_SIZE's ratio.
+_GOD_FILE_BYTES_PER_LINE = 40
+
+
+def build_cycle_partners(cycles: list[list[str]]) -> dict[str, list[str]]:
+    """path -> sorted list of other paths sharing a detected cycle with it.
+
+    ``cycles`` is ``detect_cycles(dep_data)["cycles"]`` (graph.py) — each
+    inner list is one closed loop of file paths (first == last)."""
+    partners: dict[str, set[str]] = defaultdict(set)
+    for cycle in cycles:
+        members = set(cycle[:-1]) if len(cycle) > 1 and cycle[0] == cycle[-1] else set(cycle)
+        for path in members:
+            partners[path].update(m for m in members if m != path)
+    return {path: sorted(others) for path, others in partners.items()}
+
+
+def _file_facts(file: dict) -> list[str]:
+    facts = [file.get("role_label") or "File"]
+    in_degree, out_degree = file.get("in_degree", 0), file.get("out_degree", 0)
+    facts.append(f"{in_degree} file(s) depend on this; it depends on {out_degree}")
+    return facts
+
+
+def assemble_tour(graph: dict, mode: str) -> dict[str, Any]:
+    """Assemble the full E5 tour response (spec §8): title/facts/questions
+    layered onto the deterministic step skeleton from ``generate_learn_tour``
+    / ``generate_recall_tour``. Zero LLM calls — prose is optional polish
+    (E4), not the mechanism.
+
+    Args:
+        graph: Output of ``assemble_graph()``.
+        mode: ``"learn"`` or ``"recall"``.
+    """
+    steps = generate_learn_tour(graph) if mode == "learn" else generate_recall_tour(graph)
+    return _decorate_tour(graph, mode, steps)
+
+
+def resolve_question_nodes(graph: dict, search_results: list[dict[str, Any]]) -> list[str]:
+    """G1: zilliz search hits -> ordered, deduped graph node ids.
+
+    ``search_results`` is ``zilliz_client.search()`` output, already sorted
+    by score desc — that order IS the retrieval rank, so this just dedupes
+    by file_path (a file can surface via multiple chunks) and drops hits
+    whose file_path isn't a node in this graph (stale index vs. the current
+    analysis, or a chunk from something the graph doesn't surface).
+    """
+    node_ids = {f["id"] for f in graph.get("files", [])}
+    seen: set[str] = set()
+    resolved: list[str] = []
+    for hit in search_results:
+        path = hit.get("file_path")
+        if path in node_ids and path not in seen:
+            seen.add(path)
+            resolved.append(path)
+    return resolved
+
+
+def generate_question_tour(graph: dict, node_ids: list[str]) -> list[dict[str, Any]]:
+    """G2: question-mode step order — tier order via the same Kahn's pass
+    ``generate_learn_tour`` uses, restricted to ``node_ids``; nodes Kahn's
+    doesn't reach (cyclic) fall back to retrieval rank, same tie-break shape
+    as the learn/recall generators.
+    """
+    files_by_id = {f["id"]: f for f in graph.get("files", [])}
+    adjacency: dict[str, list[str]] = defaultdict(list)
+    for edge in graph.get("edges", []):
+        if edge.get("level") == "file":
+            adjacency[edge["source"]].append(edge["target"])
+
+    kahn_rank = {n: i for i, n in enumerate(_kahn_order(set(files_by_id), adjacency))}
+    retrieval_rank = {n: i for i, n in enumerate(node_ids)}
+
+    ordered = sorted(node_ids, key=lambda n: (kahn_rank.get(n, len(kahn_rank)), retrieval_rank[n]))
+
+    return [
+        {"order": i, "node_ids": [n], "layer_id": files_by_id[n].get("layer_id")}
+        for i, n in enumerate(ordered, start=1)
+    ]
+
+
+def assemble_question_tour(graph: dict, search_results: list[dict[str, Any]]) -> dict[str, Any]:
+    """G3 support: question-driven tour assembled from RAG search hits (G1+G2)."""
+    node_ids = resolve_question_nodes(graph, search_results)
+    steps = generate_question_tour(graph, node_ids)
+    return _decorate_tour(graph, "question", steps)
+
+
+def _decorate_tour(graph: dict, mode: str, steps: list[dict[str, Any]]) -> dict[str, Any]:
+    files_by_id = {f["id"]: f for f in graph.get("files", [])}
+    cycle_partners = build_cycle_partners(graph.get("insights", {}).get("cycles", []))
+
+    return {
+        "mode": mode,
+        "steps": [
+            {
+                **step,
+                "title": files_by_id[step["node_ids"][0]]["name"],
+                "facts": _file_facts(files_by_id[step["node_ids"][0]]),
+                "questions": generate_questions(files_by_id[step["node_ids"][0]], cycle_partners),
+            }
+            for step in steps
+        ],
+    }
+
+
+def generate_questions(file: dict, cycle_partners: dict[str, list[str]] | None = None) -> list[str]:
+    """Flag -> template interview question (spec §8, "Question anticipation").
+    Zero LLM, fully deterministic — one question per active flag.
+
+    ``file["flags"]`` is already emitted in ``graph_assembler.FLAG_ORDER``
+    (graph_assembler.py), so iterating it in place keeps question order
+    stable without re-importing that constant.
+
+    Args:
+        file: A ``graph["files"]`` entry — needs ``id``, ``flags``, ``size``.
+        cycle_partners: Output of ``build_cycle_partners``; only needed when
+            the file carries an ``in_cycle`` flag.
+    """
+    cycle_partners = cycle_partners or {}
+    questions: list[str] = []
+    for flag in file.get("flags") or []:
+        if flag == "orphan":
+            questions.append("Nothing imports this file. Why is it in the repo?")
+        elif flag == "in_cycle":
+            partners = cycle_partners.get(file["id"], [])
+            other = partners[0] if partners else "another module"
+            questions.append(f"This and {other} import each other — why, and would you fix it?")
+        elif flag == "hub":
+            questions.append("A lot depends on this. What breaks if you change it?")
+        elif flag == "entry_point":
+            questions.append("Walk me through what happens when a request arrives.")
+        elif flag == "god_file":
+            lines = max(1, (file.get("size") or 0) // _GOD_FILE_BYTES_PER_LINE)
+            questions.append(f"This file is ~{lines:,} lines. How would you split it?")
+    return questions

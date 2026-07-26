@@ -5,22 +5,23 @@ All route handlers live in codekavi.routes.*
 This file only wires up the app, middleware, health check, and lifespan.
 """
 
+import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from codekavi.cache import AnalysisCache
 from codekavi.cloner import MAX_REPO_AGE_HOURS, cleanup_old_repos
-from codekavi.limiter import close_limiter, init_limiter
+from codekavi.limiter import close_limiter, init_limiter, per_minute
 from codekavi.logging_config import RequestIDMiddleware, setup_logging
 from codekavi.routes import api_router
-from codekavi.settings import settings
+from codekavi.settings import parsed_cors_origins, settings
 from codekavi.task_registry import BackgroundTaskRegistry
-from codekavi.utils import current_cpu_executor, current_io_executor
+from codekavi.utils import current_cpu_executor, current_io_executor, run_sync
 
 # Setup logging immediately before other modules log anything
 setup_logging()
@@ -103,7 +104,7 @@ async def set_current_executor_middleware(request: Request, call_next):
 
 
 # CORS — configurable origins for production, defaults to localhost:3000 for dev
-ALLOWED_ORIGINS = settings.cors_origins.split(",")
+ALLOWED_ORIGINS = parsed_cors_origins()
 
 app.add_middleware(
     CORSMiddleware,
@@ -138,6 +139,69 @@ async def health():
         "service": "CodeKavi API",
         "llm_configured": gemini_configured,
         "llm_provider": "gemini" if gemini_configured else None,
+    }
+
+
+def _ping_redis() -> bool | None:
+    """None = not configured, so it's excluded from the overall status."""
+    if not settings.redis_url:
+        return None
+    try:
+        import redis
+
+        return bool(redis.from_url(settings.redis_url).ping())
+    except Exception:
+        return False
+
+
+def _ping_zilliz() -> bool | None:
+    if not (settings.zilliz_uri and settings.zilliz_api_key):
+        return None
+    from codekavi.vectorstore import ZillizClient
+
+    try:
+        return ZillizClient().collection_exists()
+    except Exception:
+        return False
+
+
+def _ping_supabase() -> bool | None:
+    if not (settings.supabase_url and settings.supabase_service_key):
+        return None
+    try:
+        from supabase import create_client
+
+        sb = create_client(settings.supabase_url, settings.supabase_service_key)
+        sb.table("analysis_cache").select("repo_id").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+# IMPL-16 — deep dependency check for uptime monitors. Rate-limited since
+# each call opens fresh connections instead of reusing the app's pooled ones.
+@app.get("/api/health/deep", dependencies=[Depends(per_minute(6))])
+async def health_deep():
+    """Pings Redis, Zilliz, and Supabase and reports per-dependency status.
+
+    A dependency the deployment doesn't configure (unset env vars) is
+    reported as ``"not_configured"`` rather than counted as down.
+    """
+    redis_ok, zilliz_ok, supabase_ok = await asyncio.gather(
+        run_sync(_ping_redis),
+        run_sync(_ping_zilliz),
+        run_sync(_ping_supabase),
+    )
+
+    def _label(ok: bool | None) -> str:
+        return "not_configured" if ok is None else ("up" if ok else "down")
+
+    dependencies = {"redis": _label(redis_ok), "zilliz": _label(zilliz_ok), "supabase": _label(supabase_ok)}
+    healthy = all(v != "down" for v in dependencies.values())
+    return {
+        "status": "ok" if healthy else "degraded",
+        "service": "CodeKavi API",
+        "dependencies": dependencies,
     }
 
 
