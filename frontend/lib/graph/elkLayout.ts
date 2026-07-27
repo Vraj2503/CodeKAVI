@@ -8,7 +8,6 @@ import type {
   RepoGraphContainer,
   RepoGraphEdge,
 } from "@/lib/api";
-import type { ElkWorkerRequest, ElkWorkerResponse } from "./elkLayout.worker";
 
 // Stage 1 — containers as opaque atoms, sized sqrt(childCount), capped at
 // 800x600 per the design spec.
@@ -30,8 +29,6 @@ const ELK_LAYOUT_OPTIONS: LayoutOptions = {
   "elk.spacing.nodeNode": "60",
 };
 
-const LAYOUT_TIMEOUT_MS = 4000;
-
 export interface NodeBox {
   id: string;
   x: number;
@@ -45,7 +42,10 @@ export interface LayoutResult {
   usedFallback: boolean;
 }
 
-function containerSize(fileCount: number): { width: number; height: number } {
+export function containerSize(fileCount: number): {
+  width: number;
+  height: number;
+} {
   const side = Math.min(
     Math.max(CONTAINER_SIZE_UNIT * Math.sqrt(fileCount), CONTAINER_MIN_SIZE),
     CONTAINER_MAX_WIDTH,
@@ -73,17 +73,23 @@ function toElkEdges(
     }));
 }
 
-/** Stage 1 input: one layer's containers as sized atoms. Pure, no I/O. */
+/**
+ * Stage 1 input: one layer's containers as sized atoms. Pure, no I/O.
+ * `sizeOverrides` supplies real (expanded) box sizes for containers the user has
+ * opened, so ELK reflows their neighbors aside instead of overlapping them.
+ */
 export function buildContainerGraph(
   payload: RepoGraphPayload,
   layerId: string,
+  sizeOverrides: Record<string, { width: number; height: number }> = {},
 ): ElkNode {
   const containers = payload.containers.filter((c) => c.layer_id === layerId);
   const containerIds = new Set(containers.map((c) => c.id));
 
   const children: ElkNode[] = containers.map(
     (container: RepoGraphContainer) => {
-      const { width, height } = containerSize(container.file_ids.length);
+      const { width, height } =
+        sizeOverrides[container.id] ?? containerSize(container.file_ids.length);
       return { id: container.id, width, height };
     },
   );
@@ -143,58 +149,23 @@ export function gridFallback(
   return positions;
 }
 
-let worker: Worker | null = null;
-let nextRequestId = 0;
-const pending = new Map<
-  number,
-  { resolve: (graph: ElkNode) => void; reject: (error: Error) => void }
->();
-
-function getWorker(): Worker {
-  if (worker) return worker;
-
-  worker = new Worker(new URL("./elkLayout.worker.ts", import.meta.url), {
-    type: "module",
-  });
-  worker.onmessage = (event: MessageEvent<ElkWorkerResponse>) => {
-    const { requestId } = event.data;
-    const entry = pending.get(requestId);
-    if (!entry) return;
-    pending.delete(requestId);
-    if (event.data.layout) entry.resolve(event.data.layout);
-    else entry.reject(new Error(event.data.error));
-  };
-  worker.onerror = () => {
-    for (const [requestId, entry] of pending) {
-      entry.reject(new Error("ELK worker crashed"));
-      pending.delete(requestId);
-    }
-  };
-  return worker;
+// Main-thread ELK. The Web Worker path never responded under Next 16 +
+// Turbopack, so every layout silently timed out and fell back to a grid.
+// Layouts here are always small (one layer's containers, or one container's
+// files), so main-thread layout has no meaningful jank.
+let elkPromise: Promise<import("elkjs/lib/elk-api").ELK> | null = null;
+function getElk() {
+  if (!elkPromise) {
+    elkPromise = import("elkjs/lib/elk.bundled.js").then(
+      (m) => new m.default(),
+    );
+  }
+  return elkPromise;
 }
 
-function runElkLayout(graph: ElkNode): Promise<ElkNode> {
-  const requestId = nextRequestId++;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(requestId);
-      reject(new Error("ELK layout timed out"));
-    }, LAYOUT_TIMEOUT_MS);
-
-    pending.set(requestId, {
-      resolve: (graph) => {
-        clearTimeout(timer);
-        resolve(graph);
-      },
-      reject: (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    });
-
-    const request: ElkWorkerRequest = { requestId, graph };
-    getWorker().postMessage(request);
-  });
+/** Pre-load the ~1MB ELK bundle on mount so the first drill-in / tour step is instant. */
+export function warmElkLayout(): void {
+  void getElk();
 }
 
 async function layout(graph: ElkNode): Promise<LayoutResult> {
@@ -205,7 +176,8 @@ async function layout(graph: ElkNode): Promise<LayoutResult> {
   }));
 
   try {
-    const laidOut = await runElkLayout(graph);
+    const elk = await getElk();
+    const laidOut = await elk.layout(graph);
     const positions: Record<string, NodeBox> = {};
     for (const child of laidOut.children ?? []) {
       positions[child.id] = {
@@ -238,8 +210,9 @@ async function layout(graph: ElkNode): Promise<LayoutResult> {
 export function layoutContainers(
   payload: RepoGraphPayload,
   layerId: string,
+  sizeOverrides: Record<string, { width: number; height: number }> = {},
 ): Promise<LayoutResult> {
-  return layout(buildContainerGraph(payload, layerId));
+  return layout(buildContainerGraph(payload, layerId, sizeOverrides));
 }
 
 /** Stage 2: lay out an expanded container's files. Falls back to a grid on worker failure. */

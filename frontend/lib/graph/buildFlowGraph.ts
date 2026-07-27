@@ -17,6 +17,27 @@ const CONTAINER_HEADER_HEIGHT = 40;
 const CONTAINER_PADDING = 16;
 const PORTAL_GAP = 24;
 
+/**
+ * The box an expanded container needs to enclose its files + chrome, never
+ * smaller than its collapsed box. Single source of truth for both the rendered
+ * container node (below) and stage-1 ELK reflow sizing (`sizeOverrides`).
+ */
+export function expandedContainerBox(
+  collapsed: { width: number; height: number },
+  filePositions: Record<string, NodeBox>,
+): { width: number; height: number } {
+  const boxes = Object.values(filePositions);
+  const rightEdge = Math.max(0, ...boxes.map((b) => b.x + b.width));
+  const bottomEdge = Math.max(0, ...boxes.map((b) => b.y + b.height));
+  return {
+    width: Math.max(collapsed.width, rightEdge + CONTAINER_PADDING * 2),
+    height: Math.max(
+      collapsed.height,
+      bottomEdge + CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING,
+    ),
+  };
+}
+
 function countByDirection(
   edges: RepoGraphPayload["edges"],
   level: RepoGraphPayload["edges"][number]["level"],
@@ -119,14 +140,7 @@ export function buildLayerViewGraph(
     let width = box.width;
     let height = box.height;
     if (expanded && filePositions) {
-      const boxes = Object.values(filePositions);
-      const rightEdge = Math.max(0, ...boxes.map((b) => b.x + b.width));
-      const bottomEdge = Math.max(0, ...boxes.map((b) => b.y + b.height));
-      width = Math.max(width, rightEdge + CONTAINER_PADDING * 2);
-      height = Math.max(
-        height,
-        bottomEdge + CONTAINER_HEADER_HEIGHT + CONTAINER_PADDING,
-      );
+      ({ width, height } = expandedContainerBox(box, filePositions));
     }
 
     maxContainerRight = Math.max(maxContainerRight, box.x + width);

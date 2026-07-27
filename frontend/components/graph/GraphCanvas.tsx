@@ -30,10 +30,13 @@ import {
 import {
   buildOverviewGraph,
   buildLayerViewGraph,
+  expandedContainerBox,
 } from "@/lib/graph/buildFlowGraph";
 import {
   layoutContainers,
   layoutContainerChildren,
+  warmElkLayout,
+  containerSize,
   type LayoutResult,
 } from "@/lib/graph/elkLayout";
 import { runCameraTrap } from "@/lib/graph/cameraTrap";
@@ -62,6 +65,13 @@ export interface GraphCanvasProps {
 function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   const { status, data: payload, error } = useRepoGraph(repoId);
   const [state, dispatch] = useReducer(graphViewReducer, initialGraphViewState);
+
+  // Pre-load the ELK bundle on mount so the first drill-in / tour step doesn't
+  // pay the ~1MB bundle + init cold start.
+  useEffect(() => {
+    warmElkLayout();
+  }, []);
+
   const reactFlow = useReactFlow();
   // Native React Flow chrome (Background, Controls, attribution) ships with its
   // own light-only default theme and doesn't read the app's CSS class — without
@@ -89,19 +99,66 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     setFileLayouts({});
   }
 
+  // Real (expanded) box sizes for opened containers whose stage-2 file layout
+  // is ready. Feeding these to stage-1 makes ELK reflow neighbors aside instead
+  // of letting the grown container overlap them. Floored at the collapsed size,
+  // so this converges: once ELK adopts the expanded size the override is stable.
+  const containerBoxOverrides = useMemo(() => {
+    const overrides: Record<string, { width: number; height: number }> = {};
+    if (!payload || !state.activeLayerId) return overrides;
+    for (const id of state.expandedContainers) {
+      const fileLayout = fileLayouts[id];
+      const container = payload.containers.find((c) => c.id === id);
+      if (
+        !fileLayout ||
+        !container ||
+        container.layer_id !== state.activeLayerId
+      )
+        continue;
+      overrides[id] = expandedContainerBox(
+        containerSize(container.file_ids.length),
+        fileLayout.positions,
+      );
+    }
+    return overrides;
+  }, [payload, state.activeLayerId, state.expandedContainers, fileLayouts]);
+
+  const overridesSig = Object.keys(containerBoxOverrides)
+    .sort()
+    .map(
+      (id) =>
+        `${id}:${containerBoxOverrides[id].width}:${containerBoxOverrides[id].height}`,
+    )
+    .join("|");
+  const activeLayoutKey = state.activeLayerId
+    ? `${state.activeLayerId}|${overridesSig}`
+    : null;
+
   useEffect(() => {
     const layerId = state.activeLayerId;
-    if (!payload || !layerId || containerLayouts[layerId]) return;
+    if (
+      !payload ||
+      !layerId ||
+      !activeLayoutKey ||
+      containerLayouts[activeLayoutKey]
+    )
+      return;
     let cancelled = false;
-    layoutContainers(payload, layerId).then((result) => {
+    layoutContainers(payload, layerId, containerBoxOverrides).then((result) => {
       if (!cancelled) {
-        setContainerLayouts((prev) => ({ ...prev, [layerId]: result }));
+        setContainerLayouts((prev) => ({ ...prev, [activeLayoutKey]: result }));
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [payload, state.activeLayerId, containerLayouts]);
+  }, [
+    payload,
+    state.activeLayerId,
+    activeLayoutKey,
+    containerBoxOverrides,
+    containerLayouts,
+  ]);
 
   useEffect(() => {
     if (!payload) return;
@@ -197,7 +254,9 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     if (!payload) return { nodes: [], edges: [] };
     if (!state.activeLayerId) return buildOverviewGraph(payload, onOpen);
 
-    const containerLayout = containerLayouts[state.activeLayerId];
+    const containerLayout = activeLayoutKey
+      ? containerLayouts[activeLayoutKey]
+      : undefined;
     if (!containerLayout) return { nodes: [], edges: [] };
 
     const filePositionsByContainer: Record<
@@ -221,6 +280,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   }, [
     payload,
     state.activeLayerId,
+    activeLayoutKey,
     state.expandedContainers,
     state.activeFlags,
     containerLayouts,
@@ -250,9 +310,11 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     ? (payload.files.find((f) => f.id === state.selectedFileId) ?? null)
     : null;
   const usedLayoutFallback =
-    (state.activeLayerId &&
-      containerLayouts[state.activeLayerId]?.usedFallback) ||
+    (activeLayoutKey && containerLayouts[activeLayoutKey]?.usedFallback) ||
     [...state.expandedContainers].some((id) => fileLayouts[id]?.usedFallback);
+  // Active layer chosen but its stage-1 container layout hasn't resolved yet:
+  // the useMemo returns empty nodes, so show an overlay instead of a blank canvas.
+  const isLayingOut = !!activeLayoutKey && !containerLayouts[activeLayoutKey];
   const hasNoEdges = payload.edges.length === 0 && payload.files.length > 0;
   const isLargeRepo = payload.files.length > LARGE_REPO_FILE_THRESHOLD;
   const showLargeRepoNotice = isLargeRepo && !state.activeLayerId;
@@ -308,6 +370,11 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
         <Background />
         <Controls />
       </ReactFlow>
+      {isLayingOut && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
+          Laying out…
+        </div>
+      )}
       {selectedFile && (
         <div className="absolute right-3 top-3 z-10 w-80">
           <NodePanel
