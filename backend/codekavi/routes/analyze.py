@@ -225,15 +225,15 @@ async def _run_pipeline(
 
             graph_json = (
                 results[0]
-                if not isinstance(results[0], Exception)
+                if isinstance(results[0], dict)
                 else {"error": f"Graph export failed: {results[0]}", "nodes": [], "edges": []}
             )
             module_graph = (
-                results[1] if not isinstance(results[1], Exception) else {"error": f"Module graph failed: {results[1]}"}
+                results[1] if isinstance(results[1], dict) else {"error": f"Module graph failed: {results[1]}"}
             )
             cycles_data = (
                 results[2]
-                if not isinstance(results[2], Exception)
+                if isinstance(results[2], dict)
                 else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
             )
 
@@ -670,7 +670,7 @@ async def analyze_stream(
                     f.content = None
 
             # Fingerprint check for incremental analysis
-            from codekavi.fingerprint import compare_and_classify_repo, save_fingerprints
+            from codekavi.fingerprint import compare_and_classify_repo
 
             fingerprints, deleted_paths, change_class = await _run_sync(
                 compare_and_classify_repo, repo_id, clone_info["clone_path"], repo_data.files, content_cache_dict
@@ -713,9 +713,7 @@ async def analyze_stream(
             assert pipeline_result is not None
 
             dep_data = pipeline_result.dep_data
-            dep_data_dict = pipeline_result.dep_data_dict
             file_profiles = pipeline_result.file_profiles
-            file_profiles_dicts = pipeline_result.file_profiles_dicts
             role_summary = pipeline_result.role_summary
             graph_json = pipeline_result.graph_json
             module_graph = pipeline_result.module_graph

@@ -276,7 +276,7 @@ def resolve_question_nodes(graph: dict, search_results: list[dict[str, Any]]) ->
     resolved: list[str] = []
     for hit in search_results:
         path = hit.get("file_path")
-        if path in node_ids and path not in seen:
+        if path and path in node_ids and path not in seen:
             seen.add(path)
             resolved.append(path)
     return resolved
