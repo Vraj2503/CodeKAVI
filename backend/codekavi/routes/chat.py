@@ -289,11 +289,13 @@ async def delete_session(session_id: str, user_id: str = Depends(verify_supabase
         options = ClientOptions(postgrest_client_timeout=10)
         supabase = create_client(settings.supabase_url, settings.supabase_service_key, options=options)
 
-        # Delete the session only if it belongs to the authenticated user
-        result = supabase.table("sessions").delete().eq("id", session_id).eq("user_id", user_id).execute()
-
-        if not result.data:
+        owned = supabase.table("sessions").select("id").eq("id", session_id).eq("user_id", user_id).execute()
+        if not owned.data:
             raise HTTPException(status_code=404, detail="Session not found or not owned by user.")
+
+        # Messages FK has no ON DELETE CASCADE, so delete children before the parent.
+        supabase.table("messages").delete().eq("session_id", session_id).execute()
+        supabase.table("sessions").delete().eq("id", session_id).eq("user_id", user_id).execute()
 
         return {"success": True, "message": "Session deleted"}
     except HTTPException:

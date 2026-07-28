@@ -186,6 +186,15 @@ EXTENSION_LANGUAGE_MAP = {
     ".pm": "Perl Module",
     ".clj": "Clojure",
     ".ipynb": "Jupyter Notebook",
+    ".mjs": "JavaScript",
+    ".cjs": "JavaScript",
+    ".mdx": "MDX",
+    ".jsonc": "JSON",
+    ".csv": "Data",
+    ".tsv": "Data",
+    ".env": "Dotenv",
+    ".gradle": "Gradle",
+    ".cmake": "CMake",
 }
 
 # Special filenames → language mapping

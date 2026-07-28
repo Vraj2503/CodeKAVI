@@ -184,7 +184,7 @@ def compute_structure_signature(rel_path: str, abs_path: str, source: str | None
     per-call Parser() (Pair with analyzer.py's per-call parser rule).
     """
     ext = os.path.splitext(rel_path)[1].lower()
-    language_name = FILENAME_LANGUAGE_MAP.get(os.path.basename(rel_path)) or EXTENSION_LANGUAGE_MAP.get(ext)
+    language_name = FILENAME_LANGUAGE_MAP.get(os.path.basename(rel_path)) or EXTENSION_LANGUAGE_MAP.get(ext, "Unknown")
 
     # Read the source when a cache is available (we don't re-read twice)
     if source is None:
