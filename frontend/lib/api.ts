@@ -729,3 +729,25 @@ export async function fetchQuestionTour(
 
   return res.json();
 }
+
+/** A3: on-demand LLM narration for a single tour step's node. Falls back to
+ * `narration: null` on any non-2xx too — callers already treat null as
+ * "use static facts", so a network/provider hiccup degrades the same way
+ * a deliberate empty result from the backend does. */
+export async function fetchTourNodeNarration(
+  repoId: string,
+  nodeId: string,
+  signal?: AbortSignal,
+): Promise<{ narration: string | null }> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(
+    `${API_BASE}/graph/semantic/${repoId}/tour/node/${encodeURIComponent(nodeId)}`,
+    { headers: authHeaders, signal },
+  );
+
+  if (!res.ok) {
+    return { narration: null };
+  }
+
+  return res.json();
+}

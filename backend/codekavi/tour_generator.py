@@ -133,6 +133,16 @@ def generate_deterministic_tour(
     return tour
 
 
+def _important_ids(files: list[dict], top_n: int = 15) -> set[str]:
+    """Cap a tour to the files worth walking through: the top-N by importance,
+    plus any file flagged as notable (hub/entry_point/orphan/in_cycle/god_file)
+    regardless of rank."""
+    by_importance = sorted(files, key=lambda f: -(f.get("importance") or 0))
+    keep = {f["id"] for f in by_importance[:top_n]}
+    keep |= {f["id"] for f in files if f.get("flags")}
+    return keep
+
+
 def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
     """Learn-mode step order (spec §8): layer-tier bottom-up — config/types
     before core logic before routes — with dependency order as the tie-break
@@ -163,7 +173,7 @@ def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
         if edge.get("level") == "file":
             adjacency[edge["source"]].append(edge["target"])
 
-    all_nodes = set(files_by_id)
+    all_nodes = _important_ids(files)
     order = _kahn_order(all_nodes, adjacency)
 
     # Cyclic/unreached files, most important first, path as tie-break.
@@ -207,7 +217,8 @@ def generate_recall_tour(graph: dict) -> list[dict[str, Any]]:
     if not files:
         return []
 
-    order = sorted(files, key=_recall_sort_key)
+    important = _important_ids(files)
+    order = sorted((f for f in files if f["id"] in important), key=_recall_sort_key)
 
     return [
         {

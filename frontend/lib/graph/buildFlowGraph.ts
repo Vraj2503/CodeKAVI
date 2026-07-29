@@ -57,6 +57,7 @@ function countByDirection(
 export function buildOverviewGraph(
   payload: RepoGraphPayload,
   onOpen: (layerId: string) => void,
+  selectedFileId?: string | null,
 ): { nodes: LayerNodeType[]; edges: Edge[] } {
   const grid = gridFallback(
     payload.layers.map((layer) => ({
@@ -66,6 +67,10 @@ export function buildOverviewGraph(
     })),
     PORTAL_GAP,
   );
+
+  const selectedLayerId = selectedFileId
+    ? payload.files.find((f) => f.id === selectedFileId)?.layer_id
+    : undefined;
 
   const nodes: LayerNodeType[] = payload.layers.map((layer) => {
     const layerFiles = payload.files.filter((f) => f.layer_id === layer.id);
@@ -80,6 +85,7 @@ export function buildOverviewGraph(
       position: grid[layer.id],
       width: LAYER_NODE_WIDTH,
       height: LAYER_NODE_HEIGHT,
+      selected: layer.id === selectedLayerId,
       data: {
         layer,
         flagCounts: countFlags(layerFiles),
@@ -120,6 +126,7 @@ export function buildLayerViewGraph(
   filePositionsByContainer: Record<string, Record<string, NodeBox>>,
   activeFlags: ReadonlySet<GraphFlag>,
   callbacks: LayerViewCallbacks,
+  selectedFileId?: string | null,
 ): { nodes: Node[]; edges: Edge[] } {
   const { onToggleContainer, onNavigatePortal } = callbacks;
   const containers = payload.containers.filter((c) => c.layer_id === layerId);
@@ -179,6 +186,7 @@ export function buildLayerViewGraph(
           width: fileBox.width,
           height: fileBox.height,
           selectable: true,
+          selected: fileId === selectedFileId,
           data: { file },
         };
         nodes.push(fileNode);

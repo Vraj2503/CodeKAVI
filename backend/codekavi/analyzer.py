@@ -225,8 +225,10 @@ def _resolve_python_module(
         rel_base = "/".join(parts)
         suffixes = (f"{rel_base}.py", f"{rel_base}/__init__.py")
         matches = [kf for kf in known_files if any(kf == suffix or kf.endswith("/" + suffix) for suffix in suffixes)]
-        if matches:
-            return sorted(matches, key=lambda p: (p.count("/"), len(p)))[0]
+        # ponytail: unique-match only. Ceiling — a bare import matching exactly one local file
+        # still resolves even if really third-party. Add a stdlib/deps denylist only if noisy.
+        if len(matches) == 1:
+            return matches[0]
 
     return None
 

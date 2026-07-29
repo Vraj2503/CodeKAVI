@@ -18,6 +18,7 @@ import {
   PanelLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useRepo } from "@/components/RepoProvider";
 import type { AnalyzeResponse } from "@/lib/api";
 import { ScrollArea } from "./ui/ScrollArea";
 import { Skeleton } from "./ui/Skeleton";
@@ -45,7 +46,8 @@ export function Sidebar({
   error,
 }: SidebarProps) {
   const [url, setUrl] = useState("");
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const { sidebarCollapsed: isCollapsed, setSidebarCollapsed: setIsCollapsed } =
+    useRepo();
   const inputRef = useRef<HTMLInputElement>(null);
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -122,8 +124,13 @@ export function Sidebar({
                       : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
                   )}
                 >
-                  <tab.icon size={isCollapsed ? 20 : 14} className="flex-shrink-0" />
-                  {!isCollapsed && <span className="truncate">{tab.label}</span>}
+                  <tab.icon
+                    size={isCollapsed ? 20 : 14}
+                    className="flex-shrink-0"
+                  />
+                  {!isCollapsed && (
+                    <span className="truncate">{tab.label}</span>
+                  )}
                 </Link>
               </TooltipTrigger>
               <TooltipContent side={isCollapsed ? "right" : "bottom"}>

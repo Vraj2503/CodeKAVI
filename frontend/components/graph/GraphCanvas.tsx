@@ -19,6 +19,7 @@ import {
   type NodeMouseHandler,
 } from "@xyflow/react";
 import { useTheme } from "@/components/ui/theme-provider";
+import { useRepo } from "@/components/RepoProvider";
 import { useRepoGraph } from "@/hooks/useRepoGraph";
 import { useTour } from "@/hooks/useTour";
 import { useQuestionTour } from "@/hooks/useQuestionTour";
@@ -221,10 +222,27 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   const questionTour = useQuestionTour(repoId, tourQuestion);
   const tour = tourQuestion ? questionTour : modeTour;
 
+  const { sidebarCollapsed, setSidebarCollapsed } = useRepo();
+  const prevSidebarCollapsed = useRef(sidebarCollapsed);
+  useEffect(() => {
+    if (tourOpen) {
+      prevSidebarCollapsed.current = sidebarCollapsed;
+      setSidebarCollapsed(true);
+    } else {
+      setSidebarCollapsed(prevSidebarCollapsed.current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tourOpen]);
+
   // Bring a tour step's file into view: open its layer/container so the node
   // exists at all, then hand off to the E7 camera trap (lib/graph/cameraTrap)
   // to frame it once it has measured dimensions.
   const cameraTrapCancelRef = useRef<(() => void) | null>(null);
+  // The container this tour last auto-expanded, so the next step can collapse
+  // it. Without this, expandedContainers (and the React Flow node set rebuilt
+  // on every step via selectedFileId) grows monotonically across a tour and
+  // eventually exhausts the JS heap on a sizable repo.
+  const tourContainerRef = useRef<string | null>(null);
   const handleTourStepChange = useCallback(
     (step: TourStep) => {
       const fileId = step.node_ids[0];
@@ -234,6 +252,18 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
 
       if (file.layer_id && file.layer_id !== state.activeLayerId) {
         dispatch({ type: "open_layer", layerId: file.layer_id });
+        // open_layer clears expandedContainers, so nothing to collapse.
+        tourContainerRef.current = null;
+      }
+      // Collapse the previous step's container (only if it's still open and
+      // isn't the one we're about to focus) to keep the tour to one container.
+      const prev = tourContainerRef.current;
+      if (
+        prev &&
+        prev !== file.container_id &&
+        state.expandedContainers.has(prev)
+      ) {
+        dispatch({ type: "toggle_container", containerId: prev });
       }
       if (
         file.container_id &&
@@ -241,6 +271,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
       ) {
         dispatch({ type: "toggle_container", containerId: file.container_id });
       }
+      tourContainerRef.current = file.container_id ?? null;
       dispatch({ type: "select_file", fileId: file.id });
 
       cameraTrapCancelRef.current?.();
@@ -252,7 +283,8 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
 
   const { nodes, edges } = useMemo(() => {
     if (!payload) return { nodes: [], edges: [] };
-    if (!state.activeLayerId) return buildOverviewGraph(payload, onOpen);
+    if (!state.activeLayerId)
+      return buildOverviewGraph(payload, onOpen, state.selectedFileId);
 
     const containerLayout = activeLayoutKey
       ? containerLayouts[activeLayoutKey]
@@ -276,6 +308,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
       filePositionsByContainer,
       state.activeFlags,
       { onToggleContainer, onNavigatePortal: onOpen },
+      state.selectedFileId,
     );
   }, [
     payload,
@@ -283,6 +316,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     activeLayoutKey,
     state.expandedContainers,
     state.activeFlags,
+    state.selectedFileId,
     containerLayouts,
     fileLayouts,
     onOpen,
@@ -339,24 +373,29 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
         >
           {tourOpen ? "Exit tour" : "Start tour"}
         </button>
-        {hasNoEdges && (
-          <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50 max-w-xs">
-            No dependencies could be resolved — files are grouped by role only.
-          </p>
-        )}
-        {showLargeRepoNotice && (
-          <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50 max-w-xs">
-            {payload.files.length.toLocaleString()} files — showing layer
-            overview only. Open a layer, then a container, to see individual
-            files.
-          </p>
-        )}
-        {usedLayoutFallback && (
-          <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20 max-w-xs">
-            Automatic layout failed; showing a fallback grid.
-          </p>
-        )}
       </div>
+      {(hasNoEdges || showLargeRepoNotice || usedLayoutFallback) && (
+        <div className="absolute left-1/2 top-3 z-10 flex w-full max-w-xs -translate-x-1/2 flex-col items-center gap-2 px-3">
+          {hasNoEdges && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
+              No dependencies could be resolved — files are grouped by role
+              only.
+            </p>
+          )}
+          {showLargeRepoNotice && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
+              {payload.files.length.toLocaleString()} files — showing layer
+              overview only. Open a layer, then a container, to see individual
+              files.
+            </p>
+          )}
+          {usedLayoutFallback && (
+            <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20">
+              Automatic layout failed; showing a fallback grid.
+            </p>
+          )}
+        </div>
+      )}
       <ReactFlow
         key={state.activeLayerId ?? "overview"}
         nodes={nodes}
@@ -366,16 +405,17 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
         onPaneClick={handlePaneClick}
         colorMode={colorMode}
         fitView
+        fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
       >
         <Background />
-        <Controls />
+        <Controls position="bottom-right" showInteractive={false} />
       </ReactFlow>
       {isLayingOut && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
           Laying out…
         </div>
       )}
-      {selectedFile && (
+      {selectedFile && !tourOpen && (
         <div className="absolute right-3 top-3 z-10 w-80">
           <NodePanel
             file={selectedFile}
@@ -385,7 +425,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
         </div>
       )}
       {tourOpen && (
-        <div className="absolute bottom-3 left-3 z-10 w-full max-w-xl px-3 sm:px-0">
+        <div className="absolute inset-y-0 right-0 z-10 w-full max-w-md">
           <TourPanel
             repoId={repoId}
             mode={tourMode}

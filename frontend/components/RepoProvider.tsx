@@ -19,6 +19,8 @@ interface RepoContextValue {
   needsReanalysis: boolean;
   error: string | null;
   sessionId: string | null;
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
   handleAnalyze: (url: string) => Promise<void>;
   handleResumeSession: (session: Session) => void;
   handleBackToDashboard: () => void;
@@ -54,17 +56,22 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
   const [needsReanalysis, setNeedsReanalysis] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Hydrate from sessionStorage — bridges data from WelcomeScreen → repo route
   useEffect(() => {
     if (repoData || !repoId) return;
 
     // Check for session metadata (from fresh analysis or resumed session)
-    const storedMeta = sessionStorage.getItem(`codekavi-session-meta-${repoId}`);
+    const storedMeta = sessionStorage.getItem(
+      `codekavi-session-meta-${repoId}`,
+    );
     if (storedMeta) {
       try {
         const session = JSON.parse(storedMeta);
-        const storedSessionId = sessionStorage.getItem(`codekavi-session-${repoId}`);
+        const storedSessionId = sessionStorage.getItem(
+          `codekavi-session-${repoId}`,
+        );
 
         // Try to restore full analysis data from backend cache
         const restore = async () => {
@@ -81,7 +88,7 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
               setNeedsReanalysis(true);
               toast.info(
                 "Analysis data has expired. Some features may be limited until you re-analyze.",
-                { duration: 6000 }
+                { duration: 6000 },
               );
             }
             if (storedSessionId) setSessionId(storedSessionId);
@@ -131,7 +138,12 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
           graph: {
             nodes: [],
             edges: [],
-            metadata: { total_nodes: 0, total_edges: 0, connected_nodes: 0, groups: [] },
+            metadata: {
+              total_nodes: 0,
+              total_edges: 0,
+              connected_nodes: 0,
+              groups: [],
+            },
           },
           module_graph: {
             modules: [],
@@ -139,7 +151,12 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
             graph_json: { nodes: [], edges: [] },
             mermaid: "",
           },
-          cycles: { has_cycles: false, cycle_count: 0, cycles: [], summary: "No cycles" },
+          cycles: {
+            has_cycles: false,
+            cycle_count: 0,
+            cycles: [],
+            summary: "No cycles",
+          },
           mermaid: { file_level: "", module_level: "" },
         });
         setSessionId("dev-session");
@@ -183,27 +200,29 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
     setIsRestoring(true);
     setNeedsReanalysis(false);
 
-    restoreRepo(session.repo_id).then((restored) => {
-      if (restored) {
-        setRepoData(restored);
-        setNeedsReanalysis(false);
-      } else {
-        // Cache miss — use minimal data, flag for re-analysis
+    restoreRepo(session.repo_id)
+      .then((restored) => {
+        if (restored) {
+          setRepoData(restored);
+          setNeedsReanalysis(false);
+        } else {
+          // Cache miss — use minimal data, flag for re-analysis
+          setRepoData(_buildMinimalRepoData(session));
+          setNeedsReanalysis(true);
+          toast.info(
+            "Analysis data has expired. Chat is still available, but visualizations need a re-analysis.",
+            { duration: 6000 },
+          );
+        }
+        setSessionId(session.id);
+        setIsRestoring(false);
+      })
+      .catch(() => {
         setRepoData(_buildMinimalRepoData(session));
         setNeedsReanalysis(true);
-        toast.info(
-          "Analysis data has expired. Chat is still available, but visualizations need a re-analysis.",
-          { duration: 6000 }
-        );
-      }
-      setSessionId(session.id);
-      setIsRestoring(false);
-    }).catch(() => {
-      setRepoData(_buildMinimalRepoData(session));
-      setNeedsReanalysis(true);
-      setSessionId(session.id);
-      setIsRestoring(false);
-    });
+        setSessionId(session.id);
+        setIsRestoring(false);
+      });
   }, []);
 
   const handleBackToDashboard = useCallback(() => {
@@ -222,6 +241,8 @@ export function RepoProvider({ children, repoId }: RepoProviderProps) {
         needsReanalysis,
         error,
         sessionId,
+        sidebarCollapsed,
+        setSidebarCollapsed,
         handleAnalyze,
         handleResumeSession,
         handleBackToDashboard,
@@ -268,7 +289,12 @@ function _buildMinimalRepoData(session: {
     graph: {
       nodes: [],
       edges: [],
-      metadata: { total_nodes: 0, total_edges: 0, connected_nodes: 0, groups: [] },
+      metadata: {
+        total_nodes: 0,
+        total_edges: 0,
+        connected_nodes: 0,
+        groups: [],
+      },
     },
     module_graph: {
       modules: [],

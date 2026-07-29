@@ -143,6 +143,79 @@ async def get_repo_diff_tour(
     )
 
 
+@router.get("/graph/semantic/{repo_id}/tour/node/{node_id:path}", dependencies=[Depends(per_minute(10))])
+async def get_repo_tour_node_narration(
+    request: Request,
+    repo_id: str,
+    node_id: str,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """A3: on-demand LLM narration for a single tour step's node. Costs money
+    (one completion call), so quota-gated and rate-limited like the question
+    tour. ETag is keyed on repo_id|node_id (not response content) so a
+    repeat request for the same node short-circuits before touching Zilliz
+    or the LLM — narration for a given node is treated as stable.
+    """
+    from codekavi.settings import settings
+    from codekavi.vectorstore import zilliz_client
+
+    etag = f'W/"{hashlib.md5(f"{repo_id}|{node_id}".encode()).hexdigest()}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304)
+
+    tracker = get_token_tracker()
+    if not tracker.check_quota(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": "Daily LLM token quota exceeded. Please retry tomorrow.",
+                "remaining_tokens": tracker.get_remaining(user_id),
+                "enforced": settings.enforce_token_quota,
+            },
+        )
+
+    # _load_repo asserts ownership; narration falls back to null (frontend
+    # keeps its static facts) rather than a hard error on any downstream miss.
+    await _load_repo(repo_id, cache, user_id)
+
+    narration = None
+    if zilliz_client.uri and zilliz_client.token:
+        try:
+            results = await zilliz_client.search(node_id, repo_id, limit=8)
+            chunks = [r for r in results if r.get("file_path") == node_id][:3]
+            if chunks:
+                from codekavi.llm import get_provider
+                from codekavi.llm.providers import Message
+
+                combined = "\n".join(f"File: {c['file_path']}\n{c['text']}" for c in chunks)
+                messages = [
+                    Message(
+                        role="system",
+                        content=(
+                            "You are an expert AI engineer analyzing a codebase. In 2-3 "
+                            "sentences, explain this file's role and why it matters to the "
+                            "architecture. Be concrete, not generic."
+                        ),
+                    ),
+                    Message(role="user", content=combined),
+                ]
+                provider = get_provider("groq")
+                response = await run_sync(provider.complete, messages=messages, temperature=0.4, max_tokens=256)
+                narration = response.content
+                tokens_used = response.usage.get("total_tokens", 0) if response.usage else 0
+                tracker.record(user_id, provider=provider.name, tokens=tokens_used)
+        except Exception:
+            narration = None
+
+    return Response(
+        content=json.dumps({"narration": narration}, separators=(",", ":")).encode("utf-8"),
+        media_type="application/json",
+        headers={"ETag": etag, "Cache-Control": "private, max-age=300"},
+    )
+
+
 @router.get("/graph/semantic/{repo_id}/tour", dependencies=[Depends(per_minute(30))])
 async def get_repo_tour(
     request: Request,
