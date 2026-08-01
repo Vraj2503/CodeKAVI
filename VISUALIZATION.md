@@ -65,7 +65,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 |:--:|---|:--:|:--:|:--:|:--:|---|
 | T1 | Viz color tokens + fix `.viz-tooltip` | P1 | ~20m | — | **DONE** | Tokens + `lib/viz/tokens.ts`; all 7 viz files swept. Needs visual check in-app. |
 | T2 | `VizShell` primitive | P1 | ~45m | T1 | **DONE** | Shell + 3 hooks + breadcrumb. DependencyGraph & DataFlowGraph migrated. |
-| T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | TODO | Nearly free — fields already exist |
+| T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | **DONE** | + 11 tests, mock updated to match |
 | T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | TODO | tree-sitter already a dep |
 | T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | TODO | |
 | T5 | Fix mind map join-key collision | P1 | ~5m | — | TODO | Standalone, do anytime |
@@ -156,6 +156,49 @@ New module `frontend/components/viz/`:
 - Verified: `tsc --noEmit` clean, `next build` clean, `vitest` 11/11,
   `eslint` 0 errors (3 pre-existing warnings remain).
 - **Not verified in-browser**, same caveat as T1.
+
+### T3a as-built notes
+
+New treemap payload shape (`GET /visualize/complexity/{repo_id}`):
+
+```jsonc
+{ "type": "treemap", "data": {
+  "name": "<repo>", "path": "",
+  "children": [ { "name": "src/api", "path": "src/api", "children": [
+    { "name": "routes.ts", "path": "src/api/routes.ts",
+      "value": 21000, "language": "TypeScript",
+      "role": "Routes", "importance": 0.84 } ] } ],
+  "meta": { "total": 312, "shown": 250, "truncated": true,
+            "metric": "size", "metric_label": "File size (bytes)" } } }
+```
+
+- **Read `meta.metric`, never assume.** It is `"size"` today and becomes
+  `"cyclomatic"` after T3b. The legend copy must follow this field — that is
+  what keeps the "Complexity Treemap" name honest.
+- **Single-child directory chains collapse.** `backend/codekavi/routes/` becomes
+  one node named `backend/codekavi/routes` instead of three nested header bands
+  that squeeze the tiles to nothing.
+- **The root is deliberately never collapsed**, or a repo with everything under
+  `src/` would rename its root to "src" and lose its identity. There is a test
+  pinning this.
+- Cap raised 80 → 250 (`MAX_TREEMAP_FILES`). `file_profiles` is pre-sorted by
+  importance, so this keeps the most significant files, and `meta.truncated`
+  now admits the cut instead of silently showing a third of the repo.
+- Path separators are normalized once up front, so leaf `path` (what the
+  tooltip shows) always matches the directory nodes built from it. This repo
+  has prior Windows-path bugs; do not remove that normalization.
+- `codekavi/test_visualize_treemap.py` covers the tree shape, chain collapse,
+  the root invariant, Windows separators, and that the build-time `_dirs` index
+  never reaches the wire. **11 tests.**
+- `frontend/lib/mockData.ts` `case "complexity"` was updated to the new shape,
+  so `/repo/dev-mock-repo/visualize?type=complexity` exercises real T4 data
+  without a backend. Its values are now deterministic — `Math.random()` made
+  the layout reshuffle on every regenerate, which makes visual comparison
+  impossible.
+- **Dev-env note:** `backend/.venv` did not have dev dependencies. `pytest` and
+  `pytest-asyncio` were installed into it; `ruff` and `mypy` are still missing
+  (pre-commit supplies its own).
+- Verified: backend `pytest` 15/15, frontend `vitest` 11/11, `next build` clean.
 
 ---
 

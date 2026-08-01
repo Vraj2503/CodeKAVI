@@ -141,6 +141,99 @@ def _build_diagnostics(analysis: dict, file_profiles: list[dict], edge_count: in
 # ─────────────────────────────────────────
 
 
+#: Cap on files sent to the treemap. `file_profiles` is pre-sorted by
+#: importance, so this keeps the most significant files. The response always
+#: reports whether it truncated — a chart that silently shows a third of the
+#: repo while looking complete is worse than one that admits the cut.
+MAX_TREEMAP_FILES = 250
+
+
+def _build_treemap_tree(profiles: list[dict]) -> dict:
+    """
+    Nest flat file profiles into a directory tree.
+
+    A treemap whose only structure is root → leaves is a bar chart in a square;
+    the containment is what shows which *directory* carries the weight. Leaves
+    keep their full path, because a tile labelled `index.ts` is unactionable
+    when five of them exist.
+    """
+    root: dict[str, Any] = {"name": "", "path": "", "_dirs": {}, "children": []}
+
+    for fp in profiles:
+        # Normalize separators once, up front. The leaf carries this path into
+        # the tooltip, so it must match the directory nodes built from it.
+        rel_path = (fp.get("path") or "").replace("\\", "/")
+        if not rel_path:
+            continue
+        parts = [p for p in rel_path.split("/") if p]
+        if not parts:
+            continue
+
+        node = root
+        for depth, part in enumerate(parts[:-1]):
+            existing = node["_dirs"].get(part)
+            if existing is None:
+                existing = {
+                    "name": part,
+                    "path": "/".join(parts[: depth + 1]),
+                    "_dirs": {},
+                    "children": [],
+                }
+                node["_dirs"][part] = existing
+                node["children"].append(existing)
+            node = existing
+
+        node["children"].append(
+            {
+                "name": parts[-1],
+                "path": rel_path,
+                # Interim metric: byte size. Replaced by real complexity in T3b;
+                # the frontend reads `meta.metric` rather than assuming.
+                "value": fp.get("size") or 1,
+                "language": fp.get("language"),
+                "role": fp.get("role_label") or fp.get("role"),
+                "importance": fp.get("importance_score"),
+            }
+        )
+
+    # Collapse below the root only. Collapsing the root itself would rename it
+    # to the sole top-level directory ("src"), losing the repo identity.
+    for child in root["children"]:
+        if "_dirs" in child:
+            _collapse_single_child_dirs(child)
+
+    _strip_dir_index(root)
+    return root
+
+
+def _collapse_single_child_dirs(node: dict) -> None:
+    """
+    Fold `a/ -> b/ -> c/` chains into one `a/b/c` node.
+
+    Without this, a path like frontend/components/report/viz spends four nested
+    header bands to say one thing, and the tiles inside get squeezed to nothing.
+    """
+    for child in node.get("children", []):
+        _collapse_single_child_dirs(child)
+
+    children = node.get("children", [])
+    while len(children) == 1 and "_dirs" in children[0]:
+        only = children[0]
+        node["name"] = f"{node['name']}/{only['name']}" if node["name"] else only["name"]
+        node["path"] = only["path"]
+        node["_dirs"] = only.get("_dirs", {})
+        node["children"] = only.get("children", [])
+        children = node["children"]
+
+
+def _strip_dir_index(node: dict) -> None:
+    """Drop the `_dirs` build-time index so it never reaches the wire."""
+    node.pop("_dirs", None)
+    for child in node.get("children", []):
+        if "children" in child:
+            _strip_dir_index(child)
+
+
 @router.get("/visualize/complexity/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_complexity(
     request: Request,
@@ -149,24 +242,36 @@ async def visualize_complexity(
     user_id: str = Depends(verify_supabase_token),
 ):
     """
-    Build complexity treemap from file classifications.
-    Zero LLM cost — uses importance scores from /analyze.
+    Build the complexity treemap from file classifications.
+
+    Zero LLM cost — reuses metadata already produced by /analyze.
+
+    NOTE: `value` is currently byte size, not complexity. The response declares
+    this in `meta.metric` so the UI can label honestly; T3b replaces it with a
+    real cyclomatic count computed from the tree-sitter parsers.
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
     classification = result.get("file_profiles", [])
 
-    children = []
-    for fp in classification[:80]:
-        children.append(
-            {
-                "name": os.path.basename(fp.get("path", "")),
-                "value": fp.get("importance_score", 1),
-            }
-        )
+    total = len(classification)
+    selected = classification[:MAX_TREEMAP_FILES]
+    tree = _build_treemap_tree(selected)
+
+    repo_name = result.get("repo_name") or result.get("repo") or "Repository"
+    tree["name"] = tree["name"] or repo_name
 
     return {
         "type": "treemap",
-        "data": {"name": "Complexity", "children": children},
+        "data": {
+            **tree,
+            "meta": {
+                "total": total,
+                "shown": len(selected),
+                "truncated": total > len(selected),
+                "metric": "size",
+                "metric_label": "File size (bytes)",
+            },
+        },
     }
 
 

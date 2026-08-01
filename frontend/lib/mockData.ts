@@ -221,45 +221,59 @@ export function mockVizResponse(type: string) {
       };
     }
 
-    case "complexity":
+    case "complexity": {
+      // Deterministic so the layout is stable between regenerates — a treemap
+      // that reshuffles on every click is impossible to compare against.
+      const pseudo = (seed: number, span: number, floor: number) =>
+        Math.floor(((Math.sin(seed * 12.9898) * 43758.5453) % 1 + 1) / 2 * span) + floor;
+
+      const dir = (
+        path: string,
+        count: number,
+        ext: string,
+        role: string,
+        span: number,
+        floor: number,
+        seedBase: number,
+      ) => ({
+        name: path.split("/").pop()!,
+        path,
+        children: Array.from({ length: count }, (_, i) => ({
+          name: `${role}${i}${ext}`,
+          // Full path — the whole point of T3a. Duplicate basenames across
+          // directories must stay distinguishable in the tooltip.
+          path: `${path}/${role}${i}${ext}`,
+          value: pseudo(seedBase + i, span, floor),
+          language: ext.includes("ts") ? "TypeScript" : "JavaScript",
+          role,
+          importance: Number((pseudo(seedBase + i, 90, 5) / 100).toFixed(2)),
+        })),
+      });
+
       return {
-        name: "root",
+        name: "codekavi",
+        path: "",
         children: [
           {
             name: "src",
+            path: "src",
             children: [
-              {
-                name: "components",
-                children: Array.from({ length: 15 }, (_, i) => ({
-                  name: `Component${i}.tsx`,
-                  value: Math.floor(Math.random() * 400) + 50,
-                })),
-              },
-              {
-                name: "services",
-                children: Array.from({ length: 10 }, (_, i) => ({
-                  name: `Service${i}.ts`,
-                  value: Math.floor(Math.random() * 300) + 100,
-                })),
-              },
-              {
-                name: "utils",
-                children: Array.from({ length: 8 }, (_, i) => ({
-                  name: `util${i}.ts`,
-                  value: Math.floor(Math.random() * 150) + 20,
-                })),
-              },
+              dir("src/components", 15, ".tsx", "Component", 400, 50, 1),
+              dir("src/services", 10, ".ts", "Service", 300, 100, 2),
+              dir("src/utils", 8, ".ts", "util", 150, 20, 3),
             ],
           },
-          {
-            name: "tests",
-            children: Array.from({ length: 20 }, (_, i) => ({
-              name: `test${i}.spec.ts`,
-              value: Math.floor(Math.random() * 200) + 50,
-            })),
-          },
+          dir("tests", 20, ".spec.ts", "test", 200, 50, 4),
         ],
+        meta: {
+          total: 71,
+          shown: 53,
+          truncated: true,
+          metric: "size",
+          metric_label: "File size (bytes)",
+        },
       };
+    }
 
     case "architecture":
       // Stress testing architecture auto-fit by adding many nodes to services layer
