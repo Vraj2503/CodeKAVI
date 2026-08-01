@@ -64,7 +64,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | # | Task | Pri | Est (CC) | Deps | Status | Notes |
 |:--:|---|:--:|:--:|:--:|:--:|---|
 | T1 | Viz color tokens + fix `.viz-tooltip` | P1 | ~20m | — | **DONE** | Tokens + `lib/viz/tokens.ts`; all 7 viz files swept. Needs visual check in-app. |
-| T2 | `VizShell` primitive | P1 | ~45m | T1 | TODO | |
+| T2 | `VizShell` primitive | P1 | ~45m | T1 | **DONE** | Shell + 3 hooks + breadcrumb. DependencyGraph & DataFlowGraph migrated. |
 | T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | TODO | Nearly free — fields already exist |
 | T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | TODO | tree-sitter already a dep |
 | T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | TODO | |
@@ -115,6 +115,47 @@ and total ~15 min).
   to emit `bg-[hsl(var(--viz-highlight)/0.18)]` correctly.
 - **Not yet verified: actual light-mode rendering in the browser.** Needs the
   app running against an analyzed repo. Do this before starting T4.
+
+### T2 as-built notes
+
+New module `frontend/components/viz/`:
+
+| File | Purpose |
+|---|---|
+| `VizShell.tsx` | Layout + chrome: zoom cluster, legend slot, tooltip, empty/error, a11y wrapper |
+| `useVizCanvas.ts` | Container measurement (debounced ResizeObserver) |
+| `useVizZoom.ts` | Zoom controller — `zoomIn/zoomOut/fitToView` + `+`/`-`/`0` keys |
+| `useReducedMotion.ts` | OS reduced-motion subscription |
+| `VizBreadcrumb.tsx` | N-segment breadcrumb (**D5**) |
+
+- **Charts keep their own `d3.zoom` behavior** (scale extent and transform
+  target are chart-specific) and call `zoom.register(svg, behavior, rootG)`
+  inside the draw effect. The shell only drives it. This keeps the migration
+  shallow — no draw logic was rewritten.
+- **`DependencyGraph` and `DataFlowGraph` are migrated.** Both lost their
+  duplicated zoom cluster, and both gained a legend they never had — the
+  dependency graph had a 16-entry type map plus an 8-color module palette and
+  no key at all.
+- **`DependencyGraph`'s back button is now the shared breadcrumb** (D5), so the
+  treemap will not need a second bespoke drill-down control.
+- **Zoom buttons are 44px** (were 32px) with a visible `:focus-visible` ring,
+  and `+`/`-`/`0` work once the chart has focus. Per-node keyboard traversal is
+  still T12.
+- **B6 fixed early**: the DataFlow particle loop now checks a `cancelled` flag
+  set by the effect's cleanup. `isConnected` alone was insufficient — on
+  re-render the old node can stay attached for a tick, orphaning a second loop
+  that never stops. It is also skipped entirely under reduced motion.
+- **Two React-compiler lint rules shaped the API**, worth knowing before adding
+  hooks here (this repo enforces them as errors):
+  - `useReducedMotion` uses `useSyncExternalStore`, not `useState`+`useEffect` —
+    `set-state-in-effect` rejects the latter.
+  - `useVizCanvas` returns a **callback ref named `attach`**, not a ref object,
+    and `VizShell` destructures it (`const { attach } = canvas`) before use.
+    `react-hooks/refs` rejects both a `.ref` property and any member expression
+    in a `ref=` slot.
+- Verified: `tsc --noEmit` clean, `next build` clean, `vitest` 11/11,
+  `eslint` 0 errors (3 pre-existing warnings remain).
+- **Not verified in-browser**, same caveat as T1.
 
 ---
 
