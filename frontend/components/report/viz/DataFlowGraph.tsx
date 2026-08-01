@@ -17,6 +17,7 @@ import {
   useCallback,
 } from "react";
 import * as d3 from "d3";
+import { catVar, inkDimVar } from "@/lib/viz/tokens";
 
 interface Node {
   id: string;
@@ -41,25 +42,27 @@ interface DataFlowGraphProps {
   edges: Edge[];
 }
 
+// Semantic stage kinds → categorical slots (lib/viz/tokens.ts)
 const TYPE_COLORS: Record<string, string> = {
-  io: "#22c55e",
-  process: "#4ecdc4",
-  transform: "#a78bfa",
-  data_store: "#fbbf24",
+  io: catVar(1),
+  process: catVar(5),
+  transform: catVar(2),
+  data_store: catVar(3),
 };
 
+// Edge kinds keep distinct hues so a flow's transport is readable at a glance
 const EDGE_COLORS: Record<string, string> = {
-  http: "#3b82f6",
-  db: "#f59e0b",
-  file: "#22c55e",
-  event: "#a855f7",
+  http: catVar(0),
+  db: catVar(3),
+  file: catVar(1),
+  event: catVar(2),
 };
 
 const NODE_W = 150;
 const NODE_H = 46;
 
 function getColor(type: string): string {
-  return TYPE_COLORS[type] || "#8b949e";
+  return TYPE_COLORS[type] || inkDimVar();
 }
 
 function getEdgeColor(dataType?: string): string {

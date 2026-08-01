@@ -19,6 +19,7 @@ import {
   useImperativeHandle,
 } from "react";
 import * as d3 from "d3";
+import { catVar, inkDimVar } from "@/lib/viz/tokens";
 
 interface Node {
   id: string;
@@ -37,25 +38,36 @@ interface ArchitectureGraphProps {
   edges: Edge[];
 }
 
-// Pastel palette — visually distinct from the dependency graph neons
-const layerColors: Record<
-  string,
-  { bg: string; border: string; text: string }
-> = {
-  routes: { bg: "#1a3a4a", border: "#4ecdc4", text: "#a8e6cf" },
-  services: { bg: "#2d1b4e", border: "#a78bfa", text: "#c4b5fd" },
-  models: { bg: "#1a3320", border: "#4ade80", text: "#86efac" },
-  database: { bg: "#3b2a1a", border: "#fbbf24", text: "#fde68a" },
-  utils: { bg: "#1e2a3a", border: "#60a5fa", text: "#93c5fd" },
-  config: { bg: "#3a2a1e", border: "#f97316", text: "#fdba74" },
-  tests: { bg: "#2a2a2a", border: "#9ca3af", text: "#d1d5db" },
-  frontend: { bg: "#2d1a3a", border: "#f472b6", text: "#f9a8d4" },
-  module: { bg: "#1e2640", border: "#818cf8", text: "#a5b4fc" },
-  other: { bg: "#1c1c2e", border: "#8b949e", text: "#c9d1d9" },
+/**
+ * Layer → categorical slot. Each layer draws its accent from one palette
+ * entry; the fill is that same color at low alpha over the page surface, so
+ * lanes read as tinted glass in both themes instead of the fixed dark
+ * navy/plum slabs this replaced (which were invisible on a light canvas).
+ */
+const LAYER_SLOT: Record<string, number> = {
+  routes: 5,
+  services: 2,
+  models: 1,
+  database: 3,
+  utils: 0,
+  config: 3,
+  tests: 7,
+  frontend: 4,
+  module: 2,
 };
 
 function getLayerStyle(type: string) {
-  return layerColors[type.toLowerCase()] || layerColors.other;
+  const slot = LAYER_SLOT[type?.toLowerCase()];
+  const accent = slot == null ? inkDimVar() : catVar(slot);
+  const wash = slot == null ? inkDimVar(0.07) : catVar(slot, 0.1);
+  return {
+    /** Lane background — a low-alpha wash of the accent. */
+    laneBg: wash,
+    /** Node chip — solid card surface so labels stay legible in both themes. */
+    nodeBg: "hsl(var(--card))",
+    border: accent,
+    text: accent,
+  };
 }
 
 // Order layers top to bottom for the swim-lane layout
@@ -136,7 +148,7 @@ export const ArchitectureGraph = forwardRef<
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M0,-4L8,0L0,4")
-      .attr("fill", "#4b5563");
+      .attr("fill", inkDimVar());
 
     // Group nodes by layer
     const groups = new Map<string, Node[]>();
@@ -172,11 +184,10 @@ export const ArchitectureGraph = forwardRef<
         .attr("width", laneW)
         .attr("height", laneH)
         .attr("rx", 12)
-        .attr("fill", style.bg)
+        .attr("fill", style.laneBg)
         .attr("stroke", style.border)
         .attr("stroke-width", 1)
-        .attr("stroke-opacity", 0.25)
-        .attr("fill-opacity", 0.4);
+        .attr("stroke-opacity", 0.3);
 
       // Lane label
       g.append("text")
@@ -223,9 +234,9 @@ export const ArchitectureGraph = forwardRef<
           `M${src.x},${src.y + nodeH / 2} C${src.x},${midY} ${tgt.x},${midY} ${tgt.x},${tgt.y - nodeH / 2}`,
         )
         .attr("fill", "none")
-        .attr("stroke", "#4b5563")
+        .attr("stroke", inkDimVar())
         .attr("stroke-width", 1.5)
-        .attr("stroke-opacity", 0.6)
+        .attr("stroke-opacity", 0.7)
         .attr("marker-end", "url(#arch-arrow)");
     });
 
@@ -248,10 +259,9 @@ export const ArchitectureGraph = forwardRef<
         .attr("width", nodeW)
         .attr("height", nodeH)
         .attr("rx", 8)
-        .attr("fill", style.bg)
+        .attr("fill", style.nodeBg)
         .attr("stroke", style.border)
-        .attr("stroke-width", 1.5)
-        .attr("fill-opacity", 0.9);
+        .attr("stroke-width", 1.5);
 
       // Label
       nodeGroup
@@ -272,16 +282,14 @@ export const ArchitectureGraph = forwardRef<
             .select("rect")
             .transition()
             .duration(150)
-            .attr("stroke-width", 2.5)
-            .attr("fill-opacity", 1);
+            .attr("stroke-width", 2.5);
         })
         .on("mouseleave", function () {
           d3.select(this)
             .select("rect")
             .transition()
             .duration(150)
-            .attr("stroke-width", 1.5)
-            .attr("fill-opacity", 0.9);
+            .attr("stroke-width", 1.5);
         });
     });
 

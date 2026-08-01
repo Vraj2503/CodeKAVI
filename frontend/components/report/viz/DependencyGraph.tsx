@@ -23,6 +23,7 @@ import {
 import * as d3 from "d3";
 // bundled version runs synchronously, avoids web-worker issues in Next.js
 import ELK from "elkjs/lib/elk.bundled.js";
+import { catVar, typeVar, catInkVar } from "@/lib/viz/tokens";
 
 /* ── Types ────────────────────────────────────────────────── */
 
@@ -95,46 +96,24 @@ type DisplayNode = Node & {
 
 const elk = new ELK();
 
-/* ── Color palettes ───────────────────────────────────────── */
+/* ── Control styling ──────────────────────────────────────── */
 
-const TYPE_COLORS: Record<string, string> = {
-  module: "#58a6ff",
-  file: "#58a6ff",
-  class: "#3fb950",
-  component: "#3fb950",
-  function: "#bc8cff",
-  method: "#bc8cff",
-  external: "#f0883e",
-  package: "#f0883e",
-  routes: "#58a6ff",
-  models: "#3fb950",
-  services: "#bc8cff",
-  database: "#f0883e",
-  utils: "#8b949e",
-  config: "#f0883e",
-  tests: "#8b949e",
-  other: "#8b949e",
-};
-
-const MOD_PALETTE = [
-  "#58a6ff",
-  "#3fb950",
-  "#bc8cff",
-  "#f0883e",
-  "#f778ba",
-  "#79c0ff",
-  "#56d364",
-  "#d2a8ff",
-];
+/** Selected segment in a toggle group. `--viz-highlight` is the existing
+ *  "this is the active thing in a chart" token, defined for both themes. */
+const TOGGLE_ACTIVE =
+  "bg-[hsl(var(--viz-highlight)/0.18)] text-[hsl(var(--viz-highlight))]";
+const TOGGLE_IDLE = "text-muted-foreground hover:text-foreground";
 
 /* ── Helpers ──────────────────────────────────────────────── */
 
+/** Semantic node color. Themed — see lib/viz/tokens.ts. */
 function getNodeColor(type: string): string {
-  return TYPE_COLORS[type.toLowerCase()] || "#8b949e";
+  return typeVar(type);
 }
 
+/** Per-module color, cycling the 8-slot categorical palette. */
 function modColor(idx: number): string {
-  return MOD_PALETTE[idx % MOD_PALETTE.length];
+  return catVar(idx);
 }
 
 function modRadius(fileCount: number): number {
@@ -549,14 +528,16 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
             .attr("dy", 1)
             .attr("font-size", (d) => Math.max(10, radiusOf(d.id) * 0.4))
             .attr("font-weight", "bold")
-            .attr("fill", "#fff")
+            .attr("fill", catInkVar())
             .text((d) => (d._fileCount != null ? String(d._fileCount) : ""));
           node
             .append("text")
             .attr("text-anchor", "middle")
             .attr("dy", (d) => radiusOf(d.id) * 0.35 + 5)
-            .attr("font-size", 8)
-            .attr("fill", "rgba(255,255,255,0.7)")
+            // was 8px at 70% opacity — below the legibility floor and under
+            // 4.5:1 on the lighter palette slots
+            .attr("font-size", 10)
+            .attr("fill", catInkVar(0.85))
             .text((d) => (d._fileCount ? "files" : ""));
         }
 
@@ -804,20 +785,22 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
             <div className="flex rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
               <button
                 onClick={() => setView("module")}
+                aria-pressed={view === "module"}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                   view === "module"
-                    ? "bg-[#58a6ff]/20 text-[#58a6ff]"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? TOGGLE_ACTIVE
+                    : TOGGLE_IDLE
                 }`}
               >
                 Module
               </button>
               <button
                 onClick={() => setView("file")}
+                aria-pressed={view === "file"}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${
                   view === "file"
-                    ? "bg-[#58a6ff]/20 text-[#58a6ff]"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? TOGGLE_ACTIVE
+                    : TOGGLE_IDLE
                 }`}
               >
                 File
@@ -829,20 +812,22 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           <div className="flex rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
             <button
               onClick={() => setLayoutOverride("layered")}
+              aria-pressed={effectiveLayout === "layered"}
               className={`px-3 py-1.5 text-xs font-medium transition-colors ${
                 effectiveLayout === "layered"
-                  ? "bg-[#3fb950]/20 text-[#3fb950]"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? TOGGLE_ACTIVE
+                  : TOGGLE_IDLE
               }`}
             >
               Layered
             </button>
             <button
               onClick={() => setLayoutOverride("force")}
+              aria-pressed={effectiveLayout === "force"}
               className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-border ${
                 effectiveLayout === "force"
-                  ? "bg-[#3fb950]/20 text-[#3fb950]"
-                  : "text-muted-foreground hover:text-foreground"
+                  ? TOGGLE_ACTIVE
+                  : TOGGLE_IDLE
               }`}
             >
               Force

@@ -15,6 +15,7 @@
 
 import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback } from "react";
 import * as d3 from "d3";
+import { catVar, inkDimVar } from "@/lib/viz/tokens";
 
 interface MindmapNode {
   id?: string;
@@ -27,18 +28,16 @@ interface RadialMindmapProps {
   root: MindmapNode;
 }
 
-// Depth-based color palette — muted, professional
-const depthStyles = [
-  { bg: "#1e293b", border: "#64748b", text: "#e2e8f0" },   // root — slate
-  { bg: "#1a2332", border: "#4ecdc4", text: "#a8e6cf" },   // depth 1 — teal
-  { bg: "#1f1a2e", border: "#a78bfa", text: "#c4b5fd" },   // depth 2 — purple
-  { bg: "#1a2a1e", border: "#4ade80", text: "#86efac" },   // depth 3 — green
-  { bg: "#2a1f1a", border: "#f0883e", text: "#fdba74" },   // depth 4 — orange
-  { bg: "#2a1a2a", border: "#ec4899", text: "#f9a8d4" },   // depth 5 — pink
-];
+/**
+ * Depth → categorical slot. Nodes sit on the card surface with a colored
+ * border and label, rather than the fixed dark tinted fills this replaced
+ * (which rendered as dark slabs on a light canvas).
+ */
+const DEPTH_SLOT = [7, 5, 2, 1, 3, 4];
 
 function getStyle(depth: number) {
-  return depthStyles[Math.min(depth, depthStyles.length - 1)];
+  const accent = catVar(DEPTH_SLOT[Math.min(depth, DEPTH_SLOT.length - 1)]);
+  return { bg: "hsl(var(--card))", border: accent, text: accent };
 }
 
 function getLabel(d: MindmapNode): string {
@@ -162,7 +161,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           .append("path")
           .attr("class", "mm-link")
           .attr("fill", "none")
-          .attr("stroke", "#30363d")
+          .attr("stroke", inkDimVar())
           .attr("stroke-width", 1.5)
           .attr("stroke-opacity", 0.5)
           .attr("d", () => {
@@ -228,7 +227,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           .attr("class", "node-chevron")
           .attr("dy", "0.35em")
           .attr("font-size", 10)
-          .attr("fill", "#6b7280")
+          .attr("fill", inkDimVar())
           .attr("pointer-events", "none");
 
         // Merge
@@ -259,8 +258,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
             .attr("x", -10)
             .attr("fill", style.bg)
             .attr("stroke", style.border)
-            .attr("stroke-width", d.depth === 0 ? 2 : 1.5)
-            .attr("fill-opacity", 0.9);
+            .attr("stroke-width", d.depth === 0 ? 2 : 1.5);
 
           // Label
           sel
@@ -307,8 +305,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
               .select(".node-rect")
               .transition()
               .duration(100)
-              .attr("stroke-width", 2.5)
-              .attr("fill-opacity", 1);
+              .attr("stroke-width", 2.5);
             tooltip
               .style("display", "block")
               .style("left", `${event.offsetX + 15}px`)
@@ -316,7 +313,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
               .html(
                 `<strong>${label}</strong>` +
                   (childCount > 0
-                    ? `<br/><span style="color:#9ca3af">${childCount} children</span>`
+                    ? `<br/><span style="color:${inkDimVar()}">${childCount} children</span>`
                     : "")
               );
           })
@@ -331,8 +328,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
               .select(".node-rect")
               .transition()
               .duration(100)
-              .attr("stroke-width", depth === 0 ? 2 : 1.5)
-              .attr("fill-opacity", 0.9);
+              .attr("stroke-width", depth === 0 ? 2 : 1.5);
             tooltip.style("display", "none");
           });
 

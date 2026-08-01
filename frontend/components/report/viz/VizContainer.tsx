@@ -111,7 +111,7 @@ function renderViz(type: string, data: any) {
       return <NeuralNetworkViz data={data} />;
     default:
       return (
-        <p className="text-[#8b949e] text-center py-12">
+        <p className="text-muted-foreground text-center py-12">
           Unknown visualization type: {type}
         </p>
       );
@@ -128,7 +128,7 @@ export function VizContainer({
 
   return (
     <div className="viz-box mt-6">
-      <h3 className="text-base font-semibold text-[#e6edf3] mb-4">{title}</h3>
+      <h3 className="text-base font-semibold text-foreground mb-4">{title}</h3>
       <div className="w-full overflow-hidden">
         {renderViz(visualizationType, visualizationData)}
       </div>

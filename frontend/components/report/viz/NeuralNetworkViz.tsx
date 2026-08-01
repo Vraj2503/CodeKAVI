@@ -6,6 +6,10 @@ import * as d3 from "d3";
 import { motion, AnimatePresence } from "framer-motion";
 import { Info, Layers } from "lucide-react";
 import type { NNModel, NNLayer } from "@/lib/api";
+import { catVar, inkVar, inkDimVar } from "@/lib/viz/tokens";
+
+/** Skip connections read as a deliberate exception to the sequential flow. */
+const SKIP_COLOR = catVar(3);
 
 // ── Color Palette (PlotNeuralNet-inspired) ──
 const CATEGORY_COLORS: Record<string, { base: string; top: string; side: string; text: string }> = {
@@ -197,7 +201,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M 0 0 L 10 5 L 0 10 z")
-      .attr("fill", "#64748b");
+      .attr("fill", inkDimVar());
 
     defs.append("marker")
       .attr("id", `arrowhead-skip-${index}`)
@@ -209,7 +213,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M 0 0 L 10 5 L 0 10 z")
-      .attr("fill", "#f59e0b");
+      .attr("fill", SKIP_COLOR);
 
     // ── Draw connections ──
     const connectionGroup = g.append("g").attr("class", "connections");
@@ -235,7 +239,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
             .append("path")
             .attr("d", `M ${from.polys.rightAnchor.x} ${from.polys.rightAnchor.y} Q ${midX} ${arcY} ${to.polys.leftAnchor.x} ${to.polys.leftAnchor.y}`)
             .attr("fill", "none")
-            .attr("stroke", "#f59e0b")
+            .attr("stroke", SKIP_COLOR)
             .attr("stroke-width", 2)
             .attr("stroke-dasharray", "6,4")
             .attr("opacity", 0.7)
@@ -248,7 +252,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
             .attr("y1", from.polys.rightAnchor.y)
             .attr("x2", to.polys.leftAnchor.x)
             .attr("y2", to.polys.leftAnchor.y)
-            .attr("stroke", "#64748b")
+            .attr("stroke", inkDimVar())
             .attr("stroke-width", 1.5)
             .attr("opacity", 0.5)
             .attr("marker-end", `url(#arrowhead-${index})`);
@@ -264,7 +268,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
               .attr("y", midY)
               .attr("text-anchor", "middle")
               .attr("font-size", "9px")
-              .attr("fill", "#94a3b8")
+              .attr("fill", inkDimVar())
               .attr("font-family", "monospace")
               .text(formatShape(from.layer.output_shape));
           }
@@ -319,7 +323,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
         .attr("text-anchor", "middle")
         .attr("font-size", "10px")
         .attr("font-weight", "600")
-        .attr("fill", "#e2e8f0")
+        .attr("fill", inkVar())
         .attr("pointer-events", "none")
         .text(layer.type);
 
@@ -330,7 +334,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
           .attr("y", polys.lowestY + 28)
           .attr("text-anchor", "middle")
           .attr("font-size", "9px")
-          .attr("fill", "#94a3b8")
+          .attr("fill", inkDimVar())
           .attr("font-family", "monospace")
           .text(formatParamCount(layer.param_count));
       }

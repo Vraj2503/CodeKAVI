@@ -3,6 +3,12 @@
 
 import { useRef, useEffect, useState } from "react";
 import * as d3 from "d3";
+import {
+  seqScale,
+  inkOnFill,
+  edgeVar,
+  useVizThemeVersion,
+} from "@/lib/viz/tokens";
 
 interface TreemapNode {
   name: string;
@@ -19,6 +25,9 @@ export function TreemapViz({ data }: TreemapVizProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
+  // seqScale() snapshots concrete colors, so the draw effect has to re-run
+  // when the theme flips. See lib/viz/tokens.ts.
+  const themeVersion = useVizThemeVersion();
 
   // Measure container on mount + track resizes
   useEffect(() => {
@@ -63,11 +72,8 @@ export function TreemapViz({ data }: TreemapVizProps) {
     const leaves = hierarchy.leaves();
     const maxValue = d3.max(leaves, (d) => d.value) || 1;
 
-    // Color scale: dark → orange for high complexity
-    const colorScale = d3
-      .scaleSequential()
-      .domain([0, maxValue])
-      .interpolator(d3.interpolateRgb("#161b22", "#f0883e"));
+    // Themed cold → hot ramp (lib/viz/tokens.ts)
+    const colorScale = seqScale(maxValue);
 
     const tooltip = d3.select(tooltipRef.current);
 
@@ -88,7 +94,7 @@ export function TreemapViz({ data }: TreemapVizProps) {
       .attr("width", (d: any) => Math.max(0, d.x1 - d.x0))
       .attr("height", (d: any) => Math.max(0, d.y1 - d.y0))
       .attr("fill", (d: any) => colorScale(d.value || 0))
-      .attr("stroke", "#30363d")
+      .attr("stroke", edgeVar())
       .attr("stroke-width", 1)
       .attr("rx", 2)
       .on("mouseenter", function (event, d: any) {
@@ -117,7 +123,9 @@ export function TreemapViz({ data }: TreemapVizProps) {
       .append("text")
       .attr("x", 4)
       .attr("y", 14)
-      .attr("fill", "#e6edf3")
+      // Label sits ON the heat fill, so its color depends on that tile's
+      // luminance — a fixed color is wrong at one end of the ramp or the other.
+      .attr("fill", (d: any) => inkOnFill(colorScale(d.value || 0)))
       .attr("font-size", 11)
       .attr("pointer-events", "none")
       .each(function (d: any) {
@@ -139,7 +147,8 @@ export function TreemapViz({ data }: TreemapVizProps) {
       .append("text")
       .attr("x", 4)
       .attr("y", 26)
-      .attr("fill", "#8b949e")
+      .attr("fill", (d: any) => inkOnFill(colorScale(d.value || 0)))
+      .attr("fill-opacity", 0.8)
       .attr("font-size", 10)
       .attr("pointer-events", "none")
       .text((d: any) => String(d.value || ""));
@@ -147,7 +156,7 @@ export function TreemapViz({ data }: TreemapVizProps) {
     return () => {
       svg.selectAll("*").remove();
     };
-  }, [data, dimensions]);
+  }, [data, dimensions, themeVersion]);
 
   return (
     <div ref={containerRef} className="w-full h-full overflow-hidden relative">
