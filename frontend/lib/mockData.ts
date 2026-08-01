@@ -322,58 +322,148 @@ export function mockVizResponse(type: string) {
       };
 
     case "dataflow":
-      // Stress testing dataflow graph with deep pipeline and one very tall column
+      // DataFlowGraph renders SEMANTIC STAGES, not files. It needs three
+      // backend-supplied fields the previous mock predated:
+      //   type  — io | process | transform | data_store  (drives node color)
+      //   tier  — integer column index, left to right    (drives layout)
+      //   shape — rounded_rect | cylinder | parallelogram | hexagon
+      // Without `tier` every node lands in column 0 and the diagram collapses
+      // into one unreadable vertical stack; without a known `type` the legend
+      // renders nothing and every node falls back to grey.
+      //
+      // This fixture exercises all four shapes, all four edge transports, a
+      // tall middleware column, an animated edge, and the click popover fields.
       return {
         nodes: [
-          { id: "req", label: "Request", type: "entry_point" },
-          { id: "gw", label: "Gateway", type: "routes" },
-          // Middleware layer - tall column to test dynamic height
-          ...Array.from({ length: 8 }, (_, i) => ({
+          {
+            id: "req",
+            label: "HTTP Request",
+            type: "io",
+            shape: "parallelogram",
+            tier: 0,
+            description: "Inbound client request entering the API surface.",
+            source_files: ["src/routes/index.ts"],
+          },
+          {
+            id: "gw",
+            label: "API Gateway",
+            type: "process",
+            shape: "hexagon",
+            tier: 1,
+            description: "Routes and rate-limits inbound traffic.",
+            source_files: ["src/routes/api.routes.ts"],
+          },
+          // Tall column — exercises dynamic height and vertical centering
+          ...Array.from({ length: 6 }, (_, i) => ({
             id: `mw_${i}`,
             label: `Middleware ${i}`,
-            type: "utils",
+            type: "transform",
+            shape: "rounded_rect",
+            tier: 2,
+            description: `Transform stage ${i} in the middleware chain.`,
+            source_files: [`src/middleware/mw${i}.ts`],
           })),
-          { id: "ctrl", label: "Controller", type: "routes" },
-          { id: "svc", label: "Service", type: "services" },
-          { id: "cache", label: "Cache", type: "database" },
-          { id: "db", label: "Database", type: "database" },
-          { id: "res", label: "Response", type: "other" },
+          {
+            id: "ctrl",
+            label: "Controller",
+            type: "process",
+            shape: "rounded_rect",
+            tier: 3,
+            description: "Dispatches to domain services.",
+            source_files: ["src/routes/auth.routes.ts"],
+          },
+          {
+            id: "svc",
+            label: "Order Service",
+            type: "process",
+            shape: "rounded_rect",
+            tier: 4,
+            description: "Core domain logic for orders.",
+            source_files: ["src/services/OrderService.ts"],
+          },
+          {
+            id: "cache",
+            label: "Redis Cache",
+            type: "data_store",
+            shape: "cylinder",
+            tier: 5,
+            description: "Read-through cache for hot order lookups.",
+            source_files: ["src/services/cache.ts"],
+          },
+          {
+            id: "db",
+            label: "Postgres",
+            type: "data_store",
+            shape: "cylinder",
+            tier: 5,
+            description: "System of record.",
+            source_files: ["src/db/postgres.ts"],
+          },
+          {
+            id: "res",
+            label: "HTTP Response",
+            type: "io",
+            shape: "parallelogram",
+            tier: 6,
+            description: "Serialized response returned to the client.",
+            source_files: ["src/routes/index.ts"],
+          },
         ],
         edges: [
-          { source: "req", target: "gw" },
-          ...Array.from({ length: 8 }, (_, i) => ({
+          { source: "req", target: "gw", data_type: "http", label: "JSON", animated: true },
+          ...Array.from({ length: 6 }, (_, i) => ({
             source: "gw",
             target: `mw_${i}`,
+            data_type: "internal",
           })),
-          ...Array.from({ length: 8 }, (_, i) => ({
+          ...Array.from({ length: 6 }, (_, i) => ({
             source: `mw_${i}`,
             target: "ctrl",
+            data_type: "internal",
           })),
-          { source: "ctrl", target: "svc" },
-          { source: "svc", target: "cache" },
-          { source: "cache", target: "db" },
-          { source: "db", target: "res" },
+          { source: "ctrl", target: "svc", data_type: "event", label: "dispatch" },
+          { source: "svc", target: "cache", data_type: "db", label: "get" },
+          { source: "svc", target: "db", data_type: "db", label: "query" },
+          { source: "db", target: "res", data_type: "http", animated: true },
         ],
       };
 
-    case "mindmap":
-      // Stress testing mindmap with lots of initial children and deep nesting
+    case "mindmap": {
+      // Shape must match the backend exactly: visualize.py returns
+      // {"data": {"root": root}}, and isEmptyVisualization requires
+      // data.root.children. Returning the root bare (as this mock used to)
+      // makes every mind map report "No Data Available".
+      //
+      // Structure mirrors _build_static_mindmap: root -> role group -> files,
+      // with each file node carrying `id` set to the BARE FILENAME, exactly as
+      // the backend does (visualize.py:437).
+      const role = (name: string, files: string[]) => ({
+        name,
+        id: name,
+        label: name,
+        children: files.map((f) => ({ name: f, id: f, label: f })),
+      });
+
       return {
-        id: "root",
-        label: "Enterprise System",
-        children: Array.from({ length: 8 }, (_, i) => ({
-          id: `domain_${i}`,
-          label: `Domain ${i}`,
-          children: Array.from({ length: 5 }, (_, j) => ({
-            id: `sub_${i}_${j}`,
-            label: `Subsystem ${j}`,
-            children: Array.from({ length: 3 }, (_, k) => ({
-              id: `leaf_${i}_${j}_${k}`,
-              label: `Component ${k}`,
-            })),
-          })),
-        })),
+        root: {
+          name: "Codebase",
+          id: "root",
+          label: "Codebase",
+          children: [
+            // `index.ts` appears under three roles and `utils.ts` under two.
+            // That is a regression fixture, not filler: the bare-filename id
+            // is what collides in RadialMindmap's D3 join key, so these
+            // duplicates reproduce B1 (nodes merging/vanishing on expand).
+            // T5 is not verified until every one of these stays on screen.
+            role("Routes", ["auth.routes.ts", "api.routes.ts", "index.ts"]),
+            role("Models", ["User.ts", "Order.ts", "index.ts"]),
+            role("Services", ["OrderService.ts", "utils.ts", "index.ts"]),
+            role("Utilities", ["format.ts", "utils.ts", "constants.ts"]),
+            role("Tests", ["auth.spec.ts", "order.spec.ts"]),
+          ],
+        },
       };
+    }
 
     case "neural_network":
       // Re-use the NN data from mockAnalyzeResponse

@@ -68,7 +68,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | **DONE** | + 11 tests, mock updated to match |
 | T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | TODO | tree-sitter already a dep |
 | T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | TODO | |
-| T5 | Fix mind map join-key collision | P1 | ~5m | — | TODO | Standalone, do anytime |
+| T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | TODO | Severity revised by QA — identity swap, not data loss. Fixture ready |
 | T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | TODO | Standalone, do anytime |
 | T7 | Remove Architecture lie affordance | P1 | ~5m | — | TODO | Standalone, do anytime |
 | T8 | ResizeObserver for mind map + neural net | P2 | ~15m | — | TODO | |
@@ -79,7 +79,9 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T13 | Auto-render default viz, kill the idle card | P3 | ~15m | — | TODO | |
 | T14 | Drop emoji from `VizContainer` title map | P3 | ~5m | — | TODO | |
 | T15 | Write `DESIGN.md` for the viz system | P3 | ~15m | T1,T2 | TODO | |
-| T16 | Responsive + touch | P2 | ~30m | T2,T4 | TODO | |
+| T16 | Responsive + touch | P2 | ~30m | T2,T4 | TODO | Scope widened by QA-001 — canvas is 7px at 375px, not just "small" |
+| T17 | Fix infinite-loading dead-end on shared/bookmarked repo links | **P1** | ~20m | — | TODO | QA-002. Standalone, do anytime |
+| T18 | Human error copy instead of raw backend strings | P2 | ~25m | — | TODO | QA-003. Widens T10 to `useRepoGraph` |
 
 **Suggested order:** T1 → T2 → T3a → T4, with T5/T6/T7 dropped in whenever
 (they're standalone one-file fixes; T5 and T6 are both in `RadialMindmap.tsx`
@@ -201,6 +203,65 @@ New treemap payload shape (`GET /visualize/complexity/{repo_id}`):
 - Verified: backend `pytest` 15/15, frontend `vitest` 11/11, `next build` clean.
 
 ---
+
+## How to see this running
+
+**Correct URL (both parts required):**
+
+```
+/repo/dev-mock-repo/visualize?type=<t>&dev=true
+```
+
+`lib/api.ts` short-circuits on the repo id, but `RepoProvider.tsx:113` gates on
+`?dev=true`. Omit the flag and you hit the T17 dead-end, not a working page.
+Frontend only — `npm run dev`, no backend, no Redis, no auth.
+
+All six `type` values work against the mock as of 2026-08-02.
+
+## QA session — 2026-08-02
+
+Full report: `.gstack/qa-reports/qa-report-codekavi-2026-08-02.md` (11 screenshots).
+Health score **77/100**. Ran after T3a, before T4.
+
+**Confirmed working:** T1's core goal holds — Treemap, Architecture, and Mind Map
+render correctly in light mode instead of as dark slabs. T2's legend, 44px zoom
+cluster, themed toggles, and fit-to-view all verified in-browser. Zero console
+errors outside the Graph page's auth 401s.
+
+**Fed back into this plan:** T17 and T18 added · T16 scope widened (QA-001) ·
+T5/B1 severity revised P1 → P2 · T4 gains the ramp-domain fix (QA-006).
+
+**Fixed during the session:** the two mock contracts below.
+
+**Still open, not yet in this plan** (all from the QA report):
+QA-004 dependency graph never auto-fits on first render ·
+QA-005 nav tabs truncated to two characters at 1280px ·
+QA-007 "Mind Map" clipped out of the sidebar at 720px height ·
+QA-009 duplicate "Generate Report" buttons.
+
+### Mock contracts — fixed, do not regress
+
+`frontend/lib/mockData.ts` had drifted from the backend and was producing false
+QA results. Both are now pinned to the real response shapes:
+
+- **`mindmap`** must return `{ root: {...} }`. The backend sends
+  `{"data": {"root": root}}` (`visualize.py:526-529`) and
+  `isEmptyVisualization` requires `data.root.children`
+  (`FocusedVisualization.tsx:457-460`). The old mock returned the root bare, so
+  the mind map *always* reported "No Data Available" — a false failure that
+  would have blocked T5 and T6 verification.
+- **`dataflow`** must supply `type` (`io|process|transform|data_store`), `tier`,
+  and `shape`. The old mock predated the semantic redesign: without `tier` all
+  nodes collapsed into one unreadable column, and with unknown `type` values the
+  legend silently rendered nothing.
+
+Two robustness gaps that fell out of this and are **not yet fixed**:
+
+- `DataFlowGraph` degrades silently when `tier` is absent — everything lands in
+  column 0. A cached analysis from before the tier feature would do this to a
+  real user. Consider assigning tiers by topological depth as a fallback.
+- `VizLegend` renders nothing when no node type matches, so a contract mismatch
+  disappears instead of showing. Consider a visible fallback.
 
 ## T1 — Viz color tokens
 
@@ -376,15 +437,37 @@ drill three levels and back via breadcrumb.
 
 **Bug.** `RadialMindmap.tsx:157,195` keys the D3 data-join on
 `d.data.id || d.data.name || d.data.label`. The backend
-(`visualize.py:437`) sets file-node `id` to the **bare filename**. Two roles
-both containing `index.ts` produce duplicate keys → nodes merge or vanish on
-expand.
+(`visualize.py:437`) sets file-node `id` to the **bare filename**, so two roles
+both containing `index.ts` produce duplicate keys.
+
+**Symptom corrected by QA (2026-08-02).** The original wording here said nodes
+"merge or vanish on expand." That is wrong, and the distinction matters. Measured
+behavior with the new fixture: expanding two roles that share `index.ts` renders
+**both** nodes (12 total, 2 × `index.ts`), and collapsing one leaves the other's
+subtree intact. No data is lost.
+
+What actually happens is **identity swapping**. D3's `bindKey` matches the first
+datum to the existing keyed node and treats the second as an enter — so on the
+next update a node originally bound to Routes gets re-bound to Models. Observed
+directly: after collapsing Routes, Models' DOM order changed from
+`User.ts, Order.ts, index.ts` to `index.ts, User.ts, Order.ts`, meaning the
+surviving node was the one previously belonging to Routes.
+
+Consequences are real but narrower than "data loss": nodes tween in from the
+wrong branch during the 400ms transition, and expand/collapse state stored on
+`_children` can leak between same-named nodes.
+
+**Severity revised P1 → P2.** Still worth fixing (it is a two-line change and
+the animation artifact is visible), but it does not lose data and should not
+block T4.
 
 **Fix:** key on a stable unique path. Either send a real path from the backend
 or compose `depth + parent + name` client-side.
 
-**Verify:** analyze a repo with the same filename under two roles, expand both,
-all nodes persist.
+**Verify:** `?type=mindmap&dev=true` — the mock fixture now ships `index.ts`
+under three roles and `utils.ts` under two, on purpose. Expand Routes and Models,
+then collapse Routes. Every node stays put and nothing tweens in from another
+branch.
 
 ---
 
@@ -540,6 +623,48 @@ code.
 
 ---
 
+## T17 — Infinite-loading dead-end *(P1, standalone)*
+
+**From QA-002.** `RepoProvider.tsx:62-165` resolves `repoData` from
+`sessionStorage`, or from `?dev=true` in development. If neither is present the
+effect **ends with no else branch**, so `repoData` stays `null` forever. Every
+consumer page then renders "Loading repository data…" indefinitely: no error, no
+retry, no redirect, no timeout.
+
+`sessionStorage` is per-tab and cleared on tab close, so this is not an edge
+case — **bookmarking a repo URL, sharing a link, or reopening in a new tab all
+produce a permanent dead end.**
+
+**Repro:** open `/repo/<any-id>/visualize` in a fresh tab. Waited 20s+, no change.
+
+**Fix:** add the missing terminal branch. When there is no session metadata and
+no dev flag, attempt `restoreRepo(repoId)` directly; on 404 or failure, set an
+error state and render a real recovery path ("This analysis has expired —
+re-analyze this repository") rather than an eternal spinner.
+
+**Verify:** open a repo URL in a private window. You get an actionable screen
+within a few seconds, never an indefinite loading message.
+
+---
+
+## T18 — Human error copy *(from QA-003)*
+
+**From QA-003.** The Graph page renders `Missing Authorization header.` in red,
+centered, as the entire page state, alongside two `401`s in the console. A user
+has no idea what that means; there is no sign-in prompt and no retry.
+
+This is the same defect class as T10 but on a different hook, so **T10's scope
+widens**: fix `useRepoGraph` alongside `useVisualization.ts:69`.
+
+**Fix:** map backend failures to human copy at the hook boundary. Auth failures
+in particular should offer sign-in, not print the header name that was missing.
+Never render `err.message` directly.
+
+**Verify:** hit the Graph page unauthenticated. You get "Sign in to view this
+graph" with a working action, not a transport-layer string.
+
+---
+
 ## T16 — Responsive + touch *(per D4)*
 
 **Problems.** Fixed `NODE_W = 150`, `nodeW = 140`, `BLOCK_GAP = 85`. At 375px the
@@ -565,7 +690,7 @@ tap.
 
 | # | Sev | Defect | Location | Task |
 |:--:|:--:|---|---|:--:|
-| B1 | P1 | D3 join key collides on bare filenames | `RadialMindmap.tsx:157,195` + `visualize.py:437` | T5 |
+| B1 | ~~P1~~ P2 | D3 join key collides on bare filenames — identity swap between branches, not data loss (revised by QA 2026-08-02) | `RadialMindmap.tsx:157,195` + `visualize.py:437` | T5 |
 | B2 | P1 | `fitToScreen` inside every `update()` | `RadialMindmap.tsx:357-359` | T6 |
 | B3 | P1 | `cursor:pointer` with no click handler | `ArchitectureGraph.tsx:241` | T7 |
 | B4 | P2 | Guessed bbox constants instead of `getBBox()` | `ArchitectureGraph.tsx:299-309` | T9 |
