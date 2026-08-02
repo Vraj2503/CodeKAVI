@@ -442,6 +442,21 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         label: e.label,
       }));
 
+      /**
+       * Frame the graph once layout has settled.
+       *
+       * ELK centres the graph but never scales it, so any graph taller than the
+       * viewport rendered clipped at both ends until the user found the "Fit to
+       * view" button. DataFlowGraph and ArchitectureGraph both already framed
+       * themselves after layout; this one did not.
+       *
+       * Not animated: on first paint a tween from the identity transform reads
+       * as an unrequested zoom rather than a chart appearing.
+       */
+      const frame = () => {
+        if (!cancelled) zoom.fitToView({ animate: false });
+      };
+
       /** Colour a node based on view mode. */
       function colour(d: DisplayNode): string {
         if (isModView && d._colorIdx != null) return modColor(d._colorIdx);
@@ -699,6 +714,10 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
               );
             node.attr("transform", (d) => `translate(${d.x},${d.y})`);
           });
+
+          // Force layout keeps moving for hundreds of ticks; framing now would
+          // fit the initial random scatter. Wait for the simulation to cool.
+          sim.on("end", frame);
         }
       }
 
@@ -712,10 +731,15 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         }));
         runElkLayout(elkNodes, dispEdges, W, H)
           .then((positions) => {
-            if (!cancelled) draw(positions);
+            if (cancelled) return;
+            draw(positions);
+            // ELK positions are final on return, so frame straight away.
+            // The force path instead frames from inside draw(), on sim end.
+            frame();
           })
           .catch(() => {
-            // Fallback to force layout if ELK fails
+            // Fallback to force layout if ELK fails — draw() wires its own
+            // framing to the simulation's end event.
             if (!cancelled) draw();
           });
       } else {

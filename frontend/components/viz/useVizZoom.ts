@@ -33,7 +33,14 @@ export interface VizZoom {
   ): void;
   zoomIn(): void;
   zoomOut(): void;
-  fitToView(): void;
+  /**
+   * Frame the rendered content.
+   *
+   * Pass `{ animate: false }` for the initial fit a chart runs after layout —
+   * animating from the identity transform on first paint reads as an unrequested
+   * zoom-in rather than a chart appearing. User-triggered fits keep the tween.
+   */
+  fitToView(opts?: { animate?: boolean }): void;
   /** Handles +/-/0 so charts are operable without a mouse. */
   onKeyDown(event: React.KeyboardEvent): void;
 }
@@ -66,7 +73,9 @@ export function useVizZoom(animate = true): VizZoom {
   const zoomIn = useCallback(() => scaleBy(ZOOM_STEP), [scaleBy]);
   const zoomOut = useCallback(() => scaleBy(1 / ZOOM_STEP), [scaleBy]);
 
-  const fitToView = useCallback(() => {
+  const fitToView = useCallback(
+    (opts?: { animate?: boolean }) => {
+    const shouldAnimate = opts?.animate ?? animate;
     const svg = svgRef.current;
     const behavior = behaviorRef.current;
     const root = rootRef.current;
@@ -92,11 +101,13 @@ export function useVizZoom(animate = true): VizZoom {
     const ty = h / 2 - scale * (bbox.y + bbox.height / 2);
 
     const sel = d3.select(svg);
-    (animate ? sel.transition().duration(300) : (sel as never)).call(
+    (shouldAnimate ? sel.transition().duration(300) : (sel as never)).call(
       behavior.transform as never,
       d3.zoomIdentity.translate(tx, ty).scale(scale),
     );
-  }, [animate]);
+    },
+    [animate],
+  );
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {

@@ -233,11 +233,34 @@ T5/B1 severity revised P1 → P2 · T4 gains the ramp-domain fix (QA-006).
 
 **Fixed during the session:** the two mock contracts below.
 
+**Fixed during the session:** the two mock contracts below, plus **QA-004**
+(dependency graph now frames itself on first render — see below).
+
 **Still open, not yet in this plan** (all from the QA report):
-QA-004 dependency graph never auto-fits on first render ·
 QA-005 nav tabs truncated to two characters at 1280px ·
 QA-007 "Mind Map" clipped out of the sidebar at 720px height ·
 QA-009 duplicate "Generate Report" buttons.
+
+### QA-004 — dependency graph auto-fit (fixed)
+
+ELK centres the graph but never scales it, so any graph taller than the viewport
+rendered clipped at both ends until the user found the "Fit to view" button.
+`DataFlowGraph` and `ArchitectureGraph` both already framed themselves after
+layout; `DependencyGraph` never did.
+
+Two layout paths, two framing points:
+
+- **ELK** — positions are final the moment `runElkLayout` resolves, so it frames
+  immediately after `draw(positions)`.
+- **Force** — the simulation keeps moving for hundreds of ticks, so framing on
+  return would fit the initial random scatter. It frames on `sim.on("end")`
+  instead, wired from inside `draw()` where `sim` actually exists. Wiring it
+  outside does not typecheck: TS narrows `sim` to `null` after its declaration
+  because it is only assigned inside `draw`.
+
+`useVizZoom.fitToView` now takes `{ animate }`. The initial fit passes `false` —
+tweening from the identity transform on first paint reads as an unrequested
+zoom rather than a chart appearing. User-triggered fits keep the tween.
 
 ### Mock contracts — fixed, do not regress
 

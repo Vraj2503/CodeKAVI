@@ -106,7 +106,9 @@ function ZoomCluster({ zoom }: { zoom: VizZoom }) {
       </button>
       <button
         type="button"
-        onClick={zoom.fitToView}
+        // Wrapped, not passed by reference: React would hand the click event
+        // in as the options argument.
+        onClick={() => zoom.fitToView()}
         aria-label="Fit to view"
         className={cn(ZOOM_BTN, "border-t border-border")}
       >
