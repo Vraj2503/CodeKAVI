@@ -132,7 +132,7 @@ const SEQ_FALLBACK_FROM: Rgb = { r: 22, g: 27, b: 34 };
 const SEQ_FALLBACK_TO: Rgb = { r: 240, g: 136, b: 62 };
 
 /**
- * Build a cold → hot color scale over `[0, max]`.
+ * Build a cold → hot color scale over an explicit `[min, max]` domain.
  *
  * Interpolates in RGB rather than HSL on purpose: the light-theme ramp runs
  * from a blue-grey (h≈213) to a hot orange (h≈14), and interpolating that in
@@ -141,16 +141,30 @@ const SEQ_FALLBACK_TO: Rgb = { r: 240, g: 136, b: 62 };
  * gives a clean wash and matches the `d3.interpolateRgb` behavior this
  * replaced.
  *
- * `gamma` < 1 pushes midtones warmer so ordinary files stay visibly cool and
- * only genuine outliers go hot.
+ * The domain is min–max, not 0–max. Real metrics cluster well above zero, so
+ * anchoring at 0 leaves the cold half of the ramp permanently unused and every
+ * tile reads warm — which destroys the signal the chart exists to carry. Pair
+ * this with a legend that prints the same two endpoints, so "hot" is a claim
+ * the reader can check.
+ *
+ * `gamma` defaults to linear. A gamma below 1 was previously compensating for
+ * the 0-anchored domain; with a real domain it only distorts the mapping away
+ * from what the legend advertises.
  */
-export function seqScale(max: number, gamma = 0.72): (value: number) => string {
+export function seqScale(
+  domain: [number, number],
+  gamma = 1,
+): (value: number) => string {
   const from = resolve("viz-seq-from") ?? SEQ_FALLBACK_FROM;
   const to = resolve("viz-seq-to") ?? SEQ_FALLBACK_TO;
-  const span = max > 0 ? max : 1;
+  const [lo, hi] = domain;
+  // Degenerate domain (one distinct value, or bad data): put everything at the
+  // cold end rather than dividing by zero and painting the whole chart hot.
+  const span = hi > lo ? hi - lo : 0;
 
   return (value: number) => {
-    const t = Math.min(1, Math.max(0, Math.pow(Math.max(0, value) / span, gamma)));
+    const raw = span === 0 ? 0 : (value - lo) / span;
+    const t = Math.min(1, Math.max(0, gamma === 1 ? raw : Math.pow(raw, gamma)));
     return toCss({
       r: Math.round(from.r + (to.r - from.r) * t),
       g: Math.round(from.g + (to.g - from.g) * t),

@@ -210,7 +210,23 @@ export interface VizShellProps {
   label: string;
   /** What the encoding means — what size and color stand for. */
   description: string;
+  /**
+   * Inset key, floated bottom-left over the canvas. Right for node-link graphs,
+   * which have whitespace to spare.
+   */
   legend?: ReactNode;
+  /**
+   * Key rendered in a reserved strip BELOW the canvas, which shrinks the chart
+   * rather than covering it. Use this for space-filling charts (treemap,
+   * heatmap) where an inset legend would sit on top of real data.
+   */
+  footer?: ReactNode;
+  /**
+   * Controls rendered in a reserved strip ABOVE the canvas. Same reasoning as
+   * `footer` — on a space-filling chart, `toolbarLeft` would cover the
+   * top-left tile's label.
+   */
+  header?: ReactNode;
   toolbarLeft?: ReactNode;
   toolbarRight?: ReactNode;
   overlay?: ReactNode;
@@ -224,6 +240,8 @@ export function VizShell({
   label,
   description,
   legend,
+  footer,
+  header,
   toolbarLeft,
   toolbarRight,
   overlay,
@@ -236,41 +254,59 @@ export function VizShell({
   const { attach } = canvas;
 
   return (
-    <div
-      ref={attach}
-      className={cn("relative h-full w-full overflow-hidden", className)}
-    >
+    <div className={cn("flex h-full w-full flex-col overflow-hidden", className)}>
+      {header && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-card/40 px-3 py-2">
+          {header}
+        </div>
+      )}
+
       {/*
-        The chart is a group so the zoom shortcuts have somewhere to fire from,
-        and so assistive tech announces what this region is before the user
-        walks into a wall of unlabeled <rect>s. tabIndex makes +/-/0 reachable
-        without a pointer; per-node keyboard traversal lands in T12.
+        The measured element is the CHART AREA, not the outer wrapper, so a
+        header/footer shrinks the canvas instead of overlapping it — and so
+        tooltip coordinates taken from this rect line up with what the chart drew.
       */}
-      <div
-        role="group"
-        aria-label={label}
-        aria-describedby={descId}
-        tabIndex={0}
-        onKeyDown={zoom.onKeyDown}
-        className={cn(
-          "h-full w-full",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
-          "focus-visible:ring-[hsl(var(--viz-highlight))]",
+      <div ref={attach} className="relative min-h-0 flex-1">
+        {/*
+          The chart is a group so the zoom shortcuts have somewhere to fire
+          from, and so assistive tech announces what this region is before the
+          user walks into a wall of unlabeled <rect>s. tabIndex makes +/-/0
+          reachable without a pointer; per-node traversal lands in T12.
+        */}
+        <div
+          role="group"
+          aria-label={label}
+          aria-describedby={descId}
+          tabIndex={0}
+          onKeyDown={zoom.onKeyDown}
+          className={cn(
+            "h-full w-full",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+            "focus-visible:ring-[hsl(var(--viz-highlight))]",
+          )}
+        >
+          {children}
+        </div>
+
+        <p id={descId} className="sr-only">
+          {description} Press plus or minus to zoom, zero to fit the chart to the view.
+        </p>
+
+        {toolbarLeft && (
+          <div className="absolute left-3 top-3 z-10 flex items-center gap-2">{toolbarLeft}</div>
         )}
-      >
-        {children}
+        {toolbarRight && (
+          <div className="absolute right-3 top-3 z-10 flex items-center gap-2">{toolbarRight}</div>
+        )}
+        {legend && <div className="absolute bottom-3 left-3 z-10">{legend}</div>}
+
+        <ZoomCluster zoom={zoom} />
+        {overlay}
       </div>
 
-      <p id={descId} className="sr-only">
-        {description} Press plus or minus to zoom, zero to fit the chart to the view.
-      </p>
-
-      {toolbarLeft && <div className="absolute left-3 top-3 z-10 flex items-center gap-2">{toolbarLeft}</div>}
-      {toolbarRight && <div className="absolute right-3 top-3 z-10 flex items-center gap-2">{toolbarRight}</div>}
-      {legend && <div className="absolute bottom-3 left-3 z-10">{legend}</div>}
-
-      <ZoomCluster zoom={zoom} />
-      {overlay}
+      {footer && (
+        <div className="shrink-0 border-t border-border bg-card/40 px-3 py-2">{footer}</div>
+      )}
     </div>
   );
 }

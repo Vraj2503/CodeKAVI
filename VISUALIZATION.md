@@ -67,7 +67,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T2 | `VizShell` primitive | P1 | ~45m | T1 | **DONE** | Shell + 3 hooks + breadcrumb. DependencyGraph & DataFlowGraph migrated. |
 | T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | **DONE** | + 11 tests, mock updated to match |
 | T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | TODO | tree-sitter already a dep |
-| T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | TODO | |
+| T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | **DONE** | Nesting, dual encoding, legend, breadcrumb, tooltip. Includes QA-006 |
 | T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | TODO | Severity revised by QA — identity swap, not data loss. Fixture ready |
 | T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | TODO | Standalone, do anytime |
 | T7 | Remove Architecture lie affordance | P1 | ~5m | — | TODO | Standalone, do anytime |
@@ -456,7 +456,48 @@ drill three levels and back via breadcrumb.
 
 ---
 
-## T5 — Mind map join-key collision *(P1, standalone)*
+### T4 as-built notes
+
+- **Reads `meta.metric`, never assumes.** The legend label, tile sublabel,
+  tooltip rows, and SVG description all derive from `meta.metric_label` and
+  per-leaf `complexity_source`. Today it renders "File size (bytes)" and says
+  *"Color is file size, not complexity yet."* in the legend. When T3b ships
+  complexity the copy follows automatically — **no code change needed, and no
+  moment where the chart lies.**
+- **Two encodings.** Area = the size metric; color = complexity when present,
+  falling back to the size metric when not. `stats.hasComplexity` gates it.
+- **QA-006 fixed.** `seqScale` now takes an explicit `[min, max]` domain
+  instead of `[0, max]`, and gamma defaults to linear. The 0-anchored domain
+  left the cold half of the ramp permanently unused so everything read hot; the
+  gamma had been compensating for that. The legend prints the same two endpoints
+  the scale uses, so "hot" is now a claim the reader can check.
+- **The color domain spans the whole repo, not the drilled subtree.** Rescaling
+  per drill would recolor identical files as you navigate, so a file could read
+  hot inside a calm directory and cold one level up. Verified: `Component0`
+  keeps its exact color after drilling into `src/components`.
+- **Two new VizShell slots — `header` and `footer`** — that reserve space rather
+  than overlay. A space-filling chart has no whitespace to float chrome over:
+  the inset legend covered two `services` tiles and the floating breadcrumb
+  covered the top-left tile's label. Node-link charts keep the overlay `legend`
+  slot. `useVizCanvas` now measures the **chart area**, not the outer wrapper,
+  so reserved strips shrink the canvas and tooltip coordinates still line up.
+- **Tooltip** shows the full path (`src/components/Component0.tsx`), the metric,
+  language, and a derived one-line note. `hotspotNote` computes from p90 and LOC
+  density rather than inventing prose — `cx 84` alone tells a reader nothing.
+- **Still overlapping:** the zoom cluster sits over the bottom-right tiles.
+  Kept for chrome consistency across all five charts; revisit if it bothers you.
+- Verified in-browser in both themes: nesting, drill-down, breadcrumb-back,
+  tooltip, footer legend. `tsc` clean · `next build` clean · `vitest` 11/11 ·
+  `eslint` 0 errors across `components/viz`, `components/report/viz`, `lib/viz`.
+
+**Pre-existing lint error, not from this work:** `components/graph/TourPanel.tsx:84`
+trips `react-hooks/set-state-in-effect`. Untouched on this branch — it surfaced
+only because the lint scope was widened. Same fix shape as `useReducedMotion`
+in T2.
+
+---
+
+## T5 — Mind map join-key collision *(P2, standalone)*
 
 **Bug.** `RadialMindmap.tsx:157,195` keys the D3 data-join on
 `d.data.id || d.data.name || d.data.label`. The backend
