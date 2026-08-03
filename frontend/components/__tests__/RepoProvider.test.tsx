@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, act } from "@testing-library/react";
 import { RepoProvider, useRepo } from "../RepoProvider";
 import { restoreRepo, type AnalyzeResponse } from "@/lib/api";
 import { getSessionByRepoId } from "@/lib/sessions";
@@ -85,6 +85,11 @@ afterEach(() => {
   // The config has no `globals`, so testing-library's automatic cleanup never
   // registers and mounted trees would stack up across cases.
   cleanup();
+  // Unconditionally, not at the end of each fake-timer test: an assertion that
+  // throws would otherwise skip the restore and leave fake timers installed
+  // for every case after it, where `waitFor` then hangs until the 5s timeout.
+  // One real failure was reporting itself as four.
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -205,6 +210,179 @@ describe("with session metadata in the tab", () => {
 });
 
 // ── Request hygiene ──
+
+describe("hangs, not just failures", () => {
+  it("ends the spinner even when the restore never settles at all", async () => {
+    // The gap that shipped in T17: the fetch carried a 20s AbortSignal, but
+    // `restoreRepo` awaits `getSession()` *before* that fetch, and a hung
+    // session read is invisible to it. The promise below models that — it
+    // never resolves or rejects, so nothing downstream can ever fire.
+    vi.useFakeTimers();
+    mockRestore.mockReturnValue(new Promise(() => {}));
+
+    renderProvider();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(26_000);
+    });
+
+    expect(state()).toBe("unavailable:unreachable:no-url");
+    vi.useRealTimers();
+  });
+
+  it("re-resolves when the session lands after the first pass", async () => {
+    // Auth now falls back to signed-out rather than waiting forever, so a slow
+    // session can arrive after resolution already concluded "not signed in".
+    // Keying the guard on the user is what lets that correct itself.
+    mockAuth.mockReturnValue({ ...SIGNED_IN, user: null });
+    mockRestore.mockResolvedValue({ status: "ok", data: analysis() });
+
+    const { rerender } = renderProvider();
+    await settled();
+    expect(state()).toBe("unavailable:unauthenticated:no-url");
+
+    mockAuth.mockReturnValue(SIGNED_IN);
+    rerender(
+      <RepoProvider repoId="abc123">
+        <Probe />
+      </RepoProvider>,
+    );
+
+    await waitFor(() => expect(state()).toBe("data:kavi"));
+  });
+});
+
+// ── The backend is rebuilding the analysis (HTTP 202) ──
+
+describe("re-analysis in progress", () => {
+  it("waits it out and loads the repo when it finishes", async () => {
+    // `/restore` answers 202 while a background thread rebuilds the analysis
+    // from the clone on disk. It is transient and self-healing, so the right
+    // behaviour is to poll — not to report a failure the user cannot act on.
+    vi.useFakeTimers();
+    mockRestore
+      .mockResolvedValueOnce({ status: "re-analyzing" })
+      .mockResolvedValueOnce({ status: "re-analyzing" })
+      .mockResolvedValue({ status: "ok", data: analysis() });
+
+    renderProvider();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(state()).toBe("data:kavi");
+    expect(mockRestore).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it("does not mistake the 202 body for a loaded repo", async () => {
+    // The original defect in one assertion: a 202 read as success produced a
+    // truthy `repoData` with no `repo_id`, so pages rendered as if loaded.
+    vi.useFakeTimers();
+    mockRestore.mockResolvedValue({ status: "re-analyzing" });
+
+    renderProvider();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(state()).not.toContain("data:");
+    vi.useRealTimers();
+  });
+
+  it("gives up once the re-analysis outruns its budget", async () => {
+    // A re-analysis that throws is respawned by the backend on the next
+    // request, so a repo that cannot be analyzed answers 202 forever. Without
+    // a budget, fixing the parse would just relocate the hang.
+    vi.useFakeTimers();
+    mockRestore.mockResolvedValue({ status: "re-analyzing" });
+
+    renderProvider();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200_000);
+    });
+
+    expect(state()).toBe("unavailable:unreachable:no-url");
+    vi.useRealTimers();
+  });
+
+  it("keeps the deadline alive while the backend is demonstrably working", async () => {
+    // The 25s ceiling exists for "we have no idea what is happening". A 202 is
+    // the opposite of that, so it re-arms rather than firing mid-rebuild.
+    vi.useFakeTimers();
+    mockRestore.mockResolvedValue({ status: "re-analyzing" });
+
+    renderProvider();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+
+    // Well past the ceiling, still inside the budget: no premature recovery.
+    expect(state()).toBe("resolving");
+    vi.useRealTimers();
+  });
+});
+
+// ── Auth churn during an in-flight restore ──
+
+describe("survives a new session object for the same user", () => {
+  it("does not strand the spinner when auth re-emits mid-restore", async () => {
+    // `auth-context` settles from both `getSession()` and `onAuthStateChange`,
+    // and Supabase emits INITIAL_SESSION on subscribe plus TOKEN_REFRESHED
+    // later — each a NEW User object for the same person. With the object in
+    // the effect's deps, one landing mid-restore re-ran the effect, whose
+    // cleanup cancelled the in-flight resolve; the re-run then matched the
+    // guard (keyed on the unchanged id) and returned early. No data, no
+    // reason, no deadline: a permanent spinner on chat and visualize.
+    let release: (v: { status: "ok"; data: AnalyzeResponse }) => void = () => {};
+    mockRestore.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const freshUser = () => ({ ...SIGNED_IN, user: { id: "u1" } });
+    mockAuth.mockReturnValue(freshUser());
+
+    const { rerender } = renderProvider();
+    expect(state()).toBe("resolving");
+
+    // A token refresh lands while the restore is still in flight.
+    mockAuth.mockReturnValue(freshUser());
+    rerender(
+      <RepoProvider repoId="abc123">
+        <Probe />
+      </RepoProvider>,
+    );
+
+    await act(async () => {
+      release({ status: "ok", data: analysis() });
+    });
+
+    await waitFor(() => expect(state()).toBe("data:kavi"));
+  });
+
+  it("spends only one restore when the user object churns", async () => {
+    // The guard still has to hold: `/restore` is rate limited at 30/min, and
+    // re-requesting on every token refresh would burn that for nothing.
+    mockRestore.mockResolvedValue({ status: "ok", data: analysis() });
+    const freshUser = () => ({ ...SIGNED_IN, user: { id: "u1" } });
+
+    mockAuth.mockReturnValue(freshUser());
+    const { rerender } = renderProvider();
+    await settled();
+
+    for (let i = 0; i < 3; i++) {
+      mockAuth.mockReturnValue(freshUser());
+      rerender(
+        <RepoProvider repoId="abc123">
+          <Probe />
+        </RepoProvider>,
+      );
+    }
+
+    expect(mockRestore).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("resolution guard", () => {
   it("restores once per repo id despite re-renders", async () => {
