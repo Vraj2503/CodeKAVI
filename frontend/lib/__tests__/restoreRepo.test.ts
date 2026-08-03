@@ -41,6 +41,29 @@ describe("restoreRepo", () => {
     });
   });
 
+  it("maps 202 to re-analyzing rather than reading it as a loaded repo", async () => {
+    // The bug this pins: `res.ok` is true across the whole 2xx range, so a 202
+    // fell into the success branch and handed the caller
+    // `{"detail":{"status":"re-analyzing"}}` in place of an AnalyzeResponse.
+    // That object is truthy, so `if (!repoData)` passed and every repo page
+    // rendered against a repo with no `repo_id` — chat greeted the user with
+    // "undefined/undefined", visualize fetched `/visualize/…/undefined`.
+    vi.stubGlobal("fetch", respond(202, { detail: { status: "re-analyzing" } }));
+    expect(await restoreRepo("abc")).toEqual({ status: "re-analyzing" });
+  });
+
+  it("never reports a 2xx that isn't 200 as ok", async () => {
+    // Guards the whole class, not just 202: anything in 2xx that is not a
+    // completed analysis must not reach the caller as one.
+    for (const status of [202, 203, 204]) {
+      vi.stubGlobal("fetch", respond(status, { detail: { status: "re-analyzing" } }));
+      const result = await restoreRepo("abc");
+      if (result.status === "ok") {
+        expect(result.data).toHaveProperty("repo_id");
+      }
+    }
+  });
+
   it("maps 404 to expired — the only case re-analysis fixes", async () => {
     vi.stubGlobal("fetch", respond(404, { detail: "Repo not found" }));
     expect(await restoreRepo("abc")).toEqual({ status: "expired" });
