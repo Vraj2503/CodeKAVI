@@ -93,3 +93,48 @@ def test_build_index_never_reaches_the_wire():
     """`_dirs` is a build-time lookup; serializing it would bloat the payload."""
     tree = _build_treemap_tree([_profile("a/b/c.ts"), _profile("a/d.ts"), _profile("e.ts")])
     assert "_dirs" not in json.dumps(tree)
+
+
+# ── Complexity channel (T3b) ──
+
+
+def test_carries_complexity_through_to_the_leaf():
+    tree = _build_treemap_tree([_profile("a.ts", loc=120, complexity=17, complexity_source="cyclomatic")])
+    leaf = _leaves(tree)["a.ts"]
+    assert leaf["complexity"] == 17
+    assert leaf["loc"] == 120
+    assert leaf["complexity_source"] == "cyclomatic"
+
+
+def test_area_stays_byte_size_even_when_loc_is_known():
+    """Area must be comparable across every file, including the ones with no
+    lines of code at all — so it stays bytes and LOC rides along separately."""
+    tree = _build_treemap_tree([_profile("a.ts", size=4096, loc=120, complexity=9)])
+    assert _leaves(tree)["a.ts"]["value"] == 4096
+
+
+def test_unmeasured_file_omits_complexity_entirely():
+    """Emitting 0 or falling back to bytes would put a byte count on a scale
+    that means branches — the frontend must be able to grey the tile instead."""
+    tree = _build_treemap_tree([_profile("main.go", size=800, loc=40, complexity_source="size_fallback")])
+    leaf = _leaves(tree)["main.go"]
+    assert "complexity" not in leaf
+    assert leaf["complexity_source"] == "size_fallback"
+    assert leaf["loc"] == 40
+
+
+def test_profile_without_any_metrics_stays_clean():
+    """Analyses cached before T3b have no metrics at all; the leaf must not
+    sprout null-valued keys the frontend would read as measurements."""
+    leaf = _leaves(_build_treemap_tree([_profile("logo.png", size=900)]))["logo.png"]
+    assert "complexity" not in leaf
+    assert "complexity_source" not in leaf
+    assert "loc" not in leaf
+
+
+def test_zero_complexity_is_preserved_not_dropped():
+    """`if fp.get("complexity")` would silently swallow a legitimate 0."""
+    tree = _build_treemap_tree([_profile("a.ts", loc=0, complexity=0)])
+    leaf = _leaves(tree)["a.ts"]
+    assert leaf["complexity"] == 0
+    assert leaf["loc"] == 0

@@ -183,18 +183,30 @@ def _build_treemap_tree(profiles: list[dict]) -> dict:
                 node["children"].append(existing)
             node = existing
 
-        node["children"].append(
-            {
-                "name": parts[-1],
-                "path": rel_path,
-                # Interim metric: byte size. Replaced by real complexity in T3b;
-                # the frontend reads `meta.metric` rather than assuming.
-                "value": fp.get("size") or 1,
-                "language": fp.get("language"),
-                "role": fp.get("role_label") or fp.get("role"),
-                "importance": fp.get("importance_score"),
-            }
-        )
+        leaf: dict[str, Any] = {
+            "name": parts[-1],
+            # Area stays byte size: every file has one, including the images,
+            # lockfiles and manifests that have no lines of code. Mixing LOC
+            # for source files with bytes for the rest would make tile areas
+            # incomparable — the one thing a treemap must get right.
+            "value": fp.get("size") or 1,
+            "path": rel_path,
+            "language": fp.get("language"),
+            "role": fp.get("role_label") or fp.get("role"),
+            "importance": fp.get("importance_score"),
+        }
+
+        # Color metric. Omitted entirely when the file was never measured, so
+        # the frontend can grey it out instead of coloring it off a byte count
+        # that shares no scale with a branch count.
+        if fp.get("loc") is not None:
+            leaf["loc"] = fp["loc"]
+        if fp.get("complexity") is not None:
+            leaf["complexity"] = fp["complexity"]
+        if fp.get("complexity_source"):
+            leaf["complexity_source"] = fp["complexity_source"]
+
+        node["children"].append(leaf)
 
     # Collapse below the root only. Collapsing the root itself would rename it
     # to the sole top-level directory ("src"), losing the repo identity.
@@ -244,11 +256,14 @@ async def visualize_complexity(
     """
     Build the complexity treemap from file classifications.
 
-    Zero LLM cost — reuses metadata already produced by /analyze.
+    Zero LLM cost — reuses metadata already produced by /analyze, including the
+    cyclomatic complexity computed there (codekavi/complexity.py). Nothing is
+    parsed per request.
 
-    NOTE: `value` is currently byte size, not complexity. The response declares
-    this in `meta.metric` so the UI can label honestly; T3b replaces it with a
-    real cyclomatic count computed from the tree-sitter parsers.
+    Two encodings: tile area is byte size, tile color is cyclomatic complexity.
+    `meta.color_metric` reports which one the color actually carries, because
+    an analysis cached before complexity existed has none to show — the UI
+    labels itself from this rather than assuming.
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
     classification = result.get("file_profiles", [])
@@ -260,6 +275,8 @@ async def visualize_complexity(
     repo_name = result.get("repo_name") or result.get("repo") or "Repository"
     tree["name"] = tree["name"] or repo_name
 
+    measured = sum(1 for fp in selected if fp.get("complexity") is not None)
+
     return {
         "type": "treemap",
         "data": {
@@ -268,8 +285,14 @@ async def visualize_complexity(
                 "total": total,
                 "shown": len(selected),
                 "truncated": total > len(selected),
+                # Area metric — unchanged, and available for every file.
                 "metric": "size",
                 "metric_label": "File size (bytes)",
+                # Color metric. "none" for pre-T3b cached analyses, where every
+                # tile is unmeasured and the chart must say so.
+                "color_metric": "cyclomatic" if measured else "none",
+                "color_metric_label": "Cyclomatic complexity",
+                "measured": measured,
             },
         },
     }

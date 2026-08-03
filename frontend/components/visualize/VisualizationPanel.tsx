@@ -28,7 +28,10 @@ export type VizConfigItem = {
 
 export const VIZ_CONFIG: VizConfigItem[] = [
   { type: "dependencies", label: "Dependency Graph", description: "Visualize file-to-file import relationships and identify dependency hubs.", icon: GitBranch },
-  { type: "complexity", label: "Complexity Treemap", description: "Heatmap of file complexity by importance score — spot maintenance hotspots.", icon: BarChart3 },
+  // Says what the two channels actually encode. The old copy promised
+  // "complexity by importance score", which named a metric the chart has never
+  // drawn — importance is graph centrality, not complexity.
+  { type: "complexity", label: "Complexity Treemap", description: "Files sized by bytes, colored by cyclomatic complexity — spot maintenance hotspots.", icon: BarChart3 },
   { type: "architecture", label: "Architecture Graph", description: "Module-level architecture showing how directories depend on each other.", icon: Layers },
   { type: "dataflow", label: "Data Flow Diagram", description: "Trace data flow from entry points through the system layers.", icon: ArrowRightLeft },
   { type: "mindmap", label: "Mind Map", description: "Radial mind map of the codebase structure, categories, and patterns.", icon: Brain },

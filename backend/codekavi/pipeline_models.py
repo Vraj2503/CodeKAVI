@@ -16,6 +16,7 @@ class FileEntry(BaseModel):
     raw_imports: list[dict[str, Any]] | None = None
     model_config = {"extra": "allow"}
 
+
 class RepoData(BaseModel):
     total_files: int
     total_size: int
@@ -25,6 +26,7 @@ class RepoData(BaseModel):
     files: list[FileEntry]
     skipped_files: list[dict[str, Any]]
     model_config = {"extra": "allow"}
+
 
 class DepGraph(BaseModel):
     edges: list[dict[str, Any]]
@@ -37,6 +39,7 @@ class DepGraph(BaseModel):
     stats: dict[str, Any]
     error: str | None = None
     model_config = {"extra": "allow"}
+
 
 class FileProfile(BaseModel):
     path: str
@@ -52,7 +55,14 @@ class FileProfile(BaseModel):
     out_degree: int
     importance_score: float
     tags: list[str]
+    # Optional so analyses cached before these existed still validate. None
+    # means "not measured", which the treemap renders differently from a real
+    # low score — see codekavi/complexity.py.
+    loc: int | None = None
+    complexity: int | None = None
+    complexity_source: str | None = None
     model_config = {"extra": "allow"}
+
 
 class AnalysisResult(BaseModel):
     success: bool

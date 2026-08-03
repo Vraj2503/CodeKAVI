@@ -227,6 +227,13 @@ export function mockVizResponse(type: string) {
       const pseudo = (seed: number, span: number, floor: number) =>
         Math.floor(((Math.sin(seed * 12.9898) * 43758.5453) % 1 + 1) / 2 * span) + floor;
 
+      /**
+       * `measured: false` mimics a language with no tree-sitter parser: the
+       * backend omits `complexity` entirely rather than sending 0, so the
+       * treemap greys those tiles instead of painting them cold. Keep at least
+       * one such directory here — it is the only way the "Not measured" legend
+       * key and neutral fill get exercised in the dev mock.
+       */
       const dir = (
         path: string,
         count: number,
@@ -235,19 +242,34 @@ export function mockVizResponse(type: string) {
         span: number,
         floor: number,
         seedBase: number,
+        opts: { language?: string; cxSpan?: number; measured?: boolean } = {},
       ) => ({
         name: path.split("/").pop()!,
         path,
-        children: Array.from({ length: count }, (_, i) => ({
-          name: `${role}${i}${ext}`,
-          // Full path — the whole point of T3a. Duplicate basenames across
-          // directories must stay distinguishable in the tooltip.
-          path: `${path}/${role}${i}${ext}`,
-          value: pseudo(seedBase + i, span, floor),
-          language: ext.includes("ts") ? "TypeScript" : "JavaScript",
-          role,
-          importance: Number((pseudo(seedBase + i, 90, 5) / 100).toFixed(2)),
-        })),
+        children: Array.from({ length: count }, (_, i) => {
+          const size = pseudo(seedBase + i, span, floor);
+          const measured = opts.measured !== false;
+          return {
+            name: `${role}${i}${ext}`,
+            // Full path — the whole point of T3a. Duplicate basenames across
+            // directories must stay distinguishable in the tooltip.
+            path: `${path}/${role}${i}${ext}`,
+            // Area is bytes; color is complexity. The two are deliberately
+            // uncorrelated here so a big-but-simple tile is visibly distinct
+            // from a small-but-hot one.
+            value: size,
+            loc: Math.max(1, Math.round(size / 34)),
+            ...(measured
+              ? {
+                  complexity: pseudo(seedBase * 7 + i * 3, opts.cxSpan ?? 40, 1),
+                  complexity_source: "cyclomatic",
+                }
+              : { complexity_source: "size_fallback" }),
+            language: opts.language ?? (ext.includes("ts") ? "TypeScript" : "JavaScript"),
+            role,
+            importance: Number((pseudo(seedBase + i, 90, 5) / 100).toFixed(2)),
+          };
+        }),
       });
 
       return {
@@ -258,19 +280,23 @@ export function mockVizResponse(type: string) {
             name: "src",
             path: "src",
             children: [
-              dir("src/components", 15, ".tsx", "Component", 400, 50, 1),
-              dir("src/services", 10, ".ts", "Service", 300, 100, 2),
-              dir("src/utils", 8, ".ts", "util", 150, 20, 3),
+              dir("src/components", 15, ".tsx", "Component", 400, 50, 1, { cxSpan: 60 }),
+              dir("src/services", 10, ".ts", "Service", 300, 100, 2, { cxSpan: 45 }),
+              dir("src/utils", 8, ".ts", "util", 150, 20, 3, { cxSpan: 12 }),
             ],
           },
-          dir("tests", 20, ".spec.ts", "test", 200, 50, 4),
+          dir("tests", 20, ".spec.ts", "test", 200, 50, 4, { cxSpan: 20 }),
+          dir("cmd", 5, ".go", "worker", 350, 80, 5, { language: "Go", measured: false }),
         ],
         meta: {
-          total: 71,
-          shown: 53,
+          total: 76,
+          shown: 58,
           truncated: true,
           metric: "size",
           metric_label: "File size (bytes)",
+          color_metric: "cyclomatic",
+          color_metric_label: "Cyclomatic complexity",
+          measured: 53,
         },
       };
     }

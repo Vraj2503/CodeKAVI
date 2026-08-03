@@ -66,7 +66,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T1 | Viz color tokens + fix `.viz-tooltip` | P1 | ~20m | — | **DONE** | Tokens + `lib/viz/tokens.ts`; all 7 viz files swept. Needs visual check in-app. |
 | T2 | `VizShell` primitive | P1 | ~45m | T1 | **DONE** | Shell + 3 hooks + breadcrumb. DependencyGraph & DataFlowGraph migrated. |
 | T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | **DONE** | + 11 tests, mock updated to match |
-| T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | TODO | tree-sitter already a dep |
+| T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | **DONE** | `complexity.py` + 38 tests. Fixed a broken tree-sitter-python pin |
 | T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | **DONE** | Nesting, dual encoding, legend, breadcrumb, tooltip. Includes QA-006 |
 | T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | TODO | Severity revised by QA — identity swap, not data loss. Fixture ready |
 | T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | TODO | Standalone, do anytime |
@@ -174,9 +174,14 @@ New treemap payload shape (`GET /visualize/complexity/{repo_id}`):
             "metric": "size", "metric_label": "File size (bytes)" } } }
 ```
 
-- **Read `meta.metric`, never assume.** It is `"size"` today and becomes
-  `"cyclomatic"` after T3b. The legend copy must follow this field — that is
-  what keeps the "Complexity Treemap" name honest.
+Since T3b, leaves also carry `loc`, `complexity` and `complexity_source`, and
+`meta` gains `color_metric` / `color_metric_label` / `measured`. An unmeasured
+file omits `complexity` entirely rather than sending 0 — see the T3b notes.
+
+- **Read `meta.metric`, never assume.** Area is `"size"`; `meta.color_metric`
+  is `"cyclomatic"` once measured and `"none"` for analyses cached before T3b.
+  The legend copy follows these fields — that is what keeps the "Complexity
+  Treemap" name honest.
 - **Single-child directory chains collapse.** `backend/codekavi/routes/` becomes
   one node named `backend/codekavi/routes` instead of three nested header bands
   that squeeze the tiles to nothing.
@@ -422,6 +427,71 @@ analysis.
 **Verify:** a file with heavy branching scores higher than a long-but-linear
 file. Spot-check `DependencyGraph.tsx` (should be the hottest frontend file)
 against `NeuralNetworkViz.tsx` (long, geometry-heavy, low branching).
+
+### T3b as-built notes
+
+**New module** `backend/codekavi/complexity.py`. McCabe: count decision points
+per language grammar, add one. Python / JS / JSX / TS / TSX. Thread-local
+parsers, same arrangement `analyzer.py` uses, because tree-sitter `Parser` and
+`Query` objects mutate on use and classification runs in a thread pool.
+
+**Deviation from the plan, deliberate: area stays BYTES, not LOC.** The plan
+said area = LOC. Building it that way produced a chart where source files were
+sized by lines and images, lockfiles and manifests were sized by bytes — two
+different units in the one channel a treemap must get right. Area is now bytes
+for every file, LOC rides along in the tooltip, and only the *color* channel
+changed. The complexity claim in the name is carried by color, so nothing is
+lost.
+
+**The metric mix problem, and why unmeasured files are grey.** A `.go` file has
+no parser. Falling back to its byte count would put ~800 on a scale whose real
+values run 1–58, stretching the domain by a factor of ~20 and flattening every
+genuine hotspot to the same cold shade. So an unmeasured file gets **no
+`complexity` key at all** — the frontend leaves it out of the domain, paints it
+a flat neutral outside the ramp, labels the tile "not measured", and adds a
+"Not measured" key to the legend. Absent means unknown, never zero.
+
+**Found and fixed: `tree-sitter-python==0.25.0` could never load.** It is
+ABI-incompatible with the pinned `tree-sitter==0.21.3` core — `language()`
+returns a PyCapsule that the 0.21 `Language()` constructor rejects outright.
+Nothing imported it, so the breakage was invisible. Repinned to `0.21.0` in
+`requirements.in` and `requirements.txt`.
+
+**Why tree-sitter for Python rather than stdlib `ast`.** `ast.parse` raises on
+any file whose syntax the runtime does not accept, so a Python 2 repo would
+report zero complexity for every file. tree-sitter recovers locally and still
+counts the branches it can see. Verified: `print "hello"` + `if x and y` scores
+3, not a fallback.
+
+**Cost.** One parse per source file, during `/analyze` only, stored on the file
+profile and cached with the rest of the analysis. Visualization requests parse
+nothing. Full content usually comes free from `FileEntry.content`, which the
+traverser pre-loads for files under 100KB — the shared `content_cache` holds
+only the first 4KB and is useless here, since most control flow lives past byte
+4096. Files over 512KB are skipped: a minified bundle is not a hotspot reading.
+
+**Verified as specified.** `DependencyGraph.tsx` cx 135 vs `NeuralNetworkViz.tsx`
+cx 35 — 15.5 vs 7.3 decisions per 100 lines, so the long geometry-heavy file
+does read cooler. Synthetic check: a 3019-byte linear `.ts` scores 1 while a
+322-byte branchy `.py` scores 21 — under the old size-only chart the linear file
+was the hottest thing on screen.
+
+**Also fixed:** the sidebar described this chart as "complexity by importance
+score". Importance is graph centrality; the chart has never drawn it. Now reads
+"Files sized by bytes, colored by cyclomatic complexity."
+
+**Not counted, on purpose:** `else`/`default` (the `if`/`switch` already
+accounts for both paths) and Python `assert` (JS has no equivalent, so counting
+it would make Python files read systematically hotter on a chart that colors
+both languages from one scale).
+
+**Verification:** 58 backend tests (38 new), 11 frontend tests, `tsc` clean,
+`next build` clean, eslint 0 errors. In-browser in both themes: legend reads
+*"CYCLOMATIC COMPLEXITY 1 → 58 · Not measured · Tile area = file size (bytes) ·
+5 files not measured (no parser for Go). Showing 58 of 76 files."* Confirmed a
+tile keeps its exact fill across a drill, and confirmed the pre-T3b path still
+renders — legend falls back to "FILE SIZE (BYTES)" with *"Color is file size,
+not complexity — re-run the analysis to measure it."*
 
 ---
 

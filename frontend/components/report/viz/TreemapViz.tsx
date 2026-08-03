@@ -4,16 +4,16 @@
  * TreemapViz — directory-nested complexity treemap.
  *
  * Two encodings, which is the whole point:
- *   area  = the size metric (lines of code once T3b lands, bytes before that)
- *   color = complexity
+ *   area  = file size in bytes
+ *   color = cyclomatic complexity (backend/codekavi/complexity.py)
  * A big pale tile is boring-but-long; a small hot tile is the file that bites
  * you. The previous version had one encoding and no key, so it could not
  * express that difference at all.
  *
  * Honesty rule: this component never assumes what it is drawing. It reads
- * `meta.metric_label` for the legend and `complexity_source` per leaf, and says
- * so when values fall back to file size. That is what keeps the name
- * "Complexity Treemap" truthful while the backend metric is still in flight.
+ * `meta.metric_label` / `meta.color_metric` for the legend and `complexity`
+ * per leaf, colors unmeasured files neutral rather than guessing, and says so
+ * in the key. That is what keeps the name "Complexity Treemap" truthful.
  */
 
 import { useEffect, useMemo, useRef, useState, forwardRef, useImperativeHandle } from "react";
@@ -21,6 +21,7 @@ import * as d3 from "d3";
 import {
   seqScale,
   inkOnFill,
+  inkVar,
   inkDimVar,
   edgeVar,
   useVizThemeVersion,
@@ -36,9 +37,17 @@ import { useReducedMotion } from "@/components/viz/useReducedMotion";
 export interface TreemapLeaf {
   name: string;
   path?: string;
-  /** Area metric. Bytes today; lines of code after T3b. */
+  /**
+   * Area metric: byte size. Stays bytes rather than LOC because every file has
+   * a size — including the images and lockfiles that have no lines of code —
+   * and tile areas have to be comparable across all of them.
+   */
   value: number;
-  /** Color metric. Absent until T3b — falls back to `value`. */
+  /**
+   * Color metric: cyclomatic complexity. Absent when the file was never
+   * measured (no parser for its language, or too large). Absent means unknown,
+   * NOT zero — such a tile is drawn neutral and left out of the color domain.
+   */
   complexity?: number;
   loc?: number;
   language?: string;
@@ -59,8 +68,13 @@ export interface TreemapMeta {
   total?: number;
   shown?: number;
   truncated?: boolean;
+  /** Area metric. */
   metric?: string;
   metric_label?: string;
+  /** Color metric. "none" for analyses cached before complexity existed. */
+  color_metric?: string;
+  color_metric_label?: string;
+  measured?: number;
 }
 
 export interface TreemapData extends TreemapGroup {
@@ -76,6 +90,12 @@ const isGroup = (n: TreemapNode): n is TreemapGroup =>
 const BAND = 20;
 const PAD_OUTER = 4;
 const PAD_INNER = 2;
+/**
+ * Fill for files whose complexity could not be measured. Deliberately outside
+ * the sequential ramp — it must not read as any position on the scale.
+ */
+const UNMEASURED_FILL = "hsl(var(--viz-ink-dim) / 0.18)";
+
 /** Below this a tile cannot show a readable label. */
 const LABEL_MIN_W = 54;
 const LABEL_MIN_H = 24;
@@ -121,6 +141,11 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
      * Rescaling per drill would recolor identical files as you navigate, so a
      * file could read "hot" inside a calm directory and "cold" one level up.
      * The legend endpoints stay fixed for the same reason.
+     *
+     * Only MEASURED leaves enter the domain. A `.go` file has no parser, so its
+     * complexity is unknown — folding its byte count in would stretch the scale
+     * by a factor of a thousand and paint every real hotspot the same cold
+     * shade. Unmeasured tiles are drawn neutral instead of guessed at.
      */
     const stats = useMemo(() => {
       const leaves: TreemapLeaf[] = [];
@@ -130,21 +155,33 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
       };
       walk(data);
 
-      const colorOf = (l: TreemapLeaf) => l.complexity ?? l.value ?? 0;
-      const values = leaves.map(colorOf);
+      const measured = leaves.filter((l) => l.complexity != null);
+      const hasComplexity = measured.length > 0;
+
+      // Before the backend computed complexity at all, coloring by size is
+      // still informative — and the legend says so in as many words. Once any
+      // file is measured, size stops being a colorable metric.
+      const colorOf = (l: TreemapLeaf): number | null =>
+        hasComplexity ? l.complexity ?? null : l.value ?? 0;
+
+      const values = (hasComplexity ? measured : leaves)
+        .map(colorOf)
+        .filter((v): v is number => v != null);
+
       const min = values.length ? Math.min(...values) : 0;
       const max = values.length ? Math.max(...values) : 1;
-      const fallbacks = leaves.filter((l) => l.complexity_source === "size_fallback");
-      const fallbackLangs = [...new Set(fallbacks.map((l) => l.language).filter(Boolean))];
+
+      const unmeasured = hasComplexity ? leaves.filter((l) => l.complexity == null) : [];
+      const unmeasuredLangs = [...new Set(unmeasured.map((l) => l.language).filter(Boolean))];
 
       return {
         min,
         max,
         colorOf,
         /** True once the backend actually sends complexity (T3b). */
-        hasComplexity: leaves.some((l) => l.complexity != null),
-        fallbackCount: fallbacks.length,
-        fallbackLangs: fallbackLangs as string[],
+        hasComplexity,
+        unmeasuredCount: unmeasured.length,
+        unmeasuredLangs: unmeasuredLangs as string[],
         // p90 is the "hotspot" threshold used in the tooltip note.
         p90: values.length ? d3.quantile(values.slice().sort(d3.ascending), 0.9) ?? max : max,
       };
@@ -176,7 +213,23 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .paddingInner(PAD_INNER)
         .round(true)(hierarchy);
 
-      const color = seqScale([stats.min, stats.max]);
+      const ramp = seqScale([stats.min, stats.max]);
+      /**
+       * Fill for one tile. Unmeasured files get a flat neutral rather than a
+       * ramp color, so "we could not measure this" never masquerades as "this
+       * is cold". The legend carries a matching swatch.
+       */
+      const fillOf = (l: TreemapLeaf): string => {
+        const v = stats.colorOf(l);
+        return v == null ? UNMEASURED_FILL : ramp(v);
+      };
+      const labelInk = (l: TreemapLeaf): string => {
+        const v = stats.colorOf(l);
+        // inkOnFill parses an rgb() string; the neutral is a translucent hsl,
+        // and it is faint enough in both themes that page ink reads cleanly.
+        return v == null ? inkVar() : inkOnFill(ramp(v));
+      };
+
       type Cell = d3.HierarchyRectangularNode<TreemapNode>;
       const w = (d: Cell) => Math.max(0, d.x1 - d.x0);
       const h = (d: Cell) => Math.max(0, d.y1 - d.y0);
@@ -243,7 +296,7 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .attr("width", w)
         .attr("height", h)
         .attr("rx", 2)
-        .attr("fill", (d) => color(stats.colorOf(d.data as TreemapLeaf)))
+        .attr("fill", (d) => fillOf(d.data as TreemapLeaf))
         .attr("stroke", edgeVar())
         .attr("stroke-width", 0.5)
         .style("cursor", "pointer")
@@ -273,7 +326,7 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .attr("y", 14)
         .attr("font-size", 10.5)
         .attr("pointer-events", "none")
-        .attr("fill", (d) => inkOnFill(color(stats.colorOf(d.data as TreemapLeaf))))
+        .attr("fill", (d) => labelInk(d.data as TreemapLeaf))
         .text((d) => d.data.name)
         .each(function (d) {
           truncateToWidth(this as SVGTextElement, w(d) - 10);
@@ -287,10 +340,12 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .attr("font-size", 9.5)
         .attr("fill-opacity", 0.8)
         .attr("pointer-events", "none")
-        .attr("fill", (d) => inkOnFill(color(stats.colorOf(d.data as TreemapLeaf))))
+        .attr("fill", (d) => labelInk(d.data as TreemapLeaf))
         .text((d) => {
           const l = d.data as TreemapLeaf;
-          return stats.hasComplexity ? `cx ${l.complexity}` : String(l.value ?? "");
+          if (!stats.hasComplexity) return String(l.value ?? "");
+          // Never "cx 0" for a file nobody measured.
+          return l.complexity == null ? "not measured" : `cx ${l.complexity}`;
         });
 
       /* ─ Zoom ─ */
@@ -329,7 +384,9 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
     }
 
     const metricLabel = data.meta?.metric_label ?? "File size (bytes)";
-    const colorLabel = stats.hasComplexity ? "Cyclomatic complexity" : metricLabel;
+    const colorLabel = stats.hasComplexity
+      ? data.meta?.color_metric_label ?? "Cyclomatic complexity"
+      : metricLabel;
 
     return (
       <VizShell
@@ -351,6 +408,7 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
             areaLabel={metricLabel.toLowerCase()}
             min={stats.min}
             max={stats.max}
+            showUnmeasured={stats.unmeasuredCount > 0}
             note={legendNote(stats, data.meta)}
           />
         }
@@ -383,7 +441,7 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
                   <>
                     <dt>Complexity</dt>
                     <dd className="text-right font-semibold text-foreground">
-                      {tip.leaf.complexity}
+                      {tip.leaf.complexity ?? "—"}
                     </dd>
                   </>
                 )}
@@ -422,12 +480,14 @@ function ColorLegend({
   areaLabel,
   min,
   max,
+  showUnmeasured,
   note,
 }: {
   label: string;
   areaLabel: string;
   min: number;
   max: number;
+  showUnmeasured?: boolean;
   note?: string;
 }) {
   // Horizontal: it lives in the footer strip, where vertical space is the
@@ -446,6 +506,16 @@ function ColorLegend({
         />
         <span className="tabular-nums">{fmt(max)}</span>
       </span>
+      {showUnmeasured && (
+        <span className="flex items-center gap-1.5 text-[10.5px]">
+          <span
+            aria-hidden="true"
+            className="h-2.5 w-2.5 rounded-sm border border-border"
+            style={{ backgroundColor: UNMEASURED_FILL }}
+          />
+          Not measured
+        </span>
+      )}
       <span className="text-[10.5px]">Tile area = {areaLabel}</span>
       {note && <span className="text-[10.5px] opacity-80">{note}</span>}
     </div>
@@ -459,26 +529,30 @@ type Stats = {
   max: number;
   p90: number;
   hasComplexity: boolean;
-  fallbackCount: number;
-  fallbackLangs: string[];
-  colorOf: (l: TreemapLeaf) => number;
+  unmeasuredCount: number;
+  unmeasuredLangs: string[];
+  colorOf: (l: TreemapLeaf) => number | null;
 };
 
 /**
  * The legend's honesty line. Surfaces two things a reader cannot otherwise
- * know: that some tiles are sized by a fallback metric, and that the chart is
- * not showing the whole repository.
+ * know: how many tiles carry no complexity reading at all, and that the chart
+ * is not showing the whole repository.
  */
 function legendNote(stats: Stats, meta?: TreemapMeta): string | undefined {
   const parts: string[] = [];
 
   if (!stats.hasComplexity) {
-    parts.push("Color is file size, not complexity yet.");
-  } else if (stats.fallbackCount > 0) {
-    const langs = stats.fallbackLangs.length
-      ? ` — no parser for ${stats.fallbackLangs.join(", ")}`
+    parts.push("Color is file size, not complexity — re-run the analysis to measure it.");
+  } else if (stats.unmeasuredCount > 0) {
+    const n = stats.unmeasuredCount;
+    // Naming the languages turns a vague caveat into something the reader can
+    // act on — they can see at a glance whether the gap covers their codebase
+    // or a handful of config files.
+    const langs = stats.unmeasuredLangs.length
+      ? ` (no parser for ${stats.unmeasuredLangs.slice(0, 3).join(", ")})`
       : "";
-    parts.push(`${stats.fallbackCount} file${stats.fallbackCount === 1 ? "" : "s"} sized by bytes${langs}.`);
+    parts.push(`${n} file${n === 1 ? "" : "s"} not measured${langs}.`);
   }
 
   if (meta?.truncated && meta.shown != null && meta.total != null) {
@@ -496,6 +570,11 @@ function legendNote(stats: Stats, meta?: TreemapMeta): string | undefined {
 function hotspotNote(leaf: TreemapLeaf, stats: Stats): string {
   const v = stats.colorOf(leaf);
   const metric = stats.hasComplexity ? "complexity" : "size";
+
+  if (v == null) {
+    const lang = leaf.language ? `${leaf.language} files` : "this file type";
+    return `Complexity not measured — no parser for ${lang}. Area still reflects file size.`;
+  }
 
   if (stats.max === stats.min) return `Only one distinct ${metric} value in this repository.`;
   if (v >= stats.max) return `Highest ${metric} in the repository.`;
