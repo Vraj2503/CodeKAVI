@@ -26,7 +26,7 @@ import { toast } from "sonner";
 const SLOW_LOAD_MS = 8000;
 
 export function RepoStatePanel() {
-  const { unavailable, retryLoad } = useRepo();
+  const { unavailable, retryLoad, isReanalyzing } = useRepo();
   const params = useParams();
   const pathname = usePathname();
   const router = useRouter();
@@ -68,7 +68,7 @@ export function RepoStatePanel() {
     );
   }
 
-  if (!unavailable) return <ResolvingState />;
+  if (!unavailable) return <ResolvingState reanalyzing={isReanalyzing} />;
 
   const repoLabel = unavailable.repoLabel;
 
@@ -140,7 +140,7 @@ export function RepoStatePanel() {
  * stopped being normal. Every path behind it terminates within the restore
  * timeout, so this can no longer be the last thing a user sees.
  */
-function ResolvingState() {
+function ResolvingState({ reanalyzing }: { reanalyzing: boolean }) {
   const [slow, setSlow] = useState(false);
 
   useEffect(() => {
@@ -151,11 +151,25 @@ function ResolvingState() {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
       <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      <p className="text-sm">Loading repository data…</p>
-      {slow && (
-        <p className="text-xs text-muted-foreground/70">
-          Still working — this is taking longer than usual.
+      {/* When the backend answers 202 we know exactly what the wait is for,
+          so say it. A generic "loading" during a two-minute rebuild is what
+          made this look like a hang. */}
+      <p className="text-sm">
+        {reanalyzing
+          ? "Rebuilding this analysis…"
+          : "Loading repository data…"}
+      </p>
+      {reanalyzing ? (
+        <p className="max-w-xs text-center text-xs text-muted-foreground/70">
+          The cached analysis expired, so the server is re-reading the
+          repository from source. This can take a minute on a large codebase.
         </p>
+      ) : (
+        slow && (
+          <p className="text-xs text-muted-foreground/70">
+            Still working — this is taking longer than usual.
+          </p>
+        )
       )}
     </div>
   );
