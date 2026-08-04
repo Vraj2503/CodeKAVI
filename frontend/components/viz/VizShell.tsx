@@ -24,8 +24,10 @@
 import { useId, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { AlertCircle } from "lucide-react";
+import { useMediaQuery, NARROW_QUERY } from "@/hooks/useMediaQuery";
 import type { VizCanvas } from "./useVizCanvas";
 import type { VizZoom } from "./useVizZoom";
+import type { VizNodeNav } from "./useVizNodeNav";
 
 /* ── Legend ───────────────────────────────────────────────── */
 
@@ -46,19 +48,44 @@ export interface VizLegendProps {
    */
   note?: string;
   title?: string;
+  /**
+   * `horizontal` wraps the keys into a strip instead of stacking them.
+   * `auto` (the default) picks it below `NARROW_QUERY`, where the shell also
+   * moves the legend out of the canvas and into the footer.
+   */
+  orientation?: "vertical" | "horizontal" | "auto";
 }
 
-export function VizLegend({ items, note, title }: VizLegendProps) {
+export function VizLegend({
+  items,
+  note,
+  title,
+  orientation = "auto",
+}: VizLegendProps) {
+  const isNarrow = useMediaQuery(NARROW_QUERY);
+  const horizontal =
+    orientation === "horizontal" || (orientation === "auto" && isNarrow);
   if (!items?.length && !note) return null;
   return (
-    <div className="rounded-lg border border-border bg-card/90 px-3 py-2 shadow-sm backdrop-blur-sm">
+    <div
+      className={cn(
+        horizontal
+          ? "flex flex-wrap items-baseline gap-x-3 gap-y-1"
+          : "rounded-lg border border-border bg-card/90 px-3 py-2 shadow-sm backdrop-blur-sm",
+      )}
+    >
       {title && (
-        <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+        <div
+          className={cn(
+            "text-[10px] font-medium uppercase tracking-wider text-muted-foreground",
+            !horizontal && "mb-1.5",
+          )}
+        >
           {title}
         </div>
       )}
       {!!items?.length && (
-        <ul className="flex flex-col gap-1">
+        <ul className={cn("flex gap-1", horizontal ? "flex-wrap gap-x-3" : "flex-col")}>
           {items.map((it) => (
             <li key={it.label} className="flex items-center gap-2 text-[11px] text-muted-foreground">
               <span
@@ -72,7 +99,14 @@ export function VizLegend({ items, note, title }: VizLegendProps) {
         </ul>
       )}
       {note && (
-        <p className="mt-1.5 max-w-[190px] border-t border-border pt-1.5 text-[10px] leading-snug text-muted-foreground">
+        <p
+          className={cn(
+            "text-[10px] leading-snug text-muted-foreground",
+            horizontal
+              ? "basis-full"
+              : "mt-1.5 max-w-[190px] border-t border-border pt-1.5",
+          )}
+        >
           {note}
         </p>
       )}
@@ -206,6 +240,12 @@ export function VizMessage({ title, body, action, tone = "neutral" }: VizMessage
 export interface VizShellProps {
   canvas: VizCanvas;
   zoom: VizZoom;
+  /**
+   * Per-node keyboard traversal (T12). When supplied, arrows walk the chart's
+   * nodes and the shell advertises it in the description. Charts that have not
+   * been migrated simply omit it and keep zoom-only keys.
+   */
+  nav?: VizNodeNav;
   /** Short chart name, announced to screen readers. */
   label: string;
   /** What the encoding means — what size and color stand for. */
@@ -237,6 +277,7 @@ export interface VizShellProps {
 export function VizShell({
   canvas,
   zoom,
+  nav,
   label,
   description,
   legend,
@@ -252,6 +293,14 @@ export function VizShell({
   // Destructured, not `canvas.attach` inline: React's compiler lint rejects a
   // member expression in a `ref=` slot on the assumption it is a ref object.
   const { attach } = canvas;
+
+  // T16: an inset legend is affordable on a wide canvas and ruinous on a
+  // narrow one — at 375px it covered two whole swim-lanes. Below the
+  // breakpoint it moves into the reserved footer strip, which shrinks the
+  // chart instead of sitting on it, and lays its keys out in a row.
+  const isNarrow = useMediaQuery(NARROW_QUERY);
+  const insetLegend = isNarrow ? null : legend;
+  const stripLegend = isNarrow ? legend : null;
 
   return (
     <div className={cn("flex h-full w-full flex-col overflow-hidden", className)}>
@@ -278,7 +327,13 @@ export function VizShell({
           aria-label={label}
           aria-describedby={descId}
           tabIndex={0}
-          onKeyDown={zoom.onKeyDown}
+          // Node traversal gets first refusal, then zoom. Order matters:
+          // arrows belong to the nodes, +/-/0 to the viewport, and neither
+          // should swallow the other's keys.
+          onKeyDown={(event) => {
+            if (nav?.onKeyDown(event)) return;
+            zoom.onKeyDown(event);
+          }}
           className={cn(
             "h-full w-full",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
@@ -290,6 +345,8 @@ export function VizShell({
 
         <p id={descId} className="sr-only">
           {description} Press plus or minus to zoom, zero to fit the chart to the view.
+          {nav &&
+            " Use the arrow keys to move between items, Enter to open one, and Escape to go back."}
         </p>
 
         {toolbarLeft && (
@@ -298,14 +355,19 @@ export function VizShell({
         {toolbarRight && (
           <div className="absolute right-3 top-3 z-10 flex items-center gap-2">{toolbarRight}</div>
         )}
-        {legend && <div className="absolute bottom-3 left-3 z-10">{legend}</div>}
+        {insetLegend && (
+          <div className="absolute bottom-3 left-3 z-10">{insetLegend}</div>
+        )}
 
         <ZoomCluster zoom={zoom} />
         {overlay}
       </div>
 
-      {footer && (
-        <div className="shrink-0 border-t border-border bg-card/40 px-3 py-2">{footer}</div>
+      {(footer || stripLegend) && (
+        <div className="shrink-0 border-t border-border bg-card/40 px-3 py-2">
+          {footer}
+          {stripLegend}
+        </div>
       )}
     </div>
   );
