@@ -390,3 +390,20 @@
   white-space: nowrap;
   box-shadow: 0 4px 16px hsl(0 0% 0% / 0.14);
 }
+
+/*
+ * T12: a chart node that has keyboard focus has to show it.
+ *
+ * These are SVG <g> elements, so Tailwind's ring utilities (box-shadow based)
+ * do nothing — SVG has no box-shadow. `outline` is the one focus affordance
+ * SVG honours, and it follows the element's rendered geometry rather than a
+ * bounding box, which is what makes it land correctly on rotated or
+ * non-rectangular nodes.
+ */
+.viz-node:focus {
+  outline: none;
+}
+.viz-node:focus-visible {
+  outline: 2px solid hsl(var(--viz-highlight));
+  outline-offset: 3px;
+}
