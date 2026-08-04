@@ -13,13 +13,20 @@ interface VizContainerProps {
   visualizationData: unknown;
 }
 
+/**
+ * T14: these carried emoji (🏗️ 🔗 🧠 🔥 🌊). Emoji-as-design-element is one of
+ * the loudest AI-generated tells, and two of the six shared 🧠 anyway, so the
+ * decoration was not even distinguishing them. Product language instead — and
+ * the treemap's name now matches the chart it labels ("Complexity Treemap",
+ * per D1), which "Complexity Heatmap" did not.
+ */
 const vizTitleMap: Record<string, string> = {
-  architecture_graph: "🏗️ Architecture",
-  dependency_graph: "🔗 Dependencies",
-  radial_mindmap: "🧠 Mind Map",
-  treemap: "🔥 Complexity Heatmap",
-  flow_diagram: "🌊 Data Flow",
-  neural_network: "🧠 Neural Network Architecture",
+  architecture_graph: "Architecture",
+  dependency_graph: "Dependencies",
+  radial_mindmap: "Mind Map",
+  treemap: "Complexity Treemap",
+  flow_diagram: "Data Flow",
+  neural_network: "Neural Network Architecture",
 };
 
 function renderViz(type: string, data: any) {
