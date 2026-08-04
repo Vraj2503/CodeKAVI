@@ -48,13 +48,43 @@ type TreeNode = d3.HierarchyPointNode<MindmapNode> & {
   _children?: TreeNode[] | null;
   x0?: number;
   y0?: number;
+  /** Join key. See `assignJoinKeys` — never read from the data. */
+  _uid?: number;
 };
+
+/**
+ * Give every node an identity the data-join can trust.
+ *
+ * The backend sets a file node's `id` to the bare filename
+ * (`visualize.py:437`), so `index.ts` under two different roles produced two
+ * identical keys. D3's `bindKey` then matched the first datum to the existing
+ * element and treated the second as an enter, silently re-binding one branch's
+ * node to another branch's datum: nodes tweened in from the wrong branch, and
+ * expand/collapse state held on `_children` leaked between same-named nodes.
+ *
+ * A counter beats composing `depth + parent + name` because it stays unique
+ * even for genuine duplicates under one parent, and the hierarchy object lives
+ * for the whole render, so the numbers are stable across updates.
+ *
+ * Must run before `collapse()` — once children move to `_children`, `each`
+ * no longer walks them.
+ */
+function assignJoinKeys(root: TreeNode) {
+  let uid = 0;
+  root.each((node) => {
+    (node as TreeNode)._uid = ++uid;
+  });
+}
 
 export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
   function RadialMindmap({ root }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const tooltipRef = useRef<HTMLDivElement>(null);
+    // Bridges the d3 closure's `fitToScreen` out to the React button. Now that
+    // fitting no longer happens on every update, this is the user's only way
+    // back after panning off the map.
+    const fitRef = useRef<(() => void) | null>(null);
 
     useImperativeHandle(ref, () => containerRef.current!);
 
@@ -72,6 +102,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
       // Build hierarchy
       const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
+      assignJoinKeys(hierarchy);
       const treeDepth = hierarchy.height || 1;
 
       // Node sizing
@@ -137,6 +168,8 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       }
 
       // ── Core update function ──
+      let hasFitted = false;
+
       function update(source: TreeNode) {
         const treeData = treeLayout(hierarchy);
         const nodesData = treeData.descendants() as TreeNode[];
@@ -152,9 +185,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         // ── Links ──
         const linkSel = linksG
           .selectAll<SVGPathElement, d3.HierarchyPointLink<MindmapNode>>("path.mm-link")
-          .data(linksData, (d: any) =>
-            d.target.data.id || d.target.data.name || d.target.data.label || ""
-          );
+          .data(linksData, (d: any) => d.target._uid);
 
         const linkEnter = linkSel
           .enter()
@@ -190,9 +221,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         // ── Nodes ──
         const nodeSel = nodesG
           .selectAll<SVGGElement, TreeNode>("g.mm-node")
-          .data(nodesData, (d: any) =>
-            d.data.id || d.data.name || d.data.label || ""
-          );
+          .data(nodesData, (d: any) => d._uid);
 
         const nodeEnter = nodeSel
           .enter()
@@ -349,10 +378,16 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           (d as TreeNode).y0 = d.y;
         });
 
-        // Auto-fit to viewport after a short delay to allow transition to start
-        setTimeout(() => {
-          fitToScreen(hierarchy);
-        }, 50);
+        // Fit once, on the first render only.
+        //
+        // This used to run on every `update()`, so each expand or collapse
+        // re-zoomed and re-centered the whole map — throwing away the pan and
+        // zoom the user had just set, on every single click. The delay lets
+        // the enter transition start so the bounding box includes new nodes.
+        if (!hasFitted) {
+          hasFitted = true;
+          setTimeout(() => fitToScreen(hierarchy), 50);
+        }
       }
 
       // Zoom + pan
@@ -414,6 +449,8 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           .call(zoom.transform as any, fitTransform);
       }
 
+      fitRef.current = () => fitToScreen(hierarchy);
+
       // Initial render
       update(hierarchy);
 
@@ -431,6 +468,24 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
     return (
       <div ref={containerRef} className="w-full h-full overflow-hidden relative">
         <svg ref={svgRef} className="w-full h-full" />
+        {/* Matches VizShell's zoom cluster (44px per WCAG 2.5.5) so the
+            control reads the same here as on the migrated charts. */}
+        <button
+          type="button"
+          onClick={() => fitRef.current?.()}
+          aria-label="Fit to view"
+          className="absolute bottom-3 right-3 z-10 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-card/90 text-muted-foreground shadow-lg backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--viz-highlight))]"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <div
           ref={tooltipRef}
           style={{ display: "none" }}

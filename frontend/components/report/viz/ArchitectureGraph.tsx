@@ -95,6 +95,14 @@ export const ArchitectureGraph = forwardRef<
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  // Stored as an id, not the node: `nodes` can change under us, and looking the
+  // node up on each render means a selection whose node has gone simply closes
+  // instead of stranding a stale panel.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Read by the d3 handlers, which are bound once and would otherwise close
+  // over a stale `selected`. A ref also keeps selection out of the draw
+  // effect's deps — clicking a node must not rebuild the whole SVG.
+  const selectedIdRef = useRef<string | null>(null);
 
   useImperativeHandle(ref, () => containerRef.current!);
 
@@ -248,6 +256,8 @@ export const ArchitectureGraph = forwardRef<
 
       const nodeGroup = g
         .append("g")
+        .attr("class", "arch-node")
+        .attr("data-node-id", node.id)
         .attr("transform", `translate(${pos.x},${pos.y})`)
         .style("cursor", "pointer");
 
@@ -275,8 +285,17 @@ export const ArchitectureGraph = forwardRef<
         .append("title")
         .text(node.label);
 
-      // Hover effect
+      // Click — open the detail panel. Until now these nodes carried
+      // `cursor: pointer` with no handler behind it, promising an interaction
+      // that did not exist. Labels truncate at 18 characters, so the full name
+      // and the node's connections are worth surfacing.
       nodeGroup
+        .on("click", (event) => {
+          event.stopPropagation();
+          setSelectedId(node.id);
+          selectedIdRef.current = node.id;
+          applySelection(node.id);
+        })
         .on("mouseenter", function () {
           d3.select(this)
             .select("rect")
@@ -289,8 +308,32 @@ export const ArchitectureGraph = forwardRef<
             .select("rect")
             .transition()
             .duration(150)
-            .attr("stroke-width", 1.5);
+            .attr("stroke-width", restingStroke(node.id));
         });
+    });
+
+    /** Stroke width a node returns to on mouseleave — selection outlives hover. */
+    function restingStroke(id: string): number {
+      return selectedIdRef.current === id ? 3 : 1.5;
+    }
+
+    /** Repaint every node's resting stroke against the current selection. */
+    function applySelection(id: string | null) {
+      g.selectAll<SVGGElement, unknown>("g.arch-node").each(function () {
+        const nodeId = this.getAttribute("data-node-id");
+        d3.select(this)
+          .select("rect")
+          .transition()
+          .duration(150)
+          .attr("stroke-width", nodeId === id ? 3 : 1.5);
+      });
+    }
+
+    // Clicking the canvas clears the selection, matching DataFlowGraph.
+    svg.on("click", () => {
+      setSelectedId(null);
+      selectedIdRef.current = null;
+      applySelection(null);
     });
 
     // Zoom + pan
@@ -326,9 +369,90 @@ export const ArchitectureGraph = forwardRef<
     };
   }, [nodes, edges, containerSize]);
 
+  const selected = nodes.find((n) => n.id === selectedId) ?? null;
+
   return (
-    <div ref={containerRef} className="w-full h-full overflow-hidden">
+    <div ref={containerRef} className="w-full h-full overflow-hidden relative">
       <svg ref={svgRef} className="w-full h-full" />
+      {selected && (
+        <NodeDetail
+          node={selected}
+          nodes={nodes}
+          edges={edges}
+          onClose={() => {
+            setSelectedId(null);
+            selectedIdRef.current = null;
+          }}
+        />
+      )}
     </div>
   );
 });
+
+/**
+ * What a node click reveals. Lane labels truncate at 18 characters and the
+ * lane itself only says which layer a node sits in — neither answers "what
+ * does this connect to", which is the question an architecture diagram exists
+ * to answer.
+ */
+function NodeDetail({
+  node,
+  nodes,
+  edges,
+  onClose,
+}: {
+  node: Node;
+  nodes: Node[];
+  edges: Edge[];
+  onClose: () => void;
+}) {
+  const labelOf = (id: string) => nodes.find((n) => n.id === id)?.label ?? id;
+  const dependsOn = edges.filter((e) => e.source === node.id).map((e) => labelOf(e.target));
+  const usedBy = edges.filter((e) => e.target === node.id).map((e) => labelOf(e.source));
+
+  return (
+    <div className="glass-panel absolute top-3 left-3 z-20 max-w-xs rounded-lg px-4 py-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-foreground break-words">{node.label}</div>
+          <div className="mt-0.5 uppercase tracking-wide text-[10px] text-muted-foreground">
+            {node.type || "other"}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          ×
+        </button>
+      </div>
+
+      <ConnectionList title="Depends on" items={dependsOn} />
+      <ConnectionList title="Used by" items={usedBy} />
+
+      {dependsOn.length === 0 && usedBy.length === 0 && (
+        // Said plainly: an isolated node is a finding, not an empty panel.
+        <p className="mt-2 text-muted-foreground">No connections in this view.</p>
+      )}
+    </div>
+  );
+}
+
+function ConnectionList({ title, items }: { title: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {title} ({items.length})
+      </div>
+      <div className="mt-1 max-h-32 space-y-0.5 overflow-y-auto">
+        {items.map((label) => (
+          <div key={label} className="truncate font-mono text-[11px] text-muted-foreground">
+            {label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

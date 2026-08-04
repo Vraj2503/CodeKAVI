@@ -68,9 +68,9 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T3a | Backend: nest by directory, full paths, truncation flag | P1 | ~15m | — | **DONE** | + 11 tests, mock updated to match |
 | T3b | Backend: real cyclomatic complexity | P1 | ~30m | T3a | **DONE** | `complexity.py` + 38 tests. Fixed a broken tree-sitter-python pin |
 | T4 | Treemap rewrite on VizShell | P1 | ~40m | T1,T2,T3a | **DONE** | Nesting, dual encoding, legend, breadcrumb, tooltip. Includes QA-006 |
-| T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | TODO | Severity revised by QA — identity swap, not data loss. Fixture ready |
-| T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | TODO | Standalone, do anytime |
-| T7 | Remove Architecture lie affordance | P1 | ~5m | — | TODO | Standalone, do anytime |
+| T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | **DONE** | Per-node `_uid` join key; verified against the duplicate-name fixture |
+| T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | **DONE** | Fit once on mount; added the Fit-to-view button the fix made necessary |
+| T7 | Remove Architecture lie affordance | P1 | ~5m | — | **DONE** | Wired the click to a detail panel rather than dropping the cursor |
 | T8 | ResizeObserver for mind map + neural net | P2 | ~15m | — | TODO | |
 | T9 | Architecture retrofit onto VizShell | P2 | ~20m | T1,T2 | TODO | |
 | T10 | Request timeout + human errors + actionable empty | P2 | ~15m | — | TODO | |
@@ -604,6 +604,25 @@ under three roles and `utils.ts` under two, on purpose. Expand Routes and Models
 then collapse Routes. Every node stays put and nothing tweens in from another
 branch.
 
+### T5 as-built notes
+
+Keyed on a per-node counter (`_uid`, assigned by `assignJoinKeys`) rather than
+the plan's `depth + parent + name`. A composed path still collides when a parent
+genuinely holds two children of the same name; a counter cannot. The hierarchy
+object lives for the whole render, so the numbers are stable across updates.
+
+It must run **before** `collapse()` — once children move to `_children`,
+`hierarchy.each` no longer walks them and the collapsed subtrees would get no
+keys at all.
+
+**Verified** against the fixture by reading `__data__._uid` off the DOM. With
+Routes, Models and Services expanded: 15 nodes, three separate `index.ts` at
+uids 9, 12 and 15 — all distinct where the old key produced one shared
+`"index.ts"`. Collapsing Routes removed exactly 7/8/9 and left
+`10:User.ts | 11:Order.ts | 12:index.ts | 13:OrderService.ts | 14:utils.ts |
+15:index.ts` in place. The QA report's signature — Models' order flipping to
+`index.ts, User.ts, Order.ts` — no longer reproduces.
+
 ---
 
 ## T6 — Mind map viewport thrash *(P1, standalone)*
@@ -616,6 +635,24 @@ whole map, destroying the user's position and overriding their manual zoom.
 
 **Verify:** expand three nodes in a row; the viewport does not move.
 
+### T6 as-built notes
+
+A `hasFitted` flag in the render closure gates the existing 50ms fit; the delay
+stays so the bounding box includes nodes that are still entering.
+
+**The mind map had no "Fit to view" control**, because it is not on `VizShell`
+(no task covers that retrofit — T9 is Architecture only). Fitting on every
+update was accidentally serving as the escape hatch, so removing it would have
+left a user who panned off the map with no way back but a reload. Added a single
+44px button matching `VizShell`'s zoom cluster, driven through a `fitRef` that
+bridges the d3 closure out to React. When the mind map does move onto `VizShell`,
+this collapses into the shared cluster.
+
+**Verified:** transform after the initial fit was
+`translate(96.2,283) scale(1.5)`, and it was byte-identical after three
+consecutive expands. The button then re-fit to `scale(0.847)` to take in the
+now-larger tree.
+
 ---
 
 ## T7 — Architecture lie affordance *(P1, standalone)*
@@ -627,6 +664,39 @@ that have **no click handler**.
 `selected` popover pattern) or drop the cursor style.
 
 **Verify:** cursor state matches actual behavior.
+
+### T7 as-built notes
+
+Took the preferred branch. Dropping the cursor would have been a one-line fix,
+but node labels truncate at 18 characters (`truncate(node.label)`) and the lane
+only tells you which layer a node sits in — neither answers "what does this
+connect to", which is the question an architecture diagram exists to answer.
+The affordance was worth honouring rather than removing.
+
+The panel shows the full label, the layer, and both directions of connection
+("Depends on" / "Used by") derived from `edges`, with an explicit "No
+connections in this view" rather than an empty card — an isolated node is a
+finding.
+
+**Two things worth knowing:**
+- Selection is held as an **id**, not a node. `nodes` can change under the
+  component, and looking the node up per render means a selection whose node
+  disappeared simply closes instead of stranding a stale panel.
+- A `selectedIdRef` shadows it for the d3 handlers, which bind once. Putting
+  `selectedId` in the draw effect's deps would rebuild the entire SVG — and
+  re-run the auto-fit — on every click.
+
+Not on `VizShell`, so the panel is positioned inside the component's own
+container (which gained `relative`). It uses the same `glass-panel` /
+`top-3 left-3` treatment as DataFlow's overlay, so T9 can lift it into the
+shell's `overlay` slot unchanged.
+
+**Verified** in both themes: clicking `auth.routes.ts` shows
+"ROUTES · Depends on (2)"; clicking `domain0Service.ts` shows both
+"Depends on (1) User.ts" and "Used by (1) auth.routes.ts". Selection survives
+hover (stroke stays 3 through mouseenter/mouseleave, resting width 1.5 for
+everything else), and a background click clears both the panel and the
+highlight. No console errors.
 
 ---
 
