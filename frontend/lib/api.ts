@@ -330,36 +330,63 @@ export interface TourResponse {
 // ── API Functions ──
 
 /**
- * Restore analysis results from backend cache (Redis/Supabase).
- * Returns null if the repo has expired (404), throws on other errors.
+ * Why a restore failed — not merely that it did.
+ *
+ * The previous signature collapsed "the cache expired", "you are signed out"
+ * and "the backend is unreachable" into a single `null` (plus a throw carrying
+ * raw backend text). Each needs a different action from the user, so the caller
+ * has to be able to tell them apart before it can offer a recovery.
  */
-export async function restoreRepo(
-  repoId: string,
-): Promise<AnalyzeResponse | null> {
+export type RestoreResult =
+  | { status: "ok"; data: AnalyzeResponse }
+  /** 404 — the 3-tier cache chain has nothing. Re-analysis is the only fix. */
+  | { status: "expired" }
+  /** 401/403 — `/restore` requires a Supabase JWT; a shared link arrives without one. */
+  | { status: "unauthenticated" }
+  /** Network failure, timeout, or 5xx. Retrying may work; re-analysing won't. */
+  | { status: "unreachable"; detail: string };
+
+/** A restore that hasn't answered by now isn't going to. */
+const RESTORE_TIMEOUT_MS = 20_000;
+
+/**
+ * Restore analysis results from the backend cache chain (memory → Redis → Supabase).
+ */
+export async function restoreRepo(repoId: string): Promise<RestoreResult> {
   if (repoId === "dev-mock-repo") {
     const { mockAnalyzeResponse } = await import("./mockData");
-    return mockAnalyzeResponse();
+    return { status: "ok", data: mockAnalyzeResponse() };
   }
 
+  let res: Response;
   try {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE}/restore/${repoId}`, {
+    res = await fetch(`${API_BASE}/restore/${repoId}`, {
       headers,
+      // Without a deadline, a backend that accepts the socket and never replies
+      // leaves the page spinning forever — the exact dead end this call feeds.
+      signal: AbortSignal.timeout(RESTORE_TIMEOUT_MS),
     });
-    if (res.status === 404) {
-      return null; // Repo expired — caller should show re-analyze prompt
-    }
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`Restore failed: ${res.status} ${errText}`);
-    }
-    return res.json();
   } catch (e: unknown) {
-    if ((e as any).message?.includes("Restore failed")) throw e;
-    // Network error — return null so UI degrades gracefully
-    console.warn("Failed to restore repo:", e);
-    return null;
+    const detail = e instanceof Error ? e.message : String(e);
+    console.warn("Failed to restore repo:", detail);
+    return { status: "unreachable", detail };
   }
+
+  if (res.ok) {
+    try {
+      return { status: "ok", data: await res.json() };
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { status: "unreachable", detail: `Malformed response: ${detail}` };
+    }
+  }
+  if (res.status === 404) return { status: "expired" };
+  if (res.status === 401 || res.status === 403) {
+    return { status: "unauthenticated" };
+  }
+  const errText = await res.text().catch(() => "");
+  return { status: "unreachable", detail: `${res.status} ${errText}`.trim() };
 }
 
 export async function analyzeRepo(githubUrl: string): Promise<AnalyzeResponse> {

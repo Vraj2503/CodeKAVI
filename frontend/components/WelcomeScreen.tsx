@@ -25,9 +25,9 @@ import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
 import { type AnalyzeResponse } from "@/lib/api";
 import {
-  createSession,
   getSessions,
   deleteSession,
+  persistAnalyzedRepo,
   type Session,
 } from "@/lib/sessions";
 import { useAuth } from "@/lib/auth-context";
@@ -74,33 +74,9 @@ export function WelcomeScreen() {
 
   const handleAnalysisComplete = async (data: AnalyzeResponse) => {
     try {
-      const session = await createSession({
-        repo_id: data.repo_id,
-        repo_name: data.repo_name,
-        owner: data.owner,
-        github_url: data.github_url,
-        total_files: data.total_files,
-        total_size_formatted: data.total_size_formatted,
-        languages: data.languages,
-      });
-
-      // Store only lightweight identifiers — NOT the full analysis data (which can exceed 5MB)
-      // RepoProvider will hydrate from session metadata instead
-      sessionStorage.setItem(
-        `codekavi-session-meta-${data.repo_id}`,
-        JSON.stringify({
-          repo_id: data.repo_id,
-          repo_name: data.repo_name,
-          owner: data.owner,
-          github_url: data.github_url,
-          total_files: data.total_files,
-          total_size_formatted: data.total_size_formatted,
-          languages: data.languages,
-        }),
-      );
-      if (session) {
-        sessionStorage.setItem(`codekavi-session-${data.repo_id}`, session.id);
-      }
+      // Session row + the per-tab pointers RepoProvider hydrates from. Shared
+      // with the re-analyze path in RepoStatePanel so the two cannot drift.
+      await persistAnalyzedRepo(data);
 
       // Navigate to the graph page for this repo
       router.push(`/repo/${data.repo_id}/graph`);

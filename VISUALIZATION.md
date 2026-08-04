@@ -80,7 +80,7 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T14 | Drop emoji from `VizContainer` title map | P3 | ~5m | — | TODO | |
 | T15 | Write `DESIGN.md` for the viz system | P3 | ~15m | T1,T2 | TODO | |
 | T16 | Responsive + touch | P2 | ~30m | T2,T4 | TODO | Scope widened by QA-001 — canvas is 7px at 375px, not just "small" |
-| T17 | Fix infinite-loading dead-end on shared/bookmarked repo links | **P1** | ~20m | — | TODO | QA-002. Standalone, do anytime |
+| T17 | Fix infinite-loading dead-end on shared/bookmarked repo links | **P1** | ~20m | — | **DONE** | QA-002. `RepoStatePanel` + 19 tests. Also fixed sign-in return-to |
 | T18 | Human error copy instead of raw backend strings | P2 | ~25m | — | TODO | QA-003. Widens T10 to `useRepoGraph` |
 
 **Suggested order:** T1 → T2 → T3a → T4, with T5/T6/T7 dropped in whenever
@@ -217,9 +217,10 @@ file omits `complexity` entirely rather than sending 0 — see the T3b notes.
 /repo/dev-mock-repo/visualize?type=<t>&dev=true
 ```
 
-`lib/api.ts` short-circuits on the repo id, but `RepoProvider.tsx:113` gates on
-`?dev=true`. Omit the flag and you hit the T17 dead-end, not a working page.
-Frontend only — `npm run dev`, no backend, no Redis, no auth.
+`lib/api.ts` short-circuits on the repo id, but `RepoProvider` gates the mock on
+`?dev=true`. Since T17, omitting the flag no longer hangs — you get the "Sign in
+to open this analysis" recovery screen instead, which is correct but is not the
+mock. Frontend only — `npm run dev`, no backend, no Redis, no auth.
 
 All six `type` values work against the mock as of 2026-08-02.
 
@@ -778,6 +779,75 @@ re-analyze this repository") rather than an eternal spinner.
 
 **Verify:** open a repo URL in a private window. You get an actionable screen
 within a few seconds, never an indefinite loading message.
+
+### T17 as-built notes
+
+**The plan understated the failure.** The missing `else` was real, but a cold
+load has three distinct ways to fail and the code could not tell them apart:
+`lib/api.ts` `restoreRepo` returned `AnalyzeResponse | null`, folding "the cache
+expired" (404) together with "the network died", and *throwing* raw backend text
+on 401. Since `/restore` is authenticated (`analyze.py:859`), **a signed-out
+visitor following a shared link is the single most likely case** — and the plan's
+suggested copy, "This analysis has expired," would have been a lie for them.
+
+So `restoreRepo` now returns a discriminated `RestoreResult` —
+`ok` / `expired` / `unauthenticated` / `unreachable` — and each maps to its own
+recovery. Offering "Re-analyze" to someone whose backend is down aims them at an
+operation that fails the same way; offering it to someone signed out is worse.
+
+**Resolution order** in `RepoProvider`, every branch terminating:
+1. `?dev=true` (development only) — mock data, no network. This now runs *before*
+   the `sessionStorage` check rather than after, so an explicit dev override
+   wins over stale tab metadata.
+2. This tab's session metadata — restore, and on a cache miss degrade to the
+   metadata with `needsReanalysis` (unchanged behaviour; chat outlives the
+   analysis cache because the embeddings are in Zilliz).
+3. **New:** a cold restore straight from the backend cache chain. Most shared
+   links land here and simply work — the analysis is usually still cached.
+4. Otherwise `unavailable`, with a reason.
+
+**Deviation from the plan's "degrade" default.** With stored metadata *and* a
+401, the old code degraded to minimal data. It now shows the sign-in screen:
+chat would fail identically, so degrading only hides the real problem.
+
+**What the fix needed that the plan didn't mention:**
+- `getSessionByRepoId` (`lib/sessions.ts`) — a repo id in a URL is opaque, so
+  recovering `github_url` from Supabase is what gives "Re-analyze" a target.
+  Without it the expired screen can only say "go away and start over".
+- **Re-analysis mints a new `repo_id`** (`cloner.py:102` is `uuid4`, and the
+  signature dedupe in `cache.py` can only reuse an id whose cache entry still
+  exists — which by definition it doesn't here). So `RepoStatePanel` navigates
+  to `/repo/<new-id>/<same-view>` on completion. Landing the user back on the
+  URL that just failed would rebuild the dead end on their next reload.
+- `AbortSignal.timeout(20s)` on the restore. A backend that accepts the socket
+  and never answers would otherwise reproduce the original bug through a
+  different door.
+- A `useRef` guard so StrictMode's double-invoke doesn't spend two of the
+  endpoint's 30 requests/min on one page load.
+- `/login?next=` → `/auth/callback?next=`. The callback already read `next`;
+  nothing ever sent it. Without this, "Sign in" drops you on the dashboard
+  having lost the link you followed. Both ends reject non-same-origin paths.
+- The **graph page** is gated too. `/repo/<id>` redirects to `/graph`, so that
+  is where most shared links actually land — fixing only `/visualize` would have
+  left the common case broken. It keeps its independent fast path and defers
+  only when the repo is known to be unloadable.
+
+**Deliberately not done:** `GraphCanvas` still renders raw backend strings on its
+own fetch failures. That is T18/QA-003 and it is a different hook.
+
+**Verified.** 30 frontend tests (19 new: 11 on provider resolution, 8 on the
+restore taxonomy), `tsc`, `eslint` and `next build` all clean. In-browser on a
+cold tab at `/repo/<unknown-id>/{visualize,graph,chat,report}`: all four reach
+"Sign in to open this analysis" with `?next=` set correctly, in both themes, no
+console errors, and **no request sent** — the signed-out short-circuit skips the
+round trip. The `expired` and `unreachable` panels were confirmed by temporarily
+forcing each state. `?dev=true` still bypasses cleanly.
+
+**Not verified end-to-end:** the successful cold-restore path and the re-analyze
+completion hand-off both need a running backend and a signed-in Supabase session;
+they are covered by unit tests only. Re-analysis also runs through
+`AnalysisProgress` (streaming), so it shows real staged progress rather than the
+report page's bare spinner.
 
 ---
 
