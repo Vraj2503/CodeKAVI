@@ -32,6 +32,7 @@ import {
 import { VizBreadcrumb, type VizCrumb } from "@/components/viz/VizBreadcrumb";
 import { useVizCanvas } from "@/components/viz/useVizCanvas";
 import { useVizZoom, ZOOM_MIN, ZOOM_MAX } from "@/components/viz/useVizZoom";
+import { useVizNodeNav } from "@/components/viz/useVizNodeNav";
 import { useReducedMotion } from "@/components/viz/useReducedMotion";
 
 /* ── Types ────────────────────────────────────────────────── */
@@ -266,6 +267,13 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
     const canvas = useVizCanvas();
     const reducedMotion = useReducedMotion();
     const zoom = useVizZoom(!reducedMotion);
+    // Enter drills into a module exactly as a click does, so the two paths
+    // cannot drift. Escape backs out to the module overview.
+    const nav = useVizNodeNav({
+      onActivate: (el) =>
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+      onEscape: () => setExpanded(null),
+    });
     const containerRef = canvas.containerRef;
     const containerSize = canvas.size;
 
@@ -525,6 +533,23 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
           .selectAll<SVGGElement, SN>("g")
           .data(sNodes)
           .join("g")
+          // T12: drill-down was mouse-only, so the single most useful thing
+          // this chart does was unreachable without a pointer. `viz-node`
+          // carries the focus ring; `useVizNodeNav` adds `tabindex="-1"`.
+          .attr("class", "dep-node viz-node")
+          .attr("role", isModView && modules?.length ? "button" : "img")
+          .attr("aria-label", (d) => {
+            const kind = isModView ? "module" : "file";
+            const degree = sEdges.filter((e) => {
+              const s = typeof e.source === "object" ? (e.source as SN).id : String(e.source);
+              const t = typeof e.target === "object" ? (e.target as SN).id : String(e.target);
+              return s === d.id || t === d.id;
+            }).length;
+            // The drawn label truncates at 15–20 characters and the node's
+            // degree is encoded only as circle radius — neither survives a
+            // screen reader without being said out loud.
+            return `${d.label}, ${kind}, ${degree} connection${degree === 1 ? "" : "s"}`;
+          })
           .style("cursor", isModView ? "pointer" : "default");
 
         // Circles
@@ -571,6 +596,11 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         if (isModView && modules?.length) {
           node.on("click", (_ev, d) => setExpanded(d.id));
         }
+
+        // Hand the drawn nodes to the keyboard controller. Runs on every
+        // `draw()` — including the force path, which redraws after layout —
+        // because d3 replaced the elements each time.
+        nav.register(g.node(), "g.dep-node");
 
         // Hover-highlight connected nodes & edges, plus a following tooltip
         function pointerPos(ev: MouseEvent) {
@@ -750,6 +780,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
         cancelled = true;
         if (sim) sim.stop();
         zoom.register(null, null, null);
+        nav.register(null);
         svg.selectAll("*").remove();
       };
     }, [
@@ -763,6 +794,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
       containerRef,
       modules,
       zoom,
+      nav,
     ]);
 
     /**
@@ -804,6 +836,7 @@ export const DependencyGraph = forwardRef<HTMLDivElement, DependencyGraphProps>(
       <VizShell
         canvas={canvas}
         zoom={zoom}
+        nav={nav}
         label={isModuleView ? "Module dependency graph" : "File dependency graph"}
         description={
           `${dispNodes.length} nodes and ${dispEdges.length} directed dependencies, ` +
