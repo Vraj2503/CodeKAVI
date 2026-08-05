@@ -16,6 +16,8 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle, useCallback } from "react";
 import * as d3 from "d3";
 import { catVar, inkDimVar } from "@/lib/viz/tokens";
+import { useVizCanvas } from "@/components/viz/useVizCanvas";
+import { useReducedMotion } from "@/components/viz/useReducedMotion";
 
 interface MindmapNode {
   id?: string;
@@ -79,20 +81,41 @@ function assignJoinKeys(root: TreeNode) {
 export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
   function RadialMindmap({ root }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
     const tooltipRef = useRef<HTMLDivElement>(null);
     // Bridges the d3 closure's `fitToScreen` out to the React button. Now that
     // fitting no longer happens on every update, this is the user's only way
     // back after panning off the map.
     const fitRef = useRef<(() => void) | null>(null);
 
-    useImperativeHandle(ref, () => containerRef.current!);
+    // T8: this chart had no resize handling at all — its only dependency was
+    // `root`, so collapsing the sidebar left it drawing against mount-time
+    // dimensions forever.
+    const canvas = useVizCanvas();
+    const { attach } = canvas;
+    const reducedMotion = useReducedMotion();
+
+    /**
+     * The built hierarchy, kept for as long as `root` is the same object.
+     *
+     * Expand/collapse state lives on the hierarchy (`children` vs
+     * `_children`), so rebuilding it on every redraw would mean a sidebar
+     * collapse silently threw away everything the user had opened. Reusing it
+     * also keeps `_uid` stable, which is what the data-join keys on.
+     */
+    const treeRef = useRef<{ source: MindmapNode; tree: TreeNode } | null>(null);
+
+    useImperativeHandle(ref, () => canvas.containerRef.current!);
 
     const renderTree = useCallback(() => {
-      if (!svgRef.current || !containerRef.current || !root) return;
+      if (!svgRef.current || !canvas.ready || !root) return;
 
-      const width = containerRef.current.clientWidth || 900;
-      const height = containerRef.current.clientHeight || 500;
+      // Measured by the observer, not read off the node: that is what makes a
+      // sidebar collapse redraw this chart instead of leaving it stale.
+      const { width, height } = canvas.size;
+
+      /** Hover feedback and fit-to-view tweens, both silenced by T11. */
+      const hoverMs = reducedMotion ? 0 : 100;
+      const fitMs = reducedMotion ? 0 : 500;
 
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
@@ -100,9 +123,30 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
       const tooltip = d3.select(tooltipRef.current);
 
-      // Build hierarchy
-      const hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
-      assignJoinKeys(hierarchy);
+      // Collapse everything below depth 1 — the opening state, applied once
+      // per `root` rather than on every redraw.
+      function collapse(node: TreeNode) {
+        if (node.children) {
+          if (node.depth >= 1) {
+            node._children = node.children as TreeNode[];
+            node.children = undefined;
+          } else {
+            node.children.forEach((child) => collapse(child as TreeNode));
+          }
+        }
+      }
+
+      // Build the hierarchy only when the data actually changed. A resize
+      // redraw reuses it, so expanded branches survive the sidebar.
+      let hierarchy: TreeNode;
+      if (treeRef.current?.source === root) {
+        hierarchy = treeRef.current.tree;
+      } else {
+        hierarchy = d3.hierarchy<MindmapNode>(root) as TreeNode;
+        assignJoinKeys(hierarchy);
+        collapse(hierarchy);
+        treeRef.current = { source: root, tree: hierarchy };
+      }
       const treeDepth = hierarchy.height || 1;
 
       // Node sizing
@@ -127,19 +171,6 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       if (nodesG.empty()) {
         nodesG = g.append("g").attr("class", "nodes-group");
       }
-
-      // Collapse all children beyond depth 1 initially
-      function collapse(node: TreeNode) {
-        if (node.children) {
-          if (node.depth >= 1) {
-            node._children = node.children as TreeNode[];
-            node.children = undefined;
-          } else {
-            node.children.forEach((child) => collapse(child as TreeNode));
-          }
-        }
-      }
-      collapse(hierarchy);
 
       // Store initial position
       hierarchy.x0 = height / 2;
@@ -175,7 +206,10 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         const nodesData = treeData.descendants() as TreeNode[];
         const linksData = treeData.links();
 
-        const duration = 400;
+        // T11: a d3 transition with duration 0 still lands on the final
+        // attributes, so the tree simply appears in its new shape instead of
+        // sliding into it.
+        const duration = reducedMotion ? 0 : 400;
 
         // Assign y (horizontal position) based on depth for consistent spacing
         nodesData.forEach((d) => {
@@ -324,39 +358,51 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
           update(node);
         });
 
+        /**
+         * Cursor position in CONTAINER coordinates.
+         *
+         * B5: this used `event.offsetX`, which is relative to whichever SVG
+         * child was hovered — so the tooltip landed on the node rather than
+         * the cursor, and differed between Chrome and Firefox.
+         */
+        function place(event: MouseEvent) {
+          const rect = canvas.containerRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          tooltip
+            .style("left", `${event.clientX - rect.left + 15}px`)
+            .style("top", `${event.clientY - rect.top - 10}px`);
+        }
+
         // Hover
         nodeUpdate
-          .on("mouseenter", function (event, d) {
+          .on("mouseenter", function (event: MouseEvent, d) {
             const label = getLabel(d.data);
             const childCount =
               d.children?.length || (d as TreeNode)._children?.length || 0;
             d3.select(this)
               .select(".node-rect")
               .transition()
-              .duration(100)
+              .duration(hoverMs)
               .attr("stroke-width", 2.5);
             tooltip
               .style("display", "block")
-              .style("left", `${event.offsetX + 15}px`)
-              .style("top", `${event.offsetY - 10}px`)
               .html(
                 `<strong>${label}</strong>` +
                   (childCount > 0
                     ? `<br/><span style="color:${inkDimVar()}">${childCount} children</span>`
                     : "")
               );
+            place(event);
           })
-          .on("mousemove", function (event) {
-            tooltip
-              .style("left", `${event.offsetX + 15}px`)
-              .style("top", `${event.offsetY - 10}px`);
+          .on("mousemove", function (event: MouseEvent) {
+            place(event);
           })
           .on("mouseleave", function (d) {
             const depth = (d as any).depth ?? 0;
             d3.select(this)
               .select(".node-rect")
               .transition()
-              .duration(100)
+              .duration(hoverMs)
               .attr("stroke-width", depth === 0 ? 2 : 1.5);
             tooltip.style("display", "none");
           });
@@ -404,7 +450,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         const allNodes = rootNode.descendants();
         if (allNodes.length <= 1) {
           // Single node — just center it
-          svg.transition().duration(500).call(
+          svg.transition().duration(fitMs).call(
             zoom.transform as any,
             d3.zoomIdentity.translate(width / 2, height / 2)
           );
@@ -445,7 +491,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
         svg
           .transition()
-          .duration(500)
+          .duration(fitMs)
           .call(zoom.transform as any, fitTransform);
       }
 
@@ -457,16 +503,14 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
       return () => {
         svg.selectAll("*").remove();
       };
-    }, [root]);
+    }, [root, canvas.size, canvas.ready, canvas.containerRef, reducedMotion]);
 
     useEffect(() => {
       renderTree();
     }, [renderTree]);
 
-
-
     return (
-      <div ref={containerRef} className="w-full h-full overflow-hidden relative">
+      <div ref={attach} className="w-full h-full overflow-hidden relative">
         <svg ref={svgRef} className="w-full h-full" />
         {/* Matches VizShell's zoom cluster (44px per WCAG 2.5.5) so the
             control reads the same here as on the migrated charts. */}
