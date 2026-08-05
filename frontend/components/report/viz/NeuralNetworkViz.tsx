@@ -5,6 +5,8 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import * as d3 from "d3";
 import { motion, AnimatePresence } from "framer-motion";
 import { Info, Layers } from "lucide-react";
+import { useVizCanvas } from "@/components/viz/useVizCanvas";
+import { useReducedMotion } from "@/components/viz/useReducedMotion";
 import type { NNModel, NNLayer } from "@/lib/api";
 import { catVar, inkVar, inkDimVar } from "@/lib/viz/tokens";
 
@@ -125,7 +127,13 @@ interface ModelRendererProps {
 
 function ModelRenderer({ model, index }: ModelRendererProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  // T8: this listened to `window` resize, which a sidebar collapse never
+  // fires — the container changes, the window does not. `useVizCanvas`
+  // observes the container itself, debounced so the collapse animation does
+  // not re-lay-out the model on every frame of it.
+  const canvas = useVizCanvas();
+  const { attach } = canvas;
+  const reducedMotion = useReducedMotion();
   const [tooltip, setTooltip] = useState<{
     visible: boolean;
     x: number;
@@ -134,13 +142,13 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
   }>({ visible: false, x: 0, y: 0, layer: null });
 
   const renderModel = useCallback(() => {
-    if (!svgRef.current || !containerRef.current) return;
+    if (!svgRef.current || !canvas.ready) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    const containerWidth = containerRef.current.clientWidth || 900;
-    const containerHeight = Math.max(400, containerRef.current.clientHeight || 500);
+    const containerWidth = canvas.size.width || 900;
+    const containerHeight = Math.max(400, canvas.size.height || 500);
 
     svg.attr("width", containerWidth).attr("height", containerHeight);
 
@@ -267,7 +275,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
               .attr("x", midX)
               .attr("y", midY)
               .attr("text-anchor", "middle")
-              .attr("font-size", "9px")
+              .attr("font-size", "10px")
               .attr("fill", inkDimVar())
               .attr("font-family", "monospace")
               .text(formatShape(from.layer.output_shape));
@@ -289,10 +297,11 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
         .attr("cursor", "pointer")
         .style("opacity", 0);
 
-      // Staggered entrance
+      // Staggered entrance — T11: under reduced motion the blocks are simply
+      // there, rather than cascading in.
       blockG.transition()
-        .delay(i * 60)
-        .duration(400)
+        .delay(reducedMotion ? 0 : i * 60)
+        .duration(reducedMotion ? 0 : 400)
         .style("opacity", 1);
 
       // Right side face (large square face — draw first — behind)
@@ -333,7 +342,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
           .attr("x", polys.labelCenter.x)
           .attr("y", polys.lowestY + 28)
           .attr("text-anchor", "middle")
-          .attr("font-size", "9px")
+          .attr("font-size", "10px")
           .attr("fill", inkDimVar())
           .attr("font-family", "monospace")
           .text(formatParamCount(layer.param_count));
@@ -345,7 +354,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
           frontFace.attr("fill", `${colors.side}dd`);
           // Also highlight the right face slightly
           blockG.select("polygon").attr("fill", `${colors.base}dd`);
-          const rect = containerRef.current?.getBoundingClientRect();
+          const rect = canvas.containerRef.current?.getBoundingClientRect();
           if (rect) {
             setTooltip({
               visible: true,
@@ -371,21 +380,21 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
 
     svg.call(zoom);
 
-  }, [model, index]);
+  }, [model, index, canvas.size, canvas.ready, canvas.containerRef, reducedMotion]);
 
   useEffect(() => {
     renderModel();
-
-    const handleResize = () => renderModel();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
   }, [renderModel]);
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
+      initial={reducedMotion ? false : { opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.15, duration: 0.5 }}
+      transition={
+        reducedMotion
+          ? { duration: 0 }
+          : { delay: index * 0.15, duration: 0.5 }
+      }
       className="relative w-full"
     >
       {/* Model Header */}
@@ -408,7 +417,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
 
       {/* SVG Canvas */}
       <div
-        ref={containerRef}
+        ref={attach}
         className="relative w-full bg-card/50 rounded-2xl border border-border/50 overflow-hidden"
         style={{ height: "420px" }}
       >
@@ -418,9 +427,10 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
         <AnimatePresence>
           {tooltip.visible && tooltip.layer && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
+              initial={reducedMotion ? false : { opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
+              exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
+              transition={reducedMotion ? { duration: 0 } : undefined}
               className="absolute z-50 pointer-events-none"
               style={{ left: tooltip.x, top: tooltip.y }}
             >
