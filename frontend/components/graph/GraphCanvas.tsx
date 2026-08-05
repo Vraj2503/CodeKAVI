@@ -21,6 +21,7 @@ import {
 import { useTheme } from "@/components/ui/theme-provider";
 import { useRepo } from "@/components/RepoProvider";
 import { useRepoGraph } from "@/hooks/useRepoGraph";
+import { FailureState } from "@/components/FailureState";
 import { useTour } from "@/hooks/useTour";
 import { useQuestionTour } from "@/hooks/useQuestionTour";
 import {
@@ -64,7 +65,7 @@ export interface GraphCanvasProps {
 }
 
 function GraphCanvasInner({ repoId }: GraphCanvasProps) {
-  const { status, data: payload, error } = useRepoGraph(repoId);
+  const { status, data: payload, failure, retry } = useRepoGraph(repoId);
   const [state, dispatch] = useReducer(graphViewReducer, initialGraphViewState);
 
   // Pre-load the ELK bundle on mount so the first drill-in / tour step doesn't
@@ -332,9 +333,19 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
   }
   if (status === "error" || !payload) {
     return (
-      <div className="flex h-full w-full items-center justify-center text-sm text-destructive">
-        {error ?? "Failed to load graph"}
-      </div>
+      <FailureState
+        // `!payload` with no classified failure means the response parsed but
+        // carried nothing — rare, and still not the user's fault to decode.
+        failure={
+          failure ?? {
+            title: "We couldn't build this graph",
+            body: "The server answered, but with nothing to draw. Trying again is worth one attempt.",
+            action: "retry",
+            detail: "empty payload",
+          }
+        }
+        onRetry={retry}
+      />
     );
   }
 
