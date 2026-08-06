@@ -30,7 +30,9 @@ import { VizShell, VizTooltip, VizMessage } from "@/components/viz/VizShell";
 import { VizBreadcrumb, type VizCrumb } from "@/components/viz/VizBreadcrumb";
 import { useVizCanvas } from "@/components/viz/useVizCanvas";
 import { useVizZoom, ZOOM_MIN, ZOOM_MAX } from "@/components/viz/useVizZoom";
+import { useVizNodeNav } from "@/components/viz/useVizNodeNav";
 import { useReducedMotion } from "@/components/viz/useReducedMotion";
+import { useCoarsePointer } from "@/hooks/useMediaQuery";
 
 /* ── Data contract (see backend/codekavi/routes/visualize.py) ─ */
 
@@ -101,6 +103,28 @@ const LABEL_MIN_W = 54;
 const LABEL_MIN_H = 24;
 const SUBLABEL_MIN_H = 40;
 
+/**
+ * What a screen reader hears on a tile.
+ *
+ * A treemap says everything through geometry and color, both of which are
+ * silent. The label has to restate both encodings as numbers, plus the full
+ * path — the drawn name is truncated to whatever the tile happened to fit,
+ * and thousands of repos have five files called `index.ts`.
+ */
+function ariaLabelForLeaf(leaf: TreemapLeaf): string {
+  const parts = [leaf.path || leaf.name];
+  if (leaf.language) parts.push(leaf.language);
+  parts.push(`${leaf.value.toLocaleString()} bytes`);
+  if (leaf.loc != null) parts.push(`${leaf.loc} lines`);
+  // "not measured", never "complexity 0" — absent means unknown.
+  parts.push(
+    leaf.complexity == null
+      ? "complexity not measured"
+      : `complexity ${leaf.complexity}`,
+  );
+  return parts.join(", ");
+}
+
 /* ── Component ────────────────────────────────────────────── */
 
 export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
@@ -109,6 +133,30 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
     const canvas = useVizCanvas();
     const reducedMotion = useReducedMotion();
     const zoom = useVizZoom(!reducedMotion);
+    const coarsePointer = useCoarsePointer();
+    // T12: both directory bands and file tiles are reachable by arrow keys.
+    // Enter re-uses the click path — synthesised at the element's centre so a
+    // pinned tooltip lands on the tile rather than at the origin.
+    const nav = useVizNodeNav({
+      onActivate: (el) => {
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            clientX: r.left + r.width / 2,
+            clientY: r.top + r.height / 2,
+          }),
+        );
+      },
+      // Dismiss the tooltip first; only step up a level once nothing is pinned.
+      onEscape: () => {
+        setTip((current) => {
+          if (current) return null;
+          setDrill((prev) => prev.slice(0, -1));
+          return null;
+        });
+      },
+    });
     const themeVersion = useVizThemeVersion();
 
     /** Directory path currently drilled into, as path segments. */
@@ -245,6 +293,12 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .data(groups)
         .join("g")
         .attr("transform", (d) => `translate(${d.x0},${d.y0})`)
+        .attr("class", "viz-node")
+        .attr("role", "button")
+        .attr(
+          "aria-label",
+          (d) => `${d.data.name} directory, ${d.leaves().length} files, open`,
+        )
         .style("cursor", "pointer")
         .on("click", (_e, d) => {
           // Drill using the node's own ancestry, so it works at any depth.
@@ -289,7 +343,13 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
         .selectAll("g")
         .data(leaves)
         .join("g")
-        .attr("transform", (d) => `translate(${d.x0},${d.y0})`);
+        .attr("transform", (d) => `translate(${d.x0},${d.y0})`)
+        .attr("class", "viz-node")
+        .attr("role", "button")
+        // A tile shows a truncated filename and one number. The label has to
+        // carry the path and both encodings, or the chart is announced as a
+        // list of abbreviations with no values attached.
+        .attr("aria-label", (d) => ariaLabelForLeaf(d.data as TreemapLeaf));
 
       cell
         .append("rect")
@@ -313,8 +373,26 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
           d3.select(this).attr("stroke", "hsl(var(--viz-highlight))").attr("stroke-width", 2);
         })
         .on("mouseleave", function () {
+          // T16: on a touch device there is no pointer to move away, so a tap
+          // that opened the tooltip must not have it wiped by the synthetic
+          // mouseleave that follows. The tooltip stays until the next tap.
+          if (coarsePointer) return;
           setTip(null);
           d3.select(this).attr("stroke", edgeVar()).attr("stroke-width", 0.5);
+        })
+        // Pin. Leaf tiles have no drill-down of their own — the only thing
+        // they carried was a hover tooltip, which meant the full path, the
+        // metric and the language were unreachable by touch or keyboard.
+        // Unguarded by input type, so Enter and a tap take the same path.
+        .on("click", function (event: MouseEvent, d) {
+          event.stopPropagation();
+          const rect = canvas.containerRef.current?.getBoundingClientRect();
+          if (!rect) return;
+          setTip({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            leaf: d.data as TreemapLeaf,
+          });
         });
 
       const fits = (d: Cell) => w(d) > LABEL_MIN_W && h(d) > LABEL_MIN_H;
@@ -356,11 +434,19 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
       svg.call(behavior);
       zoom.register(svgEl, behavior, g.node());
 
+      // A pinned tooltip needs a way to close. On a pointer device
+      // `mouseleave` does it; on touch, tapping the background does.
+      // A pinned tooltip needs a way to close: on a pointer device
+      // `mouseleave` does it, on touch or keyboard a background click does.
+      svg.on("click", () => setTip(null));
+
+      nav.register(g.node(), "g.viz-node");
+
       return () => {
         zoom.register(null, null, null);
         svg.selectAll("*").remove();
       };
-    }, [root, stats, canvas.size, canvas.ready, canvas.containerRef, zoom, themeVersion]);
+    }, [root, stats, canvas.size, canvas.ready, canvas.containerRef, zoom, nav, themeVersion, coarsePointer]);
 
     /* ── Empty ── */
 
@@ -392,6 +478,7 @@ export const TreemapViz = forwardRef<HTMLDivElement, { data: TreemapData }>(
       <VizShell
         canvas={canvas}
         zoom={zoom}
+        nav={nav}
         label="Complexity treemap"
         description={
           `Files grouped by directory. Tile area is ${metricLabel.toLowerCase()}; ` +
