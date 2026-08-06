@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   GitBranch,
@@ -38,10 +38,21 @@ export const VIZ_CONFIG: VizConfigItem[] = [
   { type: "neural_network", label: "Neural Network", description: "PlotNeuralNet-style 3D model architecture visualization for detected ML models.", icon: Network },
 ];
 
+/**
+ * The one endpoint that spends tokens.
+ *
+ * `/visualize/dataflow` runs an LLM enrichment pass on a cache miss
+ * (`backend/codekavi/routes/visualize.py:412-461`). Every other viz endpoint
+ * is a parse — dependencies, complexity, architecture and nn are plain GETs,
+ * and mindmap is a POST we always send with `use_llm: false`. So this is the
+ * only chart that may not render itself uninvited.
+ */
+const TOKEN_COST: ReadonlySet<VizType> = new Set<VizType>(["dataflow"]);
+
 export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   const searchParams = useSearchParams();
   const activeViz = (searchParams.get("type") as VizType) || "dependencies";
-  
+
   const { generate, getState } = useVisualization(repoId);
   const { explain, getExplanation } = useExplanation(repoId);
   
@@ -51,6 +62,16 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   const activeConfig = VIZ_CONFIG.find((c) => c.type === activeViz) || VIZ_CONFIG[0];
   const activeState = getState(activeViz);
   const activeExplanationState = getExplanation(activeViz);
+  const costsTokens = TOKEN_COST.has(activeViz);
+
+  // T13: render free charts on arrival. `generate` is a no-op on a cached
+  // success and on an in-flight request, so switching tabs back and forth
+  // costs nothing, and a failed one stays failed until the user retries
+  // rather than looping the request forever.
+  useEffect(() => {
+    if (costsTokens) return;
+    generate(activeViz);
+  }, [activeViz, costsTokens, generate]);
 
   return (
     <div className="flex h-full w-full bg-background">
@@ -61,6 +82,7 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
           config={activeConfig}
           state={activeState}
           explanationState={activeExplanationState}
+          costsTokens={costsTokens}
           onGenerate={() => generate(activeViz)}
           onRefresh={() => generate(activeViz, true)}
           onExplain={() => {
