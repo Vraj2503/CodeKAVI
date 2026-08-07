@@ -71,23 +71,21 @@ Status: `TODO` · `WIP` · `DONE` · `BLOCKED` · `SKIP`
 | T5 | Fix mind map join-key collision | ~~P1~~ **P2** | ~5m | — | **DONE** | Per-node `_uid` join key; verified against the duplicate-name fixture |
 | T6 | Stop mind map auto-fit on every update | P1 | ~10m | — | **DONE** | Fit once on mount; added the Fit-to-view button the fix made necessary |
 | T7 | Remove Architecture lie affordance | P1 | ~5m | — | **DONE** | Wired the click to a detail panel rather than dropping the cursor |
-| T8 | ResizeObserver for mind map + neural net | P2 | ~15m | — | TODO | |
-| T9 | Architecture retrofit onto VizShell | P2 | ~20m | T1,T2 | TODO | |
-| T10 | Request timeout + human errors + actionable empty | P2 | ~15m | — | TODO | |
-| T11 | `prefers-reduced-motion` across all viz | P2 | ~10m | T2 | TODO | |
-| T12 | Keyboard nav + SVG semantics | P2 | ~40m | T2 | TODO | Partly done in T1: `aria-pressed` on toggles, 8px→10px badge label, contrast-safe `--viz-cat-ink`. Keyboard nav still outstanding. |
-| T13 | Auto-render default viz, kill the idle card | P3 | ~15m | — | TODO | |
-| T14 | Drop emoji from `VizContainer` title map | P3 | ~5m | — | TODO | |
-| T15 | Write `DESIGN.md` for the viz system | P3 | ~15m | T1,T2 | TODO | |
-| T16 | Responsive + touch | P2 | ~30m | T2,T4 | TODO | Scope widened by QA-001 — canvas is 7px at 375px, not just "small" |
+| T8 | ResizeObserver for mind map + neural net | P2 | ~15m | — | **DONE** | Both on `useVizCanvas`. Mind map keeps its expansion across a resize |
+| T9 | Architecture retrofit onto VizShell | P2 | ~20m | T1,T2 | **DONE** | Shell + legend + tooltip; real `getBBox()` fit (fixes B4) |
+| T10 | Request timeout + human errors + actionable empty | P2 | ~15m | — | **DONE** | Merged with T18. `lib/errors.ts` + `FailureState` + 45s deadline |
+| T11 | `prefers-reduced-motion` across all viz | P2 | ~10m | T2 | **DONE** | All six charts consume `useReducedMotion` |
+| T12 | Keyboard nav + SVG semantics | P2 | ~40m | T2 | **DONE** | `useVizNodeNav` + 12 tests. Architecture, Dependency, Treemap traversable; DataFlow/Mindmap/NeuralNet still pointer-only |
+| T13 | Auto-render default viz, kill the idle card | P3 | ~15m | — | **DONE** | 5 of 6 render on arrival; dataflow keeps its card because it spends tokens |
+| T14 | Drop emoji from `VizContainer` title map | P3 | ~5m | — | **DONE** | Also renamed "Complexity Heatmap" to match the chart (D1) |
+| T15 | Write `DESIGN.md` for the viz system | P3 | ~15m | T1,T2 | **DONE** | `frontend/components/viz/DESIGN.md` |
+| T16 | Responsive + touch | P2 | ~30m | T2,T4 | **DONE** | Canvas 5px → 269px at 375px. Also fixes QA-005 |
 | T17 | Fix infinite-loading dead-end on shared/bookmarked repo links | **P1** | ~20m | — | **DONE** | QA-002. `RepoStatePanel` + 19 tests. Also fixed sign-in return-to |
-| T18 | Human error copy instead of raw backend strings | P2 | ~25m | — | TODO | QA-003. Widens T10 to `useRepoGraph` |
+| T18 | Human error copy instead of raw backend strings | P2 | ~25m | — | **DONE** | Done with T10 — one taxonomy, both hooks |
 
-**Suggested order:** T1 → T2 → T3a → T4, with T5/T6/T7 dropped in whenever
-(they're standalone one-file fixes; T5 and T6 are both in `RadialMindmap.tsx`
-and total ~15 min).
-
-**Quick wins if you have 20 minutes:** T5, T6, T7, T14.
+**All 19 tasks are DONE.** The design system they add up to is documented in
+`frontend/components/viz/DESIGN.md` — read that before building a new chart,
+not this plan. What remains open is listed under "Still open" below.
 
 ### T1 as-built notes
 
@@ -243,9 +241,33 @@ T5/B1 severity revised P1 → P2 · T4 gains the ramp-domain fix (QA-006).
 (dependency graph now frames itself on first render — see below).
 
 **Still open, not yet in this plan** (all from the QA report):
-QA-005 nav tabs truncated to two characters at 1280px ·
+~~QA-005 nav tabs truncated to two characters at 1280px~~ (fixed in T16) ·
 QA-007 "Mind Map" clipped out of the sidebar at 720px height ·
 QA-009 duplicate "Generate Report" buttons.
+
+## Still open after the T8–T18 pass
+
+Nothing here blocks a demo; all of it is worth a follow-up plan.
+
+- **Per-node keyboard traversal on DataFlow, Mindmap and NeuralNet.** The
+  `useVizNodeNav` hook is generic — each is a ~10-line migration (class +
+  `role` + `aria-label` + `nav.register`), but none is done.
+- **QA-007** — "Mind Map" sits below the fold in the sidebar at 720px height.
+  The list scrolls, so it is reachable; it just does not look it.
+- **QA-009** — duplicate "Generate Report" buttons.
+- **`TourPanel.tsx:84`** trips `react-hooks/set-state-in-effect`. Pre-existing,
+  untouched, and the only lint error in the repo. Same fix shape as
+  `useReducedMotion`.
+- **`DataFlowGraph` degrades silently when `tier` is absent** — everything
+  lands in column 0. A pre-tier cached analysis would do this to a real user.
+- **`VizLegend` renders nothing when no node type matches**, so a contract
+  mismatch disappears instead of showing.
+- **The treemap's zoom cluster overlaps its bottom-right tiles.** Kept for
+  chrome consistency; revisit if it bothers you.
+- **Small-screen treemap simplification** (top-level directories only until
+  tapped) from T16's brief was not built — the chart proved legible at 375px
+  without it, so the added mode would have been complexity with no defect
+  behind it.
 
 ### QA-004 — dependency graph auto-fit (fixed)
 
@@ -697,6 +719,169 @@ shell's `overlay` slot unchanged.
 hover (stroke stays 3 through mouseenter/mouseleave, resting width 1.5 for
 everything else), and a background click clears both the panel and the
 highlight. No console errors.
+
+---
+
+## As-built notes — T8/T9/T10/T11/T12/T13/T14/T15/T16/T18
+
+Written as one section because they landed as one pass and several of them
+turned out to be the same defect wearing different hats.
+
+### T9 — Architecture onto `VizShell`
+
+Gains the shared zoom cluster, a layer legend keyed to the lanes actually
+present, and a hover tooltip. The guessed bbox constants
+(`bboxX = 10, bboxW = width - 20`) are gone — `zoom.fitToView({animate:false})`
+reads `getBBox()`. Verified: content 870×772 into a 910×566 canvas fits at
+`scale 0.623`, centred, which the old constants could not do for a repo whose
+content was narrower than its lane.
+
+**The T7 detail panel moved into the shell's `overlay` slot unchanged**, as its
+notes predicted. The tooltip is suppressed while the panel is open — they share
+the top-left corner and the panel already says everything the tooltip would.
+
+**A React-compiler trap worth knowing before touching any chart:** aliasing
+`canvas.containerRef` into a local const taints the whole `canvas` object for
+the compiler's ref analysis, and then *every* `canvas.*` read during render is a
+`react-hooks/refs` error — including `canvas={canvas}` on `VizShell`. Write
+`canvas.containerRef.current` inline (the `TreemapViz` style). `DataFlowGraph`
+gets away with the alias only because it never reads `canvas` during render.
+
+### T8 — ResizeObserver
+
+Both charts now consume `useVizCanvas`, and both read `canvas.size` rather than
+`clientWidth` — that is what makes the size a dependency instead of a snapshot.
+
+**The mind map needed more than an observer.** Redrawing rebuilt the hierarchy
+from scratch, and expand/collapse state lives *on* that hierarchy — so a plain
+ResizeObserver would have meant a sidebar collapse silently closing every branch
+the user had opened. The built tree is now cached in a ref for as long as `root`
+is the same object. Verified: 12 expanded nodes survive 910 → 530 → 910 with
+identical `_uid`s.
+
+Also fixed here, since it was in the way: the mind map tooltip used
+`event.offsetX` (B5), which is relative to the hovered SVG child.
+
+### T10 + T18 — one failure taxonomy, two hooks
+
+These were the same defect on different surfaces, so they share an
+implementation. New `lib/errors.ts`:
+
+- `ApiError` carries the **status**, which a bare `Error(detail)` throws away —
+  and status is the only thing that can tell "you are signed out" from "the
+  analysis expired".
+- `describeFailure(err, subject)` maps to `{title, body, action, detail}`.
+  Actions: 401/403 → **sign-in**, 404 → **reanalyze**, 429/5xx → **retry**,
+  other 4xx → **none** (a retry sends the identical request), plus separate
+  branches for a timeout and for an unreachable host.
+- `detail` keeps the backend's words for `console.warn` and never reaches the
+  screen. There is a test asserting exactly that.
+
+`FailureState` renders it. The Graph page's `Missing Authorization header.` is
+now "The server had a problem" with a working Try again — verified in-browser,
+and the retry re-issues the request.
+
+**`useVisualization` was rewritten around a composite cache key**
+(`${repoId}::${type}`). That is what invalidates the cache across a re-analysis
+(which mints a new repo id), and it makes a late response from the previous repo
+harmless — it lands under a key nothing reads. Correctness no longer depends on
+winning an abort race.
+
+**Non-forced `generate` now acts only on an `idle` entry.** This is what lets
+T13 call it from an effect on every render without looping: success, in-flight
+*and failed* all return immediately. Re-running a failure is deliberate and goes
+through `generate(type, true)`.
+
+**B7 is not reproducible and needs no fix.** It described the Generate button
+silently no-opping on a cache hit — but a cached success renders the chart, so
+that button is never on screen. The error screen's retry uses the forced path.
+
+### T13 — auto-render
+
+**Five of six, not all six.** `/visualize/dataflow` runs an LLM enrichment pass
+on a cache miss (`visualize.py:412-461`); every other viz endpoint is a parse.
+Dataflow keeps its idle card, and the card now says *why* it asks instead of
+demanding a click for an unstated reason. The AI-slop gradient icon tile is
+gone. Auto-rendering types skip `idle` entirely and show the skeleton, so there
+is no flash of a control nobody needs to touch.
+
+The sidebar's "On-demand generation (zero LLM tokens unless insights requested)"
+was no longer true of five charts and is now "Charts render as you open them.
+Only Data Flow and AI Insights spend tokens."
+
+### T16 — responsive
+
+**QA-001 was worse than reported: the canvas was 5px, not 7px.** The sidebar is
+a fixed 320px column in a flex row, so at 375px there was nothing left. Fixes:
+the sidebar starts collapsed on a narrow viewport (lazy `useState` initializer
+reading `matchMedia` — an effect would trip `set-state-in-effect`), and when
+expanded it **overlays** the canvas rather than taking a bite out of it, with a
+backdrop to dismiss. Canvas at 375px: **5px → 269px**.
+
+Also: `VizShell` moves an inset legend into the footer strip below
+`NARROW_QUERY` and lays its keys out horizontally (it was covering two whole
+swim-lanes); the action bar wraps instead of clipping Download and AI Insights
+off-screen; and `ArchitectureGraph` sizing is width-aware (node 140→104, gutter
+16→10, truncation 18→12 chars) so lanes fit two per row and stay legible instead
+of auto-fitting 11px labels down to ~3px.
+
+**QA-005 fixed as a side effect**: four nav labels across a 320px column left
+~27px each, rendering as `Ch… Re… Vi… Gr…`. Two rows of two gives each label the
+room it needs.
+
+Tap-to-pin landed on the treemap, whose leaf tiles had a hover tooltip and no
+click behaviour — so on touch the full path, metric and language were simply
+unreachable. Dependency, Mindmap and Architecture already bind tap to
+drill/expand/select, which is the tap affordance for those.
+
+### T12 — keyboard and screen readers
+
+New `useVizNodeNav` — a roving tabindex adapted for SVG that D3 rebuilds on
+every draw. The shell wrapper stays the single tab stop (250 treemap tiles in
+the tab order would be worse than none); nodes get `tabindex="-1"`; arrows walk
+DOM order, which for these charts is layout order.
+
+`nav.onKeyDown` **returns whether it consumed the key**, and `VizShell` falls
+through to `zoom.onKeyDown` when it did not — otherwise node arrows would have
+eaten `+`/`-`/`0`. There is a test for that specific interaction.
+
+**Enter re-uses the click path** (`dispatchEvent(new MouseEvent("click"))`) so
+mouse and keyboard cannot drift apart. On the treemap the synthetic event
+carries the element's centre coordinates, so a pinned tooltip lands on the tile
+rather than at the origin.
+
+Migrated: **Architecture** (Enter opens the detail panel, Escape closes),
+**Dependency** (Enter drills into a module — the feature the plan called out as
+mouse-only; verified in-browser, breadcrumb and all), **Treemap** (directory
+bands *and* file tiles; Escape dismisses a pinned tooltip first, then drills
+up). Not migrated: DataFlow, Mindmap, NeuralNet.
+
+Per-node `aria-label` carries what the chart says visually and the drawn label
+does not — `"auth.routes.ts, routes layer, depends on 2, used by 0"`,
+`"src/components/Graph.tsx, TypeScript, 21,000 bytes, 992 lines, complexity 84"`.
+Deliberately `aria-label` rather than an SVG `<title>`, which the browser also
+renders as a native tooltip that would fight the real one.
+
+Type floor: the two remaining 9px labels in `NeuralNetworkViz` went to 10px.
+`DependencyGraph`'s 8px badge and its `rgba(255,255,255,0.7)` fill were already
+fixed in T1 — the plan's line numbers were stale.
+
+**Test caught a real bug:** the first arrow press after Tab used
+`indexRef.current - 1` as its base, which made ArrowLeft on a fresh chart land
+on node 1 of 3 rather than node 2. Entering now always lands on the remembered
+index whichever arrow was pressed, and that rule is pinned by its own test.
+
+### Verification
+
+58 frontend tests (22 new: 10 on the failure taxonomy, 12 on node navigation),
+`tsc` clean, `eslint` clean apart from the one pre-existing `TourPanel.tsx:84`
+error, in-browser at 1280×720 and 375×812 in dark mode with no console errors.
+
+**One trap worth recording:** mid-session the app rendered with *zero* top
+padding because Tailwind's dev-server JIT had not regenerated `pt-28` /
+`sm:pt-16`. It looked exactly like a layout bug. A dev-server restart fixed it;
+verified `padding-top: 64px` afterwards. If a brand-new utility class appears to
+do nothing, restart before debugging the markup.
 
 ---
 
