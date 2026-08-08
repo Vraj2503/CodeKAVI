@@ -4,8 +4,11 @@
   "private": true,
   "scripts": {
     "predev": "node scripts/reap-postcss-workers.mjs",
-    "dev": "next dev",
+    "dev": "node scripts/dev.mjs",
     "reap": "node scripts/reap-postcss-workers.mjs",
+    "css:build": "tailwindcss -i app/globals.src.css -o app/globals.css --minify",
+    "css:watch": "tailwindcss -i app/globals.src.css -o app/globals.css --watch",
+    "prebuild": "npm run css:build",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
