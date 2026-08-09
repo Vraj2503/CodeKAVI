@@ -2,17 +2,13 @@
 
 import { VisualizationPanel } from "@/components/visualize/VisualizationPanel";
 import { useRepo } from "@/components/RepoProvider";
+import { RepoStatePanel } from "@/components/RepoStatePanel";
 
 export default function VisualizePage() {
   const { repoData } = useRepo();
 
-  if (!repoData) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        <p>Loading repository data…</p>
-      </div>
-    );
-  }
+  // No data yet, or none coming — RepoStatePanel decides which and says so.
+  if (!repoData) return <RepoStatePanel />;
 
   return (
     <VisualizationPanel

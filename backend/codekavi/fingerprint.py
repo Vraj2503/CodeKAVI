@@ -28,8 +28,8 @@ except ModuleNotFoundError:  # pragma: no cover - flat-layout fallback
 # Tree-sitter languages & structural queries (immutable, thread-safe)
 # ─────────────────────────────────────────────
 
-_JS_LANGUAGE = Language(tsjs.language(), "javascript")
-_TS_LANGUAGE = Language(tsts.language_typescript(), "typescript")
+_JS_LANGUAGE = Language(tsjs.language())
+_TS_LANGUAGE = Language(tsts.language_typescript())
 
 # Pure structural query: function declarations, class declarations, method
 # definitions, import / export specifiers, and exported names. Picking up
@@ -313,8 +313,7 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     language = _TS_LANGUAGE if lang == "ts" else _JS_LANGUAGE
     query = _TS_STRUCTURE_QUERY if lang == "ts" else _JS_STRUCTURE_QUERY
 
-    parser = Parser()
-    parser.set_language(language)
+    parser = Parser(language)
 
     source_bytes = source.encode("utf-8", errors="ignore")
     try:

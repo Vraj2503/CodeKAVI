@@ -9,10 +9,23 @@ import ThemeSwitch from "@/components/ui/theme-switch";
 import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 
+/**
+ * Where to land after signing in. Only same-origin paths are honoured —
+ * anything else (`https://…`, `//evil.example`) would turn the login page into
+ * an open redirect.
+ */
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
+  return raw;
+}
+
 function LoginContent() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Set when a protected page bounced the user here — send them back to it
+  // rather than to the dashboard, which would lose the link they followed.
+  const next = safeNext(searchParams.get("next"));
 
   // Show error toast if redirected with an error
   useEffect(() => {
@@ -22,12 +35,12 @@ function LoginContent() {
     }
   }, [searchParams]);
 
-  // Redirect to home if already authenticated
+  // Redirect onward if already authenticated
   useEffect(() => {
     if (!loading && user) {
-      router.replace("/");
+      router.replace(next);
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, next]);
 
   // Show nothing while checking auth state (prevents flash)
   if (loading || user) {
@@ -71,7 +84,7 @@ function LoginContent() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.25 }}
         >
-          <LoginForm />
+          <LoginForm next={next} />
         </motion.div>
       </motion.div>
     </SpotlightBackground>

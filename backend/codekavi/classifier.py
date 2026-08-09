@@ -32,6 +32,8 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+from codekavi.complexity import file_complexity
+from codekavi.config import MAX_FILE_SIZE_BYTES
 from codekavi.pipeline_models import DepGraph, FileEntry, FileProfile
 from codekavi.utils import BoundedContentCache
 
@@ -207,6 +209,27 @@ _SOURCE_EXTENSIONS = {
     ".svelte",
     ".ipynb",
 }
+
+
+def _full_source(file_info: FileEntry, abs_path: str) -> str | None:
+    """
+    Whole-file text for metrics that cannot work on a prefix.
+
+    The shared `content_cache` deliberately stores only the first 4KB — enough
+    for the role signals, useless for counting branches, since most of a file's
+    control flow lives past byte 4096. The traverser already pre-loads full
+    content for files under 100KB, so this is usually free; the disk read is
+    the fallback for the ones it skipped.
+    """
+    if file_info.content is not None:
+        return file_info.content
+    try:
+        if os.path.getsize(abs_path) > MAX_FILE_SIZE_BYTES:
+            return None
+        with open(abs_path, encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 # ─────────────────────────────────────────────
@@ -458,6 +481,15 @@ def classify_files(
             entry_score=entry_point_scores.get(rel_path, 0),
         )
 
+        # ── Size / complexity metrics ──
+        # Only source files. Counting "lines of code" in a PNG or a lockfile is
+        # noise, and parsing them costs a disk read for nothing.
+        metrics: dict[str, Any] = {}
+        if ext.lower() in _SOURCE_EXTENSIONS:
+            source = _full_source(file_info, abs_path)
+            if source is not None:
+                metrics = file_complexity(source, rel_path)
+
         # ── Importance score ──
         importance = _compute_importance(
             in_degree=in_degree,
@@ -483,6 +515,12 @@ def classify_files(
                 out_degree=out_degree,
                 importance_score=round(importance, 2),
                 tags=tags,
+                # Absent (not zero) when the file was never measured — a
+                # fabricated 1 is indistinguishable from a genuinely simple
+                # file, so consumers must be able to tell "no data" apart.
+                loc=metrics.get("loc"),
+                complexity=metrics.get("complexity"),
+                complexity_source=metrics.get("complexity_source"),
             )
         )
 

@@ -3,12 +3,14 @@
 
 import { useRef } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, RefreshCw, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
 import type { VizType } from "@/lib/api";
+import { FailureState } from "@/components/FailureState";
 import { DownloadMenu } from "./DownloadMenu";
 
 // Lazy-load D3 viz components
@@ -63,11 +65,65 @@ function VizSkeleton() {
   );
 }
 
+/**
+ * An empty chart, with somewhere to go.
+ *
+ * This used to be a full stop: an icon, a heading, and a sentence explaining
+ * that nothing could be drawn. It never named a cause the user could act on,
+ * and never pointed at the view that would have worked. `VizContainer` already
+ * had the better copy — the path-alias explanation is the single most common
+ * reason edges fail to resolve — so it moves here.
+ */
+function EmptyViz({
+  type,
+  label,
+  unresolvedEdges,
+}: {
+  type: VizType;
+  label: string;
+  unresolvedEdges: boolean;
+}) {
+  // Suggest a chart that does not depend on the thing that just came back
+  // empty. The treemap needs no edges at all, so it is the safe fallback when
+  // the dependency graph is itself the empty one.
+  const suggestion: { type: VizType; label: string } =
+    type === "dependencies"
+      ? { type: "complexity", label: "Complexity Treemap" }
+      : { type: "dependencies", label: "Dependency Graph" };
+
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center p-10 text-center">
+      <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
+        <AlertCircle size={40} aria-hidden="true" />
+      </div>
+      <h3 className="text-xl font-bold text-foreground mb-3">
+        {unresolvedEdges ? "Nothing connects, yet" : `No ${label.toLowerCase()} to draw`}
+      </h3>
+      <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
+        {unresolvedEdges
+          ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
+          : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`}
+      </p>
+      <Link
+        href={`?type=${suggestion.type}`}
+        className="mt-8 inline-flex items-center gap-2 rounded-xl border border-border bg-muted px-6 py-3 text-sm font-semibold transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Try the {suggestion.label}
+      </Link>
+    </div>
+  );
+}
+
 interface FocusedVisualizationProps {
   type: VizType;
   config: { label: string; description: string; icon: any };
   state: VizState;
   explanationState: ExplainState;
+  /**
+   * True for the one chart whose endpoint calls a language model. It keeps the
+   * idle card; everything else renders on arrival (T13).
+   */
+  costsTokens: boolean;
   onGenerate: () => void;
   onRefresh: () => void;
   onExplain: () => void;
@@ -80,6 +136,7 @@ export function FocusedVisualization({
   config,
   state,
   explanationState,
+  costsTokens,
   onGenerate,
   onRefresh,
   onExplain,
@@ -117,11 +174,14 @@ export function FocusedVisualization({
       {/* ── GRAPH SECTION — fills full visible height ───────────────────────── */}
       <div className="relative w-full" style={{ height: "100%" }}>
         {/* Floating Action Bar */}
-        <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20 pointer-events-none">
+        {/* `flex-wrap` and a shrinkable title: at 375px the action buttons used
+            to overflow the panel and get clipped by `overflow-hidden`, taking
+            Download and AI Insights off the screen entirely. */}
+        <div className="absolute top-4 left-4 right-4 flex flex-wrap items-start justify-between gap-2 z-20 pointer-events-none">
           {/* Left: title pill */}
-          <div className="flex items-center gap-2 bg-background/90 backdrop-blur-md px-4 py-2.5 rounded-xl border border-border shadow-sm pointer-events-auto">
-            <Icon size={20} className="text-primary" />
-            <h2 className="text-sm font-bold text-foreground">
+          <div className="flex min-w-0 items-center gap-2 bg-background/90 backdrop-blur-md px-4 py-2.5 rounded-xl border border-border shadow-sm pointer-events-auto">
+            <Icon size={20} className="text-primary shrink-0" />
+            <h2 className="text-sm font-bold text-foreground truncate">
               {config.label}
             </h2>
           </div>
@@ -146,6 +206,7 @@ export function FocusedVisualization({
               {/* AI Insights — scrolls page down to insights section */}
               <button
                 onClick={handleInsightsClick}
+                aria-label="AI Insights"
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-sm transition-all duration-200 ${
                   isExplanationOpen
                     ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
@@ -153,16 +214,31 @@ export function FocusedVisualization({
                 }`}
               >
                 <Sparkles size={18} />
-                <span className="text-sm font-semibold">AI Insights</span>
+                {/* Label drops below `sm`; the icon plus `aria-label` still
+                    names the control where there is no room for both. */}
+                <span className="hidden text-sm font-semibold sm:inline">
+                  AI Insights
+                </span>
               </button>
             </div>
           )}
         </div>
 
         {/* Visualization canvas — fills the graph section, padded top so bars don't overlay nodes */}
-        <div className="w-full h-full flex items-center justify-center bg-muted/10 pt-16">
+        {/* The action bar floats over this. It wraps to two rows below `sm`,
+            so the reserved top padding has to grow with it or the bar sits on
+            the chart. */}
+        <div className="w-full h-full flex items-center justify-center bg-muted/10 pt-28 sm:pt-16">
           <AnimatePresence mode="wait">
-            {state.status === "idle" && (
+            {/*
+              T13: five of the six charts cost nothing but a parse, and they
+              now render on arrival — the click that used to gate them bought
+              the user nothing at exactly the moment the product is trying to
+              impress. This card survives only for the one chart that does
+              spend tokens, and it now says so instead of asking permission
+              for a reason it never gave.
+            */}
+            {state.status === "idle" && costsTokens && (
               <motion.div
                 key="idle"
                 initial={{ opacity: 0, y: 20 }}
@@ -170,14 +246,16 @@ export function FocusedVisualization({
                 exit={{ opacity: 0, scale: 0.95 }}
                 className="flex flex-col items-center max-w-md text-center p-10 bg-card rounded-3xl border border-border/50 shadow-2xl"
               >
-                <div className="w-24 h-24 rounded-3xl flex items-center justify-center bg-gradient-to-br from-primary/20 to-primary/5 text-primary mb-6 shadow-inner">
-                  <Icon size={48} />
-                </div>
+                <Icon size={40} className="text-primary mb-6" />
                 <h2 className="text-2xl font-bold text-foreground mb-3">
                   {config.label}
                 </h2>
-                <p className="text-muted-foreground mb-10 leading-relaxed text-sm">
+                <p className="text-muted-foreground mb-3 leading-relaxed text-sm">
                   {config.description}
+                </p>
+                <p className="text-muted-foreground/80 mb-8 text-xs leading-relaxed">
+                  This is the one view that calls a language model, so it runs
+                  only when you ask. The result is cached afterwards.
                 </p>
                 <button
                   onClick={onGenerate}
@@ -189,42 +267,47 @@ export function FocusedVisualization({
               </motion.div>
             )}
 
+            {/* Auto-rendering types skip idle entirely — showing a card for the
+                ~200ms before generate() lands would be a flash of a control the
+                user never needs to touch. */}
+            {state.status === "idle" && !costsTokens && (
+              <motion.div key="pending" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                <VizSkeleton />
+              </motion.div>
+            )}
+
             {state.status === "loading" && (
               <motion.div
                 key="loading"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="flex flex-col items-center gap-5"
+                className="flex flex-col items-center gap-5 text-center"
               >
                 <Loader2 size={48} className="animate-spin text-primary" />
                 <p className="text-foreground font-medium animate-pulse text-lg">
-                  Analyzing Codebase &amp; Generating {config.label}...
+                  Building the {config.label.toLowerCase()}…
                 </p>
+                {/* Past 12s. Saying nothing here is what makes a slow request
+                    feel identical to a hung one. */}
+                {state.slow && (
+                  <p className="max-w-sm text-sm text-muted-foreground">
+                    Taking longer than usual — large repositories are parsed in
+                    full. We&apos;ll stop waiting after 45 seconds.
+                  </p>
+                )}
               </motion.div>
             )}
 
-            {state.status === "error" && (
+            {state.status === "error" && state.failure && (
               <motion.div
                 key="error"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
-                className="flex flex-col items-center max-w-md text-center p-10 bg-card rounded-3xl border border-destructive/20 shadow-2xl"
+                className="w-full h-full"
               >
-                <div className="w-20 h-20 rounded-full flex items-center justify-center bg-destructive/10 text-destructive mb-6">
-                  <AlertCircle size={40} />
-                </div>
-                <h3 className="text-xl font-bold text-foreground mb-3">
-                  Generation Failed
-                </h3>
-                <p className="text-sm text-destructive mb-8">{state.error}</p>
-                <button
-                  onClick={onGenerate}
-                  className="px-8 py-3 rounded-xl text-sm font-semibold bg-muted hover:bg-muted/80 transition-colors border border-border"
-                >
-                  Try Again
-                </button>
+                <FailureState failure={state.failure} onRetry={onRefresh} />
               </motion.div>
             )}
 
@@ -238,21 +321,11 @@ export function FocusedVisualization({
                 ref={vizContainerRef}
               >
                 {isEmptyVisualization(type, state.data.data) ? (
-                  <div className="w-full h-full flex flex-col items-center justify-center p-10 bg-card rounded-3xl border border-border/50 shadow-inner">
-                    <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
-                      <AlertCircle size={40} />
-                    </div>
-                    <h3 className="text-xl font-bold text-foreground mb-3">
-                      {hasUnresolvedEdges(type, state.data.data)
-                        ? "No Connections Resolved"
-                        : "No Data Available"}
-                    </h3>
-                    <p className="text-sm text-muted-foreground text-center max-w-md">
-                      {hasUnresolvedEdges(type, state.data.data)
-                        ? "Files were detected but no connections resolved. This may indicate unsupported import syntax."
-                        : `We couldn't generate a ${config.label.toLowerCase()} for this repository. There might not be enough relevant files or connections to visualize.`}
-                    </p>
-                  </div>
+                  <EmptyViz
+                    type={type}
+                    label={config.label}
+                    unresolvedEdges={hasUnresolvedEdges(type, state.data.data)}
+                  />
                 ) : (
                   <>
                     <DiagnosticsBanner

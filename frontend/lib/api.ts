@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { supabase } from "./supabase";
+import { ApiError } from "./errors";
 
 const API_BASE = "/api";
 import {
@@ -8,14 +9,33 @@ import {
   mockExplanationResponse,
 } from "./mockData";
 
+/**
+ * Deadline for reading the session before a request.
+ *
+ * `getSession()` refreshes an expired token over the network, so it can hang.
+ * Every caller awaits this before its own `fetch`, which means a hung session
+ * read stalls the request *outside* any AbortSignal the fetch carries. Going
+ * on without a token yields a clean 401 — a state the UI can recover from,
+ * unlike waiting forever.
+ */
+const SESSION_READ_TIMEOUT_MS = 5000;
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   try {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (session?.access_token) {
+    const result = await Promise.race([
+      supabase.auth.getSession(),
+      new Promise<null>((resolve) =>
+        setTimeout(() => resolve(null), SESSION_READ_TIMEOUT_MS),
+      ),
+    ]);
+    if (result === null) {
+      console.warn("Auth session read timed out; sending request unauthenticated.");
+      return {};
+    }
+    const token = result.data.session?.access_token;
+    if (token) {
       return {
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${token}`,
       };
     }
   } catch (e) {
@@ -330,36 +350,87 @@ export interface TourResponse {
 // ── API Functions ──
 
 /**
- * Restore analysis results from backend cache (Redis/Supabase).
- * Returns null if the repo has expired (404), throws on other errors.
+ * Why a restore failed — not merely that it did.
+ *
+ * The previous signature collapsed "the cache expired", "you are signed out"
+ * and "the backend is unreachable" into a single `null` (plus a throw carrying
+ * raw backend text). Each needs a different action from the user, so the caller
+ * has to be able to tell them apart before it can offer a recovery.
  */
-export async function restoreRepo(
-  repoId: string,
-): Promise<AnalyzeResponse | null> {
+export type RestoreResult =
+  | { status: "ok"; data: AnalyzeResponse }
+  /**
+   * 202 — the backend found the clone on disk but no cached analysis, and is
+   * rebuilding it in a background thread (`backend/codekavi/session.py:181`).
+   * Transient and self-healing: poll and it becomes `ok`.
+   */
+  | { status: "re-analyzing" }
+  /** 404 — the 3-tier cache chain has nothing. Re-analysis is the only fix. */
+  | { status: "expired" }
+  /** 401/403 — `/restore` requires a Supabase JWT; a shared link arrives without one. */
+  | { status: "unauthenticated" }
+  /** Network failure, timeout, or 5xx. Retrying may work; re-analysing won't. */
+  | { status: "unreachable"; detail: string };
+
+/** A restore that hasn't answered by now isn't going to. */
+const RESTORE_TIMEOUT_MS = 20_000;
+
+/**
+ * Restore analysis results from the backend cache chain (memory → Redis → Supabase).
+ */
+export async function restoreRepo(repoId: string): Promise<RestoreResult> {
   if (repoId === "dev-mock-repo") {
     const { mockAnalyzeResponse } = await import("./mockData");
-    return mockAnalyzeResponse();
+    return { status: "ok", data: mockAnalyzeResponse() };
   }
 
+  let res: Response;
   try {
     const headers = await getAuthHeaders();
-    const res = await fetch(`${API_BASE}/restore/${repoId}`, {
+    res = await fetch(`${API_BASE}/restore/${repoId}`, {
       headers,
+      // Without a deadline, a backend that accepts the socket and never replies
+      // leaves the page spinning forever — the exact dead end this call feeds.
+      signal: AbortSignal.timeout(RESTORE_TIMEOUT_MS),
     });
-    if (res.status === 404) {
-      return null; // Repo expired — caller should show re-analyze prompt
-    }
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`Restore failed: ${res.status} ${errText}`);
-    }
-    return res.json();
   } catch (e: unknown) {
-    if ((e as any).message?.includes("Restore failed")) throw e;
-    // Network error — return null so UI degrades gracefully
-    console.warn("Failed to restore repo:", e);
-    return null;
+    const detail = e instanceof Error ? e.message : String(e);
+    console.warn("Failed to restore repo:", detail);
+    return { status: "unreachable", detail };
   }
+
+  // MUST precede the `res.ok` branch: `res.ok` is true for the whole 2xx
+  // range, so a 202 read as success hands the caller
+  // `{"detail":{"status":"re-analyzing"}}` in place of an AnalyzeResponse —
+  // a truthy object with no `repo_id`, which every consumer then treats as a
+  // loaded repo. `fetchRepoGraph` has always got this right; this did not.
+  if (res.status === 202) return { status: "re-analyzing" };
+
+  if (res.ok) {
+    try {
+      const data = await res.json();
+      // Verify it is actually an analysis before claiming success. The whole
+      // defect class here is "a 2xx that isn't an analysis was treated as
+      // one", and enumerating the offending statuses only fixes the ones we
+      // already know about. `repo_id` is what every consumer reads first.
+      if (!data || typeof data.repo_id !== "string") {
+        return {
+          status: "unreachable",
+          detail: `Malformed response: ${res.status} carried no analysis`,
+        };
+      }
+      return { status: "ok", data };
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { status: "unreachable", detail: `Malformed response: ${detail}` };
+    }
+  }
+  if (res.status === 404) return { status: "expired" };
+  if (res.status === 401 || res.status === 403) {
+    return { status: "unauthenticated" };
+  }
+  const errText = await res.text().catch(() => "");
+  return { status: "unreachable", detail: `${res.status} ${errText}`.trim() };
 }
 
 export async function analyzeRepo(githubUrl: string): Promise<AnalyzeResponse> {
@@ -577,18 +648,21 @@ export async function fetchVisualization(
   repoId: string,
   type: VizType,
   useLlm: boolean = false,
+  signal?: AbortSignal,
 ): Promise<VizResponse> {
   if (repoId === "dev-mock-repo") {
-    return new Promise((resolve) =>
-      setTimeout(
-        () =>
-          resolve({
-            type,
-            data: mockVizResponse(type),
-          }),
+    // Honours `signal` so the mock exercises the same cancel/deadline paths as
+    // the real endpoint — otherwise dev never sees the timeout branch.
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve({ type, data: mockVizResponse(type) }),
         500,
-      ),
-    );
+      );
+      signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      });
+    });
   }
 
   const authHeaders = await getAuthHeaders();
@@ -605,11 +679,20 @@ export async function fetchVisualization(
     ...(isPost && {
       body: JSON.stringify({ use_llm: useLlm }),
     }),
+    signal,
   });
 
+  // Same 2xx trap as `restoreRepo`: a 202 means the analysis is being rebuilt,
+  // and `res.ok` would wave it through as a visualization payload. Checked
+  // before `!res.ok` so the chart reports "still analyzing" rather than
+  // rendering an empty diagram built from `{detail: …}`.
+  if (res.status === 202) throw new ApiError(202, "re-analyzing");
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(err.detail || `Failed to fetch ${type} visualization`);
+    const err = await res.json().catch(() => ({ detail: "" }));
+    // ApiError, not Error: the status is what `describeFailure` classifies on,
+    // and a bare message throws it away.
+    throw new ApiError(res.status, err.detail || "");
   }
 
   return res.json();
@@ -643,9 +726,11 @@ export async function fetchVisualizationExplanation(
     body: JSON.stringify({ repo_id: repoId }),
   });
 
+  if (res.status === 202) throw new ApiError(202, "re-analyzing");
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(err.detail || "Failed to generate explanation");
+    const err = await res.json().catch(() => ({ detail: "" }));
+    throw new ApiError(res.status, err.detail || "");
   }
 
   return res.json();
@@ -671,10 +756,8 @@ export async function fetchRepoGraph(
   }
 
   if (!res.ok) {
-    const err = await res
-      .json()
-      .catch(() => ({ detail: "Failed to load graph" }));
-    throw new Error(err.detail || `Failed to load graph (${res.status})`);
+    const err = await res.json().catch(() => ({ detail: "" }));
+    throw new ApiError(res.status, err.detail || "");
   }
 
   return { status: "ok", data: await res.json() };

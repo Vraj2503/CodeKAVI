@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import type { ChatMessage, ChatSource } from "./api";
+import type { AnalyzeResponse, ChatMessage, ChatSource } from "./api";
 
 // ── Types ──
 
@@ -70,6 +70,41 @@ export async function getSessions(): Promise<Session[]> {
   }));
 }
 
+/**
+ * Find the session for a repo this tab has no memory of.
+ *
+ * `sessionStorage` dies with the tab, so a bookmarked or shared repo URL arrives
+ * carrying nothing but the id in the path. Supabase still knows that repo's
+ * `github_url`, and that is the whole difference between offering a working
+ * "Re-analyze" button and offering a dead end.
+ *
+ * Returns null when signed out, or when the repo belongs to someone else — RLS
+ * and the explicit `user_id` filter both see to that.
+ */
+export async function getSessionByRepoId(
+  repoId: string,
+): Promise<Session | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("repo_id", repoId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to look up session by repo id:", error);
+    return null;
+  }
+
+  return data;
+}
+
 export async function createSession(params: {
   repo_id: string;
   repo_name: string;
@@ -123,6 +158,49 @@ export async function createSession(params: {
   }
 
   return data;
+}
+
+/**
+ * Record a freshly analyzed repo: a durable Supabase session plus the per-tab
+ * pointers `RepoProvider` hydrates from.
+ *
+ * Only the lightweight identifiers go into `sessionStorage` — a full analysis
+ * can exceed 5MB and would blow the quota. Every caller that finishes an
+ * analysis must go through here, or the next navigation lands on a repo page
+ * the provider has no record of.
+ */
+export async function persistAnalyzedRepo(
+  data: AnalyzeResponse,
+): Promise<Session | null> {
+  const session = await createSession({
+    repo_id: data.repo_id,
+    repo_name: data.repo_name,
+    owner: data.owner,
+    github_url: data.github_url,
+    total_files: data.total_files,
+    total_size_formatted: data.total_size_formatted,
+    languages: data.languages,
+  });
+
+  if (typeof window !== "undefined") {
+    sessionStorage.setItem(
+      `codekavi-session-meta-${data.repo_id}`,
+      JSON.stringify({
+        repo_id: data.repo_id,
+        repo_name: data.repo_name,
+        owner: data.owner,
+        github_url: data.github_url,
+        total_files: data.total_files,
+        total_size_formatted: data.total_size_formatted,
+        languages: data.languages,
+      }),
+    );
+    if (session) {
+      sessionStorage.setItem(`codekavi-session-${data.repo_id}`, session.id);
+    }
+  }
+
+  return session;
 }
 
 export async function touchSession(sessionId: string): Promise<void> {

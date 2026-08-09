@@ -1,6 +1,25 @@
 import type { NextConfig } from "next";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  /**
+   * Pin the Turbopack root to this directory.
+   *
+   * Next infers the root from the nearest lockfile, and a stray
+   * `C:\Users\<you>\package-lock.json` outranks this project's own — so it was
+   * inferring the whole HOME DIRECTORY as the workspace root and logging
+   * "we detected multiple lockfiles". Per the Turbopack docs the root governs
+   * module resolution and, more importantly here, filesystem watching scope:
+   * rooted at home, the dev server watches Desktop, Documents and AppData.
+   * That is what left it sitting near 1GB before its compile workers started
+   * dying with "Jest worker encountered N child process exceptions".
+   */
+  turbopack: {
+    root: projectRoot,
+  },
   /* Allow Google profile photos */
   images: {
     remotePatterns: [

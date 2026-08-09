@@ -43,6 +43,38 @@
     --sidebar-ring: 222.2 47.4% 11.2%;
     --font-sans: "Geist Mono", monospace;
     --viz-highlight: 221.2 83.2% 53.3%;
+
+    /* ── Visualization tokens ──────────────────────────────
+       Every D3 chart reads these instead of hardcoding hex.
+       Light values are tuned to read on a near-white canvas. */
+
+    /* Categorical — node / module / depth colors. Slots 2+7 and
+       3+8 are intentionally near-duplicates: they mirror the
+       original MOD_PALETTE so module coloring is unchanged. */
+    --viz-cat-1: 212 88% 45%;
+    --viz-cat-2: 129 54% 30%;
+    --viz-cat-3: 266 60% 52%;
+    --viz-cat-4: 26 84% 42%;
+    --viz-cat-5: 328 66% 46%;
+    --viz-cat-6: 209 84% 42%;
+    --viz-cat-7: 126 50% 29%;
+    --viz-cat-8: 267 52% 50%;
+
+    /* Text drawn ON a categorical fill. One value per theme: light-theme
+       cat colors are all dark enough for white, dark-theme ones are all
+       light enough for near-black. Keeps badge labels legible without
+       per-slot contrast math. */
+    --viz-cat-ink: 0 0% 100%;
+
+    /* Sequential — treemap complexity ramp (cold → hot) */
+    --viz-seq-from: 213 40% 91%;
+    --viz-seq-to: 14 86% 47%;
+
+    /* Chart surfaces — tooltips, panels, gridlines, labels */
+    --viz-surface: 0 0% 100%;
+    --viz-ink: 222 47% 11%;
+    --viz-ink-dim: 215 16% 47%;
+    --viz-edge: 214 32% 91%;
   }
 
   .dark {
@@ -79,6 +111,32 @@
     --sidebar-border: 0 0% 18%;
     --sidebar-ring: 0 0% 65%;
     --viz-highlight: 217.2 91.2% 59.8%;
+
+    /* ── Visualization tokens (dark) ───────────────────────
+       These reproduce the previous hardcoded GitHub-dark hex
+       exactly, so dark mode is pixel-stable across this change:
+       cat-1..8 == the old MOD_PALETTE, seq == #161b22 → #f0883e,
+       surfaces == the old .viz-tooltip #21262d / #30363d / #e6edf3. */
+    --viz-cat-1: 212 100% 67%;
+    --viz-cat-2: 129 49% 49%;
+    --viz-cat-3: 266 100% 77%;
+    --viz-cat-4: 26 85% 59%;
+    --viz-cat-5: 328 89% 72%;
+    --viz-cat-6: 209 100% 74%;
+    --viz-cat-7: 126 57% 58%;
+    --viz-cat-8: 267 100% 83%;
+
+    /* Dark cat colors are bright pastels — white text on them fails 4.5:1
+       (this was the old `rgba(255,255,255,0.7)` badge bug). Near-black wins. */
+    --viz-cat-ink: 222 47% 11%;
+
+    --viz-seq-from: 215 21% 11%;
+    --viz-seq-to: 26 85% 59%;
+
+    --viz-surface: 215 15% 15%;
+    --viz-ink: 210 32% 92%;
+    --viz-ink-dim: 212 9% 58%;
+    --viz-edge: 215 13% 22%;
   }
 
   * {
@@ -322,12 +380,30 @@
 .viz-tooltip {
   position: absolute;
   pointer-events: none;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: hsl(var(--viz-surface));
+  border: 1px solid hsl(var(--viz-edge));
   border-radius: 6px;
   padding: 6px 10px;
   font-size: 12px;
-  color: #e6edf3;
+  color: hsl(var(--viz-ink));
   z-index: 100;
   white-space: nowrap;
+  box-shadow: 0 4px 16px hsl(0 0% 0% / 0.14);
+}
+
+/*
+ * T12: a chart node that has keyboard focus has to show it.
+ *
+ * These are SVG <g> elements, so Tailwind's ring utilities (box-shadow based)
+ * do nothing — SVG has no box-shadow. `outline` is the one focus affordance
+ * SVG honours, and it follows the element's rendered geometry rather than a
+ * bounding box, which is what makes it land correctly on rotated or
+ * non-rectangular nodes.
+ */
+.viz-node:focus {
+  outline: none;
+}
+.viz-node:focus-visible {
+  outline: 2px solid hsl(var(--viz-highlight));
+  outline-offset: 3px;
 }

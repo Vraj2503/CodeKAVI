@@ -54,8 +54,8 @@ def _unresolved_reason(raw: str, target: str | None) -> str:
 
 
 # Languages are immutable and safe to share across threads.
-JS_LANGUAGE = Language(tsjs.language(), "javascript")
-TS_LANGUAGE = Language(tsts.language_typescript(), "typescript")
+JS_LANGUAGE = Language(tsjs.language())
+TS_LANGUAGE = Language(tsts.language_typescript())
 
 _JS_TS_QUERY_STR = """
     (import_statement source: (string (string_fragment) @path))
@@ -88,8 +88,7 @@ def _get_js_ts_parser_and_query(is_ts: bool) -> tuple[Parser, Query]:
     pair = cache.get(key)
     if pair is None:
         language = TS_LANGUAGE if is_ts else JS_LANGUAGE
-        parser = Parser()
-        parser.set_language(language)
+        parser = Parser(language)
         query = language.query(_JS_TS_QUERY_STR)
         pair = (parser, query)
         cache[key] = pair

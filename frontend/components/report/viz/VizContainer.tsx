@@ -13,13 +13,20 @@ interface VizContainerProps {
   visualizationData: unknown;
 }
 
+/**
+ * T14: these carried emoji (🏗️ 🔗 🧠 🔥 🌊). Emoji-as-design-element is one of
+ * the loudest AI-generated tells, and two of the six shared 🧠 anyway, so the
+ * decoration was not even distinguishing them. Product language instead — and
+ * the treemap's name now matches the chart it labels ("Complexity Treemap",
+ * per D1), which "Complexity Heatmap" did not.
+ */
 const vizTitleMap: Record<string, string> = {
-  architecture_graph: "🏗️ Architecture",
-  dependency_graph: "🔗 Dependencies",
-  radial_mindmap: "🧠 Mind Map",
-  treemap: "🔥 Complexity Heatmap",
-  flow_diagram: "🌊 Data Flow",
-  neural_network: "🧠 Neural Network Architecture",
+  architecture_graph: "Architecture",
+  dependency_graph: "Dependencies",
+  radial_mindmap: "Mind Map",
+  treemap: "Complexity Treemap",
+  flow_diagram: "Data Flow",
+  neural_network: "Neural Network Architecture",
 };
 
 function renderViz(type: string, data: any) {
@@ -111,7 +118,7 @@ function renderViz(type: string, data: any) {
       return <NeuralNetworkViz data={data} />;
     default:
       return (
-        <p className="text-[#8b949e] text-center py-12">
+        <p className="text-muted-foreground text-center py-12">
           Unknown visualization type: {type}
         </p>
       );
@@ -128,7 +135,7 @@ export function VizContainer({
 
   return (
     <div className="viz-box mt-6">
-      <h3 className="text-base font-semibold text-[#e6edf3] mb-4">{title}</h3>
+      <h3 className="text-base font-semibold text-foreground mb-4">{title}</h3>
       <div className="w-full overflow-hidden">
         {renderViz(visualizationType, visualizationData)}
       </div>

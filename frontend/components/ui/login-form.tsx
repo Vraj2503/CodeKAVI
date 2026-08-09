@@ -203,7 +203,7 @@ export function SmokeyBackground({
 /**
  * A glassmorphism-style login form component with animated labels and Google login.
  */
-export function LoginForm() {
+export function LoginForm({ next }: { next?: string } = {}) {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -211,10 +211,15 @@ export function LoginForm() {
     setIsGoogleLoading(true);
     setAuthError(null);
 
+    // `/auth/callback` already honours `?next=` — this is what finally passes
+    // it, so someone who followed a repo link lands back on that link.
+    const callback = new URL("/auth/callback", window.location.origin);
+    if (next && next !== "/") callback.searchParams.set("next", next);
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: callback.toString(),
       },
     });
 

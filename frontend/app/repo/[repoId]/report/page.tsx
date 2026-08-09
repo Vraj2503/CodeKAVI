@@ -2,17 +2,13 @@
 
 import { ReportView } from "@/components/report/ReportView";
 import { useRepo } from "@/components/RepoProvider";
+import { RepoStatePanel } from "@/components/RepoStatePanel";
 
 export default function ReportPage() {
   const { repoData, needsReanalysis, handleAnalyze } = useRepo();
 
-  if (!repoData) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-muted-foreground">
-        <p>Loading repository data…</p>
-      </div>
-    );
-  }
+  // No data yet, or none coming — RepoStatePanel decides which and says so.
+  if (!repoData) return <RepoStatePanel />;
 
   return (
     <ReportView

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRepo } from "@/components/RepoProvider";
+import { useMediaQuery, NARROW_QUERY } from "@/hooks/useMediaQuery";
 import type { AnalyzeResponse } from "@/lib/api";
 import { ScrollArea } from "./ui/ScrollArea";
 import { Skeleton } from "./ui/Skeleton";
@@ -49,6 +50,7 @@ export function Sidebar({
   const { sidebarCollapsed: isCollapsed, setSidebarCollapsed: setIsCollapsed } =
     useRepo();
   const inputRef = useRef<HTMLInputElement>(null);
+  const isNarrow = useMediaQuery(NARROW_QUERY);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeViz = searchParams.get("type") || "dependencies";
@@ -97,17 +99,39 @@ export function Sidebar({
   ];
 
   return (
+    <>
+      {/*
+        On a narrow viewport an expanded sidebar floats over the canvas rather
+        than taking a 320px bite out of it — at 375px that bite left the chart
+        5px wide (QA-001). The backdrop gives a tap target to dismiss it, which
+        matters because the collapse button is a 14px icon.
+      */}
+      {isNarrow && !isCollapsed && (
+        <button
+          type="button"
+          aria-label="Close sidebar"
+          onClick={() => setIsCollapsed(true)}
+          className="absolute inset-0 z-20 bg-background/60 backdrop-blur-sm lg:hidden"
+        />
+      )}
     <aside
       className={cn(
         "flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden transition-all duration-300",
         isCollapsed ? "w-14" : "w-80",
+        isNarrow && !isCollapsed && "absolute inset-y-4 left-4 z-30",
       )}
     >
       {/* View Mode Tabs */}
+      {/*
+        QA-005: four labels across a 320px column left ~27px each, so every tab
+        rendered as two characters and an ellipsis — "Ch…", "Re…", "Vi…", "Gr…".
+        Two rows of two gives each label the width it needs. The cost is ~36px
+        of height, which the list below absorbs by scrolling.
+      */}
       <div
         className={cn(
-          "flex border-b border-border/40 p-2",
-          isCollapsed ? "flex-col gap-2" : "gap-1",
+          "border-b border-border/40 p-2",
+          isCollapsed ? "flex flex-col gap-2" : "grid grid-cols-2 gap-1",
         )}
       >
         <TooltipProvider delayDuration={100}>
@@ -118,7 +142,7 @@ export function Sidebar({
                   href={tab.href}
                   className={cn(
                     "rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                    isCollapsed ? "p-3" : "flex-1 min-w-0 px-3 py-2",
+                    isCollapsed ? "p-3" : "min-w-0 px-3 py-2",
                     activeTab === tab.key
                       ? "bg-primary/20 border border-primary/50 text-primary"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
@@ -256,8 +280,11 @@ export function Sidebar({
               <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-background/30 p-3 rounded-xl border border-border/40">
                 <div className="w-2 h-2 rounded-full bg-primary animate-pulse mt-1 flex-shrink-0" />
                 <span className="leading-relaxed">
-                  On-demand generation (zero LLM tokens unless insights
-                  requested)
+                  {/* T13 changed what this describes: charts now render on
+                      arrival, so "on-demand generation" was no longer true of
+                      five of the six. */}
+                  Charts render as you open them. Only Data Flow and AI
+                  Insights spend tokens.
                 </span>
               </div>
             </div>
@@ -427,6 +454,7 @@ export function Sidebar({
         )}
       </div>
     </aside>
+    </>
   );
 }
 

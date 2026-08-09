@@ -12,11 +12,16 @@ import {
   useRef,
   useEffect,
   useState,
+  useMemo,
   forwardRef,
   useImperativeHandle,
-  useCallback,
 } from "react";
 import * as d3 from "d3";
+import { catVar, inkDimVar } from "@/lib/viz/tokens";
+import { VizShell, VizLegend, type VizLegendItem } from "@/components/viz/VizShell";
+import { useVizCanvas } from "@/components/viz/useVizCanvas";
+import { useVizZoom, ZOOM_MIN, ZOOM_MAX } from "@/components/viz/useVizZoom";
+import { useReducedMotion } from "@/components/viz/useReducedMotion";
 
 interface Node {
   id: string;
@@ -41,25 +46,42 @@ interface DataFlowGraphProps {
   edges: Edge[];
 }
 
+// Semantic stage kinds → categorical slots (lib/viz/tokens.ts)
 const TYPE_COLORS: Record<string, string> = {
-  io: "#22c55e",
-  process: "#4ecdc4",
-  transform: "#a78bfa",
-  data_store: "#fbbf24",
+  io: catVar(1),
+  process: catVar(5),
+  transform: catVar(2),
+  data_store: catVar(3),
 };
 
+// Edge kinds keep distinct hues so a flow's transport is readable at a glance
 const EDGE_COLORS: Record<string, string> = {
-  http: "#3b82f6",
-  db: "#f59e0b",
-  file: "#22c55e",
-  event: "#a855f7",
+  http: catVar(0),
+  db: catVar(3),
+  file: catVar(1),
+  event: catVar(2),
+};
+
+// Legend copy — utility language, not the raw wire values
+const TYPE_LABELS: Record<string, string> = {
+  io: "Entry / exit",
+  process: "Process",
+  transform: "Transform",
+  data_store: "Data store",
+};
+
+const EDGE_LABELS: Record<string, string> = {
+  http: "HTTP",
+  db: "Database",
+  file: "File",
+  event: "Event",
 };
 
 const NODE_W = 150;
 const NODE_H = 46;
 
 function getColor(type: string): string {
-  return TYPE_COLORS[type] || "#8b949e";
+  return TYPE_COLORS[type] || inkDimVar();
 }
 
 function getEdgeColor(dataType?: string): string {
@@ -150,42 +172,42 @@ function appendShape(
 export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
   function DataFlowGraph({ nodes, edges }, ref) {
     const svgRef = useRef<SVGSVGElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
     const [selected, setSelected] = useState<Node | null>(null);
 
-    const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
-      null,
-    );
-    const gRef = useRef<d3.Selection<
-      SVGGElement,
-      unknown,
-      null,
-      undefined
-    > | null>(null);
+    const canvas = useVizCanvas();
+    const reducedMotion = useReducedMotion();
+    const zoom = useVizZoom(!reducedMotion);
+    const containerRef = canvas.containerRef;
+    const containerSize = canvas.size;
 
     useImperativeHandle(ref, () => containerRef.current!);
 
-    // Track container dimensions for re-rendering on resize / sidebar toggle
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el) return;
-      setContainerSize({ width: el.clientWidth, height: el.clientHeight });
-      let timer: NodeJS.Timeout;
-      const observer = new ResizeObserver((entries) => {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          const rect = entries[0]?.contentRect;
-          if (rect)
-            setContainerSize({ width: rect.width, height: rect.height });
-        }, 150);
-      });
-      observer.observe(el);
-      return () => {
-        observer.disconnect();
-        clearTimeout(timer);
-      };
-    }, []);
+    const maxTier = useMemo(
+      () => Math.max(0, ...nodes.map((n) => n.tier ?? 0)),
+      [nodes],
+    );
+
+    /** Only key the kinds actually present — a legend for absent things is noise. */
+    const legendItems = useMemo<VizLegendItem[]>(() => {
+      const items: VizLegendItem[] = [];
+      const seenTypes = new Set(nodes.map((n) => n.type));
+      for (const [type, label] of Object.entries(TYPE_LABELS)) {
+        if (seenTypes.has(type)) {
+          items.push({ color: getColor(type), label });
+        }
+      }
+      const seenEdges = new Set(
+        edges.map((e) => e.data_type).filter((d): d is string => !!d && d in EDGE_COLORS),
+      );
+      for (const dataType of seenEdges) {
+        items.push({
+          color: EDGE_COLORS[dataType],
+          label: EDGE_LABELS[dataType] ?? dataType,
+          shape: "line",
+        });
+      }
+      return items;
+    }, [nodes, edges]);
 
     useEffect(() => {
       if (!svgRef.current || !containerRef.current || nodes.length === 0)
@@ -194,12 +216,14 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
       const width = containerRef.current.clientWidth || 800;
       const viewportH = containerRef.current.clientHeight || 500;
 
+      // Flipped by cleanup so the particle loop below cannot outlive this draw.
+      let cancelled = false;
+
       const svg = d3.select(svgRef.current);
       svg.selectAll("*").remove();
       svg.attr("width", width).attr("height", viewportH);
 
       const g = svg.append("g");
-      gRef.current = g;
       const defs = svg.append("defs");
 
       // Clear selection when clicking empty canvas
@@ -279,7 +303,10 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
           .attr("stroke-opacity", 0.8)
           .attr("marker-end", `url(#flow-arrow-${cssId(color)})`);
 
-        if (edge.animated) {
+        // Flow particles are decorative. Under reduced motion they are skipped
+        // outright — this loop re-arms itself forever, so it is both a
+        // vestibular trigger and a CPU/battery drain that never stops.
+        if (edge.animated && !reducedMotion) {
           const pathNode = path.node();
           const totalLength = pathNode?.getTotalLength() ?? 0;
           if (totalLength > 0) {
@@ -288,7 +315,10 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
               .attr("r", 3)
               .attr("fill", color);
             const loop = () => {
-              if (!pathNode!.isConnected) return;
+              // `cancelled` is flipped by this effect's cleanup. isConnected
+              // alone was not enough: on a re-render the old node can still be
+              // attached for a tick, orphaning a second loop that never stops.
+              if (cancelled || !pathNode!.isConnected) return;
               particle
                 .transition()
                 .duration(1500)
@@ -370,13 +400,14 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
           });
       });
 
-      // Zoom + pan
-      const zoom = d3
+      // Zoom + pan — behavior stays local (the scale extent and transform
+      // target are chart-specific); the shell drives it through the controller.
+      const zoomBehavior = d3
         .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([0.15, 3])
+        .scaleExtent([ZOOM_MIN, ZOOM_MAX])
         .on("zoom", (event) => g.attr("transform", event.transform));
-      svg.call(zoom);
-      zoomRef.current = zoom;
+      svg.call(zoomBehavior);
+      zoom.register(svgRef.current, zoomBehavior, g.node());
 
       // Auto-fit on first render
       const padX = 20;
@@ -389,121 +420,66 @@ export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
       const fitX = (width - contentW * fitScale) / 2;
       const fitY = (viewportH - contentH * fitScale) / 2;
       svg.call(
-        zoom.transform,
+        zoomBehavior.transform,
         d3.zoomIdentity.translate(fitX, fitY).scale(fitScale),
       );
 
       return () => {
+        cancelled = true;
+        zoom.register(null, null, null);
         svg.selectAll("*").remove();
       };
-    }, [nodes, edges, containerSize]);
-
-    const handleZoomBy = useCallback((factor: number) => {
-      if (!svgRef.current || !zoomRef.current) return;
-      d3.select(svgRef.current)
-        .transition()
-        .duration(200)
-        .call(zoomRef.current.scaleBy, factor);
-    }, []);
-
-    const handleFitToView = useCallback(() => {
-      const svgEl = svgRef.current;
-      const gEl = gRef.current?.node();
-      if (!svgEl || !gEl || !zoomRef.current) return;
-      const bbox = gEl.getBBox();
-      if (bbox.width === 0 || bbox.height === 0) return;
-      const W = svgEl.clientWidth || 800;
-      const H = svgEl.clientHeight || 500;
-      const scale = Math.max(
-        0.15,
-        Math.min(3, Math.min(W / bbox.width, H / bbox.height) * 0.85),
-      );
-      const tx = W / 2 - scale * (bbox.x + bbox.width / 2);
-      const ty = H / 2 - scale * (bbox.y + bbox.height / 2);
-      d3.select(svgEl)
-        .transition()
-        .duration(300)
-        .call(
-          zoomRef.current.transform,
-          d3.zoomIdentity.translate(tx, ty).scale(scale),
-        );
-    }, []);
+    }, [nodes, edges, containerSize, containerRef, zoom, reducedMotion]);
 
     return (
-      <div
-        ref={containerRef}
-        className="w-full h-full overflow-hidden relative"
+      <VizShell
+        canvas={canvas}
+        zoom={zoom}
+        label="Data flow diagram"
+        description={
+          `Conceptual stages flowing left to right across ${maxTier + 1} tiers. ` +
+          "Node shape indicates the kind of stage and edge color the transport. " +
+          `${nodes.length} stages, ${edges.length} connections.`
+        }
+        legend={<VizLegend title="Flow" items={legendItems} />}
+        overlay={
+          selected && (
+            <div className="glass-panel absolute top-3 left-3 z-20 rounded-lg px-4 py-3 text-xs max-w-xs">
+              <div className="flex items-start justify-between gap-3">
+                <div className="font-semibold text-foreground">
+                  {selected.label}
+                </div>
+                <button
+                  onClick={() => setSelected(null)}
+                  aria-label="Close"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  ×
+                </button>
+              </div>
+              {selected.description && (
+                <p className="text-muted-foreground mt-1.5 leading-relaxed">
+                  {selected.description}
+                </p>
+              )}
+              {!!selected.source_files?.length && (
+                <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                  {selected.source_files.map((f) => (
+                    <div
+                      key={f}
+                      className="text-muted-foreground truncate font-mono text-[11px]"
+                    >
+                      {f}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        }
       >
         <svg ref={svgRef} className="w-full h-full" />
-
-        {/* ── Zoom controls (bottom-right) ── */}
-        <div className="absolute bottom-3 right-3 z-10 flex flex-col rounded-lg overflow-hidden border border-border bg-card/90 backdrop-blur-sm shadow-lg">
-          <button
-            onClick={() => handleZoomBy(1.3)}
-            aria-label="Zoom in"
-            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            +
-          </button>
-          <button
-            onClick={() => handleZoomBy(1 / 1.3)}
-            aria-label="Zoom out"
-            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
-          >
-            −
-          </button>
-          <button
-            onClick={handleFitToView}
-            aria-label="Fit to view"
-            className="w-8 h-8 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors border-t border-border"
-          >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-
-        {/* ── Selected node popover (click for source files + description) ── */}
-        {selected && (
-          <div className="glass-panel absolute top-3 left-3 z-20 rounded-lg px-4 py-3 text-xs max-w-xs">
-            <div className="flex items-start justify-between gap-3">
-              <div className="font-semibold text-foreground">
-                {selected.label}
-              </div>
-              <button
-                onClick={() => setSelected(null)}
-                aria-label="Close"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                ×
-              </button>
-            </div>
-            {selected.description && (
-              <p className="text-muted-foreground mt-1.5 leading-relaxed">
-                {selected.description}
-              </p>
-            )}
-            {!!selected.source_files?.length && (
-              <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
-                {selected.source_files.map((f) => (
-                  <div
-                    key={f}
-                    className="text-muted-foreground truncate font-mono text-[11px]"
-                  >
-                    {f}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      </VizShell>
     );
   },
 );
