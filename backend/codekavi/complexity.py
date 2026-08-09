@@ -42,10 +42,10 @@ logger = logging.getLogger(__name__)
 
 # Languages are immutable and safe to share across threads (same as analyzer.py).
 _LANGUAGES: dict[str, Language] = {
-    "python": Language(tspy.language(), "python"),
-    "javascript": Language(tsjs.language(), "javascript"),
-    "typescript": Language(tsts.language_typescript(), "typescript"),
-    "tsx": Language(tsts.language_tsx(), "tsx"),
+    "python": Language(tspy.language()),
+    "javascript": Language(tsjs.language()),
+    "typescript": Language(tsts.language_typescript()),
+    "tsx": Language(tsts.language_tsx()),
 }
 
 #: Extension → grammar key. `.jsx` uses the JavaScript grammar, which handles
@@ -139,8 +139,7 @@ def _get_parser_and_query(grammar: str) -> tuple[Parser, Query]:
     pair = cache.get(grammar)
     if pair is None:
         language = _LANGUAGES[grammar]
-        parser = Parser()
-        parser.set_language(language)
+        parser = Parser(language)
         pair = (parser, language.query(_QUERY_SOURCE[grammar]))
         cache[grammar] = pair
     return pair
