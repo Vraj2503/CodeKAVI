@@ -49,11 +49,12 @@ def _dirname(path: str) -> str:
 
 def _folder_buckets(paths: list[str]) -> dict[str, list[str]]:
     """Group paths by their first directory segment past the common prefix.
-    Files with no further subdirectory below the prefix land in the "" bucket."""
+    Files sitting directly at the prefix are named after that folder itself,
+    so no bucket ends up unnamed."""
     dirs = [_dirname(p) for p in paths]
-    non_empty = sorted({d for d in dirs if d})
     try:
-        common = posixpath.commonpath(non_empty) if non_empty else ""
+        # A file at the repo root means there is no shared prefix at all.
+        common = "" if not dirs or "" in dirs else posixpath.commonpath(sorted(set(dirs)))
     except ValueError:
         common = ""
 
@@ -65,6 +66,13 @@ def _folder_buckets(paths: list[str]) -> dict[str, list[str]]:
             rel_dir = d
         segment = rel_dir.split("/", 1)[0] if rel_dir else ""
         buckets[segment].append(p)
+
+    at_prefix = buckets.pop("", None)
+    if at_prefix is not None:
+        name = posixpath.basename(common) or "root"
+        while name in buckets:  # a subdirectory already claims that name
+            name += "-files"
+        buckets[name] = at_prefix
     return dict(buckets)
 
 
@@ -113,7 +121,7 @@ def _community_buckets(paths: list[str], adjacency: dict[str, list[str]]) -> dic
 
 
 def _suppress_single_child(buckets: dict[str, list[str]], total_files: int) -> dict[str, list[str]]:
-    """Single-file buckets merge into a shared "ungrouped" bucket — unless the
+    """Single-file buckets merge into a shared "standalone" bucket — unless the
     layer is small enough that fragmentation doesn't matter."""
     if total_files < SINGLE_CHILD_SUPPRESSION_MIN_FILES:
         return buckets
@@ -123,7 +131,7 @@ def _suppress_single_child(buckets: dict[str, list[str]], total_files: int) -> d
         return buckets
 
     result = {name: members for name, members in buckets.items() if len(members) != 1}
-    result["ungrouped"] = sorted({*result.get("ungrouped", []), *singles})
+    result["standalone"] = sorted({*result.get("standalone", []), *singles})
     return result
 
 
@@ -211,15 +219,15 @@ def compute_insights(dep_data: dict, flags_by_path: dict[str, list[str]]) -> dic
 # gets its own layer instead of being folded into ``other`` — see the module
 # docstring on _assign_layers for the leaf/barrel half of this fix.
 _LAYER_LABELS: dict[str, str] = {
-    "routes": "Routes",
-    "services": "Services",
-    "models": "Models",
-    "database": "Database",
-    "utils": "Utils",
-    "config": "Config",
+    "routes": "Entry Points",
+    "services": "Business Logic",
+    "models": "Types & Models",
+    "database": "Data & Storage",
+    "utils": "Shared Utilities",
+    "config": "Configuration",
     "tests": "Tests",
     "documentation": "Documentation",
-    "other": "Other",
+    "other": "Uncategorized",
 }
 
 # Roles with no stage of their own: a leaf/barrel file is plumbing for

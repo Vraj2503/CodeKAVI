@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -28,6 +28,11 @@ export interface TourPanelProps {
   onClearQuestion?: () => void;
 }
 
+/** Narration cache, keyed `repoId:nodeId`. Module-level rather than a ref so
+ * it can be read during render, and so it survives panel open/close.
+ * ponytail: unbounded — add an LRU cap if a session ever holds many repos. */
+const narrationCache = new Map<string, string | null>();
+
 const MODES: { value: TourMode; label: string }[] = [
   { value: "learn", label: "Learn" },
   { value: "recall", label: "Recall" },
@@ -54,7 +59,6 @@ export function TourPanel({
   const [questionInput, setQuestionInput] = useState("");
   const { progress, markSeen, toggleAnswerable } = useTourProgress(repoId);
 
-  const narrationCache = useRef(new Map<string, string | null>());
   const [narration, setNarration] = useState<string | null>(null);
   const [narrationLoading, setNarrationLoading] = useState(false);
 
@@ -77,40 +81,40 @@ export function TourPanel({
   }, [step]);
 
   // A3: on-demand LLM narration for the step's node, cached per node id so
-  // Prev/Next (and Recall's jumps) don't refetch on repeat visits.
-  useEffect(() => {
-    const nodeId = step?.node_ids[0];
-    if (!nodeId) {
-      setNarration(null);
-      setNarrationLoading(false);
-      return;
-    }
+  // Prev/Next (and Recall's jumps) don't refetch on repeat visits. The
+  // switch-to-a-new-node reset happens during render (same pattern as
+  // trackedSteps above); the effect only owns the network call.
+  const nodeId = step?.node_ids[0] ?? null;
+  const [trackedNodeId, setTrackedNodeId] = useState(nodeId);
+  if (nodeId !== trackedNodeId) {
+    const cached = nodeId
+      ? narrationCache.get(`${repoId}:${nodeId}`)
+      : undefined;
+    setTrackedNodeId(nodeId);
+    setNarration(cached ?? null);
+    setNarrationLoading(Boolean(nodeId) && cached === undefined);
+  }
 
-    const cached = narrationCache.current.get(nodeId);
-    if (cached !== undefined) {
-      setNarration(cached);
-      setNarrationLoading(false);
-      return;
-    }
+  useEffect(() => {
+    const cacheKey = `${repoId}:${nodeId}`;
+    if (!nodeId || narrationCache.has(cacheKey)) return;
 
     const controller = new AbortController();
-    setNarration(null);
-    setNarrationLoading(true);
     fetchTourNodeNarration(repoId, nodeId, controller.signal)
       .then(({ narration: result }) => {
-        narrationCache.current.set(nodeId, result);
+        narrationCache.set(cacheKey, result);
         setNarration(result);
         setNarrationLoading(false);
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        narrationCache.current.set(nodeId, null);
+        narrationCache.set(cacheKey, null);
         setNarration(null);
         setNarrationLoading(false);
       });
 
     return () => controller.abort();
-  }, [step, repoId]);
+  }, [nodeId, repoId]);
 
   // ←/→ (and Space to advance) step through the tour; secondary affordance
   // even in Recall's jumpable list. Ignored while typing in the question box.
@@ -131,10 +135,12 @@ export function TourPanel({
     return () => window.removeEventListener("keydown", handler);
   }, [step, steps.length]);
 
+  // The panel is mostly prose (narration, facts, questions), so mono lives on
+  // the file-derived text only — the step title and the Recall list.
   return (
     <aside
       aria-label="architecture tour"
-      className="pointer-events-auto flex h-full w-full flex-col gap-3 overflow-y-auto border-l bg-card p-3 font-mono text-xs shadow-lg"
+      className="pointer-events-auto flex h-full w-full flex-col gap-3 overflow-y-auto border-l bg-card p-3 text-xs shadow-lg"
     >
       <div className="flex items-center justify-between gap-2">
         <div role="group" aria-label="tour mode" className="flex gap-1">
@@ -229,7 +235,9 @@ export function TourPanel({
       {step && (
         <>
           <div className="flex items-center justify-between gap-2">
-            <span className="truncate text-sm font-medium">{step.title}</span>
+            <span className="truncate font-mono text-sm font-medium">
+              {step.title}
+            </span>
             <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
               <div className="h-1 w-12 overflow-hidden rounded-full bg-muted">
                 <div
@@ -246,7 +254,7 @@ export function TourPanel({
           {narrationLoading ? (
             <p className="text-muted-foreground">Generating…</p>
           ) : narration ? (
-            <p className="text-muted-foreground">{narration}</p>
+            <p className="leading-relaxed text-muted-foreground">{narration}</p>
           ) : (
             step.facts.length > 0 && (
               <ul className="flex flex-col gap-1 text-muted-foreground">
@@ -291,7 +299,10 @@ export function TourPanel({
           )}
 
           {mode === "recall" ? (
-            <ul className="flex max-h-32 flex-col gap-0.5 overflow-y-auto border-t pt-2">
+            // flex-1 grows the list into the panel's free space; min-h-32 is
+            // the old fixed cap kept as a floor, since flex-basis 0 would
+            // otherwise collapse it to nothing when the content above overflows.
+            <ul className="flex min-h-32 flex-1 flex-col gap-0.5 overflow-y-auto border-t pt-2 font-mono">
               {steps.map((s, i) => (
                 <li key={i}>
                   <button

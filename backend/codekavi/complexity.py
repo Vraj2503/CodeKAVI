@@ -185,7 +185,10 @@ def cyclomatic_complexity(source: str, ext: str) -> int | None:
         # A tree with errors still yields usable counts for the parts that did
         # parse — tree-sitter recovers locally rather than giving up on the
         # file. An undercount beats refusing to measure the file at all.
-        return len(query.captures(tree.root_node)) + 1
+        captures = query.captures(tree.root_node)
+        # 0.23+ returns {capture_name: [nodes]}; older bindings a list of tuples.
+        matched = sum(len(nodes) for nodes in captures.values()) if isinstance(captures, dict) else len(captures)
+        return matched + 1
     except Exception as e:  # pragma: no cover — grammar/ABI failures only
         logger.debug(f"complexity: parse failed for '{ext}' file: {e}")
         return None

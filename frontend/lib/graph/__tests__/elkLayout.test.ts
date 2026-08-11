@@ -41,7 +41,7 @@ describe("buildContainerGraph sizeOverrides", () => {
     );
     expect(byId.a.width).toBe(500);
     expect(byId.a.height).toBe(320);
-    const collapsedB = containerSize(9);
+    const collapsedB = containerSize();
     expect(byId.b.width).toBe(collapsedB.width);
     expect(byId.b.height).toBe(collapsedB.height);
   });

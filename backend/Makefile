@@ -26,18 +26,18 @@ install-dev: install
 
 # ── Testing ──
 test:
-	python -m pytest tests/ -v --tb=short
+	python -m pytest -v --tb=short
 
 test-cov:
-	python -m pytest tests/ -v --tb=short --cov=codekavi --cov-report=term-missing
+	python -m pytest -v --tb=short --cov=codekavi --cov-report=term-missing
 
 # ── Linting & Formatting ──
 lint:
-	python -m ruff check codekavi/ tests/
+	python -m ruff check codekavi/
 
 format:
-	python -m ruff check --fix codekavi/ tests/
-	python -m ruff format codekavi/ tests/
+	python -m ruff check --fix codekavi/
+	python -m ruff format codekavi/
 
 # ── Type Checking ──
 typecheck:

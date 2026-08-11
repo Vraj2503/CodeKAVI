@@ -160,7 +160,7 @@ export function WelcomeScreen() {
       } else {
         toast.error("Failed to delete chat");
       }
-    } catch (err) {
+    } catch {
       toast.error("An error occurred");
     }
   };

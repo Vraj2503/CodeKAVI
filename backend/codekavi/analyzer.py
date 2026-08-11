@@ -357,7 +357,7 @@ def _extract_js_ts_imports_with_source(
             if name != "path":
                 continue
             for node in nodes:
-                raw_path = node.text.decode("utf-8", errors="ignore")
+                raw_path = (node.text or b"").decode("utf-8", errors="ignore")
                 line = node.start_point[0] + 1
                 resolved = _resolve_js_path(
                     raw_path, file_dir, repo_root, known_files=known_files, path_aliases=path_aliases

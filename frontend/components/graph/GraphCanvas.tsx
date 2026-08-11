@@ -16,6 +16,7 @@ import {
   Controls,
   useReactFlow,
   type NodeTypes,
+  type EdgeTypes,
   type NodeMouseHandler,
 } from "@xyflow/react";
 import { useTheme } from "@/components/ui/theme-provider";
@@ -33,10 +34,12 @@ import {
   buildOverviewGraph,
   buildLayerViewGraph,
   expandedContainerBox,
+  computeLayerCards,
 } from "@/lib/graph/buildFlowGraph";
 import {
   layoutContainers,
   layoutContainerChildren,
+  layoutOverviewLayers,
   warmElkLayout,
   containerSize,
   type LayoutResult,
@@ -51,6 +54,7 @@ import { GraphBreadcrumb } from "./GraphBreadcrumb";
 import { FlagFilter } from "./FlagFilter";
 import { NodePanel } from "./NodePanel";
 import { TourPanel } from "./TourPanel";
+import { CountEdge } from "./CountEdge";
 import type { TourMode, TourStep } from "@/lib/api";
 
 const NODE_TYPES: NodeTypes = {
@@ -59,6 +63,14 @@ const NODE_TYPES: NodeTypes = {
   file: FileNode,
   portal: PortalNode,
 };
+
+const EDGE_TYPES: EdgeTypes = {
+  countEdge: CountEdge,
+};
+
+// Floor is the three mode pills fitting on one row: 360 minus the panel's `p-3`
+// leaves 336px of content, which clears them.
+const TOUR_WIDTH = 360;
 
 export interface GraphCanvasProps {
   repoId: string;
@@ -92,6 +104,9 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     {},
   );
 
+  // ELK layout for the overview (layer-level) graph.
+  const [overviewLayout, setOverviewLayout] = useState<LayoutResult | null>(null);
+
   // Reset layout caches during render on payload change — the React-recommended
   // way to adjust state on a prop change without an extra effect round-trip.
   const [trackedPayload, setTrackedPayload] = useState(payload);
@@ -99,7 +114,18 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     setTrackedPayload(payload);
     setContainerLayouts({});
     setFileLayouts({});
+    setOverviewLayout(null);
   }
+
+  useEffect(() => {
+    if (!payload || state.activeLayerId || overviewLayout) return;
+    let cancelled = false;
+    const cards = computeLayerCards(payload);
+    layoutOverviewLayers(payload, cards).then((result) => {
+      if (!cancelled) setOverviewLayout(result);
+    });
+    return () => { cancelled = true; };
+  }, [payload, state.activeLayerId, overviewLayout]);
 
   // Real (expanded) box sizes for opened containers whose stage-2 file layout
   // is ready. Feeding these to stage-1 makes ELK reflow neighbors aside instead
@@ -118,7 +144,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
       )
         continue;
       overrides[id] = expandedContainerBox(
-        containerSize(container.file_ids.length),
+        containerSize(),
         fileLayout.positions,
       );
     }
@@ -284,8 +310,10 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
 
   const { nodes, edges } = useMemo(() => {
     if (!payload) return { nodes: [], edges: [] };
-    if (!state.activeLayerId)
-      return buildOverviewGraph(payload, onOpen, state.selectedFileId);
+    if (!state.activeLayerId) {
+      if (!overviewLayout) return { nodes: [], edges: [] };
+      return buildOverviewGraph(payload, overviewLayout.positions, onOpen, state.selectedFileId);
+    }
 
     const containerLayout = activeLayoutKey
       ? containerLayouts[activeLayoutKey]
@@ -320,6 +348,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     state.selectedFileId,
     containerLayouts,
     fileLayouts,
+    overviewLayout,
     onOpen,
     onToggleContainer,
   ]);
@@ -359,84 +388,93 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
     [...state.expandedContainers].some((id) => fileLayouts[id]?.usedFallback);
   // Active layer chosen but its stage-1 container layout hasn't resolved yet:
   // the useMemo returns empty nodes, so show an overlay instead of a blank canvas.
-  const isLayingOut = !!activeLayoutKey && !containerLayouts[activeLayoutKey];
+  const isLayingOut =
+    (!!activeLayoutKey && !containerLayouts[activeLayoutKey]) ||
+    (!state.activeLayerId && !overviewLayout);
   const hasNoEdges = payload.edges.length === 0 && payload.files.length > 0;
   const isLargeRepo = payload.files.length > LARGE_REPO_FILE_THRESHOLD;
   const showLargeRepoNotice = isLargeRepo && !state.activeLayerId;
 
   return (
-    <div className="relative h-full w-full">
-      <div className="absolute left-3 top-3 z-10 flex flex-col gap-2">
-        <GraphBreadcrumb
-          activeLayer={activeLayer}
-          onNavigate={handleBreadcrumbNavigate}
-        />
-        <FlagFilter
-          files={payload.files}
-          activeFlags={state.activeFlags}
-          onToggle={toggleFlag}
-        />
-        <button
-          type="button"
-          onClick={() => setTourOpen((open) => !open)}
-          aria-pressed={tourOpen}
-          className="w-fit rounded-full border bg-card px-2 py-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {tourOpen ? "Exit tour" : "Start tour"}
-        </button>
-      </div>
-      {(hasNoEdges || showLargeRepoNotice || usedLayoutFallback) && (
-        <div className="absolute left-1/2 top-3 z-10 flex w-full max-w-xs -translate-x-1/2 flex-col items-center gap-2 px-3">
-          {hasNoEdges && (
-            <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
-              No dependencies could be resolved — files are grouped by role
-              only.
-            </p>
-          )}
-          {showLargeRepoNotice && (
-            <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
-              {payload.files.length.toLocaleString()} files — showing layer
-              overview only. Open a layer, then a container, to see individual
-              files.
-            </p>
-          )}
-          {usedLayoutFallback && (
-            <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20">
-              Automatic layout failed; showing a fallback grid.
-            </p>
-          )}
-        </div>
-      )}
-      <ReactFlow
-        key={state.activeLayerId ?? "overview"}
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={NODE_TYPES}
-        onNodeClick={handleNodeClick}
-        onPaneClick={handlePaneClick}
-        colorMode={colorMode}
-        fitView
-        fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
-      >
-        <Background />
-        <Controls position="bottom-right" showInteractive={false} />
-      </ReactFlow>
-      {isLayingOut && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
-          Laying out…
-        </div>
-      )}
-      {selectedFile && !tourOpen && (
-        <div className="absolute right-3 top-3 z-10 w-80">
-          <NodePanel
-            file={selectedFile}
-            cycles={payload.insights.cycles}
-            onClose={handlePaneClick}
+    <div className="flex h-full w-full">
+      {/* Canvas region: the absolutely-positioned chrome below resolves against
+          this box, not the window, so it can't slide under the docked tour. */}
+      <div className="relative min-w-0 flex-1">
+        {/* max-w keeps the box shrink-to-fit while still giving flex-wrap a
+            bound to wrap against — without it an absolute flex row never wraps. */}
+        <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-2">
+          <GraphBreadcrumb
+            activeLayer={activeLayer}
+            onNavigate={handleBreadcrumbNavigate}
           />
+          <FlagFilter
+            files={payload.files}
+            activeFlags={state.activeFlags}
+            onToggle={toggleFlag}
+          />
+          <button
+            type="button"
+            onClick={() => setTourOpen((open) => !open)}
+            aria-pressed={tourOpen}
+            className="w-fit rounded-full border bg-card px-2 py-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {tourOpen ? "Exit tour" : "Start tour"}
+          </button>
         </div>
-      )}
+        {(hasNoEdges || showLargeRepoNotice || usedLayoutFallback) && (
+          <div className="absolute left-1/2 top-3 z-10 flex w-full max-w-xs -translate-x-1/2 flex-col items-center gap-2 px-3">
+            {hasNoEdges && (
+              <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
+                No dependencies could be resolved — files are grouped by role
+                only.
+              </p>
+            )}
+            {showLargeRepoNotice && (
+              <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
+                {payload.files.length.toLocaleString()} files — showing layer
+                overview only. Open a layer, then a container, to see individual
+                files.
+              </p>
+            )}
+            {usedLayoutFallback && (
+              <p className="text-xs text-destructive bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20">
+                Automatic layout failed; showing a fallback grid.
+              </p>
+            )}
+          </div>
+        )}
+        <ReactFlow
+          key={state.activeLayerId ?? "overview"}
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
+          onNodeClick={handleNodeClick}
+          onPaneClick={handlePaneClick}
+          colorMode={colorMode}
+          fitView
+          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+        >
+          <Background />
+          <Controls position="bottom-right" showInteractive={false} />
+        </ReactFlow>
+        {isLayingOut && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
+            Laying out…
+          </div>
+        )}
+        {selectedFile && !tourOpen && (
+          <div className="absolute right-3 top-3 z-10 w-80">
+            <NodePanel
+              file={selectedFile}
+              cycles={payload.insights.cycles}
+              onClose={handlePaneClick}
+            />
+          </div>
+        )}
+      </div>
       {tourOpen && (
-        <div className="absolute inset-y-0 right-0 z-10 w-full max-w-md">
+        <div className="h-full shrink-0" style={{ width: TOUR_WIDTH }}>
           <TourPanel
             repoId={repoId}
             mode={tourMode}
