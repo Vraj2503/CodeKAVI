@@ -9,12 +9,12 @@ import type {
   RepoGraphEdge,
 } from "@/lib/api";
 
-// Stage 1 — containers as opaque atoms, sized sqrt(childCount), capped at
-// 800x600 per the design spec.
-const CONTAINER_SIZE_UNIT = 60;
-const CONTAINER_MIN_SIZE = 90;
-const CONTAINER_MAX_WIDTH = 800;
-const CONTAINER_MAX_HEIGHT = 600;
+// Stage 1 — a collapsed container is a labelled row, not an area: one header row
+// tall, wide enough for its name (chevron + dot + count pill + padding already
+// eat ~100px). √fileCount sizing only bought empty space under the label — the
+// file count is already spelled out in the header pill.
+const COLLAPSED_WIDTH = 220;
+const COLLAPSED_HEIGHT = 56;
 
 // Stage 2 — file nodes. FileNode.tsx (step 8) owns the real visual sizing;
 // this is only what ELK needs to compute positions.
@@ -27,6 +27,15 @@ const ELK_LAYOUT_OPTIONS: LayoutOptions = {
   "elk.edgeRouting": "ORTHOGONAL",
   "elk.layered.spacing.nodeNodeBetweenLayers": "80",
   "elk.spacing.nodeNode": "60",
+};
+
+const OVERVIEW_ELK_OPTIONS: LayoutOptions = {
+  "elk.algorithm": "layered",
+  "elk.direction": "RIGHT",
+  "elk.edgeRouting": "SPLINES",
+  "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+  "elk.spacing.nodeNode": "80",
+  "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
 };
 
 export interface NodeBox {
@@ -42,15 +51,8 @@ export interface LayoutResult {
   usedFallback: boolean;
 }
 
-export function containerSize(fileCount: number): {
-  width: number;
-  height: number;
-} {
-  const side = Math.min(
-    Math.max(CONTAINER_SIZE_UNIT * Math.sqrt(fileCount), CONTAINER_MIN_SIZE),
-    CONTAINER_MAX_WIDTH,
-  );
-  return { width: side, height: Math.min(side, CONTAINER_MAX_HEIGHT) };
+export function containerSize(): { width: number; height: number } {
+  return { width: COLLAPSED_WIDTH, height: COLLAPSED_HEIGHT };
 }
 
 function toElkEdges(
@@ -88,8 +90,7 @@ export function buildContainerGraph(
 
   const children: ElkNode[] = containers.map(
     (container: RepoGraphContainer) => {
-      const { width, height } =
-        sizeOverrides[container.id] ?? containerSize(container.file_ids.length);
+      const { width, height } = sizeOverrides[container.id] ?? containerSize();
       return { id: container.id, width, height };
     },
   );
@@ -124,6 +125,26 @@ export function buildFileGraph(
     layoutOptions: ELK_LAYOUT_OPTIONS,
     children,
     edges: toElkEdges(payload.edges, "file", fileIds),
+  };
+}
+
+export function buildOverviewElkGraph(
+  payload: RepoGraphPayload,
+  layerSizes: { id: string; width: number; height: number }[],
+): ElkNode {
+  const layerIds = new Set(layerSizes.map((l) => l.id));
+
+  const children: ElkNode[] = layerSizes.map((layer) => ({
+    id: layer.id,
+    width: layer.width,
+    height: layer.height,
+  }));
+
+  return {
+    id: "overview",
+    layoutOptions: OVERVIEW_ELK_OPTIONS,
+    children,
+    edges: toElkEdges(payload.edges, "layer", layerIds),
   };
 }
 
@@ -221,4 +242,11 @@ export function layoutContainerChildren(
   containerId: string,
 ): Promise<LayoutResult> {
   return layout(buildFileGraph(payload, containerId));
+}
+
+export function layoutOverviewLayers(
+  payload: RepoGraphPayload,
+  layerSizes: { id: string; width: number; height: number }[],
+): Promise<LayoutResult> {
+  return layout(buildOverviewElkGraph(payload, layerSizes));
 }

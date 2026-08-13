@@ -28,10 +28,6 @@ const CATEGORY_COLORS: Record<string, { base: string; top: string; side: string;
   other:         { base: "#607D8B", top: "#8EAAB5", side: "#4A6470", text: "#fff" },
 };
 
-const ISO_ANGLE = Math.PI / 6; // 30° isometric
-const COS_A = Math.cos(ISO_ANGLE);
-const SIN_A = Math.sin(ISO_ANGLE);
-
 // Oblique projection for PlotNeuralNet style
 function isoProject(x: number, y: number, z: number) {
   const angle = Math.PI / 6; // 30 degrees
@@ -288,7 +284,7 @@ function ModelRenderer({ model, index }: ModelRendererProps) {
     const layerGroup = g.append("g").attr("class", "layers");
 
     for (let i = 0; i < layouts.length; i++) {
-      const { layer, polys, h } = layouts[i];
+      const { layer, polys } = layouts[i];
       const colors = CATEGORY_COLORS[layer.category] || CATEGORY_COLORS.other;
       const layerClass = `layer-${layer.id.replace(/[^a-zA-Z0-9]/g, "_")}-${i}`;
 

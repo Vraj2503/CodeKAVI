@@ -21,30 +21,35 @@ export const FLAG_ORDER: GraphFlag[] = [
 
 export const FLAG_META: Record<
   GraphFlag,
-  { label: string; description: string; icon: LucideIcon }
+  { label: string; plural: string; description: string; icon: LucideIcon }
 > = {
   orphan: {
     label: "orphaned",
+    plural: "orphaned",
     description: "Nothing in the repo imports this file",
     icon: Unlink2,
   },
   in_cycle: {
     label: "circular",
+    plural: "circular",
     description: "Part of a circular dependency",
     icon: RefreshCw,
   },
   hub: {
     label: "hub",
+    plural: "hubs",
     description: "Heavily depended on by other files",
     icon: Share2,
   },
   entry_point: {
     label: "entry point",
+    plural: "entry points",
     description: "Where execution starts",
     icon: LogIn,
   },
   god_file: {
     label: "god file",
+    plural: "god files",
     description: "Unusually large for this repo",
     icon: FileWarning,
   },

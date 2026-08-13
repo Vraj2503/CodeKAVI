@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, CheckCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -45,7 +45,7 @@ export function ReportView({
   needsReanalysis,
   onReanalyze,
 }: ReportViewProps) {
-  const [stats, setStats] = useState<StatsData | null>(null);
+  const [, setStats] = useState<StatsData | null>(null);
   const [sections, setSections] = useState<Map<string, SectionData>>(new Map());
   const [completedSections, setCompletedSections] = useState<string[]>([]);
   const [isComplete, setIsComplete] = useState(false);

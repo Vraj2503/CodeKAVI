@@ -72,6 +72,8 @@ skills-lock.json
 .github/skills/
 PRODUCT.MD
 DESIGN.MD
+mockup/
+tmp/
 # Both rules above are unanchored, so they also match at any depth — and on a
 # case-insensitive filesystem `DESIGN.MD` swallows `DESIGN.md`. This one is
 # ours (T15), not a generated root artifact.

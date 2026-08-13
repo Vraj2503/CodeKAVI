@@ -328,9 +328,16 @@ def _js_ts_structure_signature(source: str, lang: str) -> dict:
     declarations: list[str] = []
     raw_imports: list[dict] = []
 
-    def _each(pairs: list[tuple[Any, str]] | dict[Any, str]):
+    def _each(pairs: list[tuple[Any, str]] | dict[str, list[Any]]):
+        """Yield (node, capture_name) for either binding shape.
+
+        tree-sitter 0.23+ returns {capture_name: [nodes]}; older bindings a
+        flat list of (node, name) tuples.
+        """
         if isinstance(pairs, dict):
-            yield from pairs.items()
+            for name, nodes in pairs.items():
+                for node in nodes:
+                    yield node, name
         else:
             yield from pairs
 

@@ -1,15 +1,20 @@
 import type { Node, Edge } from "@xyflow/react";
 import type { RepoGraphPayload } from "@/lib/api";
 import type { NodeBox } from "./elkLayout";
-import { gridFallback } from "./elkLayout";
 import { countFlags, type GraphFlag } from "./flags";
 import type { LayerNodeType } from "@/components/graph/LayerNode";
 import type { ContainerNodeType } from "@/components/graph/ContainerNode";
 import type { FileNodeType } from "@/components/graph/FileNode";
 import type { PortalNodeType } from "@/components/graph/PortalNode";
 
-export const LAYER_NODE_WIDTH = 220;
-export const LAYER_NODE_HEIGHT = 130;
+const LAYER_NODE_WIDTH = 260;
+/** LayerNode chrome: px-4 py-3 (24) + the text-sm title row (20) + gap-2 (8),
+ * plus one text-xs line per stat. No floor: the card ends at its last stat. */
+const LAYER_CARD_CHROME = 56;
+const LAYER_STAT_ROW = 16;
+/** Overview grid gap. Wider than PORTAL_GAP: layer cards are the only thing on
+ * that level, so they get room the layer view can't spare. */
+const LAYER_GRID_GAP = 48;
 export const PORTAL_NODE_WIDTH = 160;
 export const PORTAL_NODE_HEIGHT = 44;
 
@@ -38,63 +43,64 @@ export function expandedContainerBox(
   };
 }
 
-function countByDirection(
+/** Edges this node depends on — its outgoing count at the given level. */
+function countOutgoing(
   edges: RepoGraphPayload["edges"],
   level: RepoGraphPayload["edges"][number]["level"],
   id: string,
-): { inCount: number; outCount: number } {
-  let inCount = 0;
+): number {
   let outCount = 0;
   for (const edge of edges) {
-    if (edge.level !== level) continue;
-    if (edge.target === id) inCount += edge.count;
-    if (edge.source === id) outCount += edge.count;
+    if (edge.level === level && edge.source === id) outCount += edge.count;
   }
-  return { inCount, outCount };
+  return outCount;
 }
 
-/** Overview: one card per layer, laid out on a deterministic grid (no ELK needed for this level). */
+/** Computes the layer card sizing metadata used by both ELK layout and node creation. */
+export function computeLayerCards(payload: RepoGraphPayload) {
+  return payload.layers.map((layer) => {
+    const layerFiles = payload.files.filter((f) => f.layer_id === layer.id);
+    const flagCounts = countFlags(layerFiles);
+    const outCount = countOutgoing(payload.edges, "layer", layer.id);
+    const rows = 1 + flagCounts.length + (outCount > 0 ? 1 : 0);
+    return {
+      id: layer.id,
+      layer,
+      flagCounts,
+      outCount,
+      width: LAYER_NODE_WIDTH,
+      height: LAYER_CARD_CHROME + LAYER_STAT_ROW * rows,
+    };
+  });
+}
+
+/** Overview: one card per layer, positioned by pre-computed ELK layout. */
 export function buildOverviewGraph(
   payload: RepoGraphPayload,
+  positions: Record<string, NodeBox>,
   onOpen: (layerId: string) => void,
   selectedFileId?: string | null,
 ): { nodes: LayerNodeType[]; edges: Edge[] } {
-  const grid = gridFallback(
-    payload.layers.map((layer) => ({
-      id: layer.id,
-      width: LAYER_NODE_WIDTH,
-      height: LAYER_NODE_HEIGHT,
-    })),
-    PORTAL_GAP,
-  );
+  const cards = computeLayerCards(payload);
 
   const selectedLayerId = selectedFileId
     ? payload.files.find((f) => f.id === selectedFileId)?.layer_id
     : undefined;
 
-  const nodes: LayerNodeType[] = payload.layers.map((layer) => {
-    const layerFiles = payload.files.filter((f) => f.layer_id === layer.id);
-    const { inCount, outCount } = countByDirection(
-      payload.edges,
-      "layer",
-      layer.id,
-    );
-    return {
-      id: layer.id,
-      type: "layer",
-      position: grid[layer.id],
-      width: LAYER_NODE_WIDTH,
-      height: LAYER_NODE_HEIGHT,
-      selected: layer.id === selectedLayerId,
-      data: {
-        layer,
-        flagCounts: countFlags(layerFiles),
-        inCount,
-        outCount,
-        onOpen,
-      },
-    };
-  });
+  const nodes: LayerNodeType[] = cards.map((card) => ({
+    id: card.id,
+    type: "layer",
+    position: positions[card.id] ?? { x: 0, y: 0 },
+    width: card.width,
+    height: card.height,
+    selected: card.id === selectedLayerId,
+    data: {
+      layer: card.layer,
+      flagCounts: card.flagCounts,
+      outCount: card.outCount,
+      onOpen,
+    },
+  }));
 
   const edges: Edge[] = payload.edges
     .filter((e) => e.level === "layer")
@@ -102,7 +108,9 @@ export function buildOverviewGraph(
       id: `${e.source}->${e.target}`,
       source: e.source,
       target: e.target,
-      label: String(e.count),
+      type: "countEdge",
+      markerEnd: { type: "arrowclosed" as const, color: "hsl(var(--muted-foreground))" },
+      data: { count: e.count },
     }));
 
   return { nodes, edges };

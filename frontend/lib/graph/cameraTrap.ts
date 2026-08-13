@@ -27,7 +27,15 @@ export function runCameraTrap(
   const poll = () => {
     const measured = reactFlow.getInternalNode(nodeId)?.measured;
     if (measured?.width && measured?.height) {
-      reactFlow.fitView({ nodes: [{ id: nodeId }], duration: 300 });
+      // Imperative fitView doesn't inherit the component's fitViewOptions, and
+      // the instance maxZoom defaults to 2 — without this a file node renders
+      // at 2× and edge-to-edge. padding keeps its neighbours in frame.
+      reactFlow.fitView({
+        nodes: [{ id: nodeId }],
+        duration: 300,
+        maxZoom: 1,
+        padding: 0.4,
+      });
       return;
     }
     if (now() >= deadline) {

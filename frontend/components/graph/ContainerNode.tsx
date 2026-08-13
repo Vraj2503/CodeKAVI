@@ -58,7 +58,7 @@ function ContainerNodeComponent({
     return (
       <div
         className={cn(
-          "flex h-full w-full flex-col items-center justify-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm",
+          "flex h-full w-full flex-col gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm",
           selected &&
             "ring-2 ring-[hsl(var(--viz-highlight))] ring-offset-1 ring-offset-background",
         )}

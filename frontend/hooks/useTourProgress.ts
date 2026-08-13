@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   loadTourProgress,
   saveTourProgress,
-  type TourProgress,
 } from "@/lib/graph/tourProgress";
 
 /** E8: persists tour progress to localStorage, keyed by repoId. */

@@ -1,89 +1,67 @@
 import { memo } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { layerColor } from "@/lib/graph/theme";
 import { FLAG_META, type GraphFlag } from "@/lib/graph/flags";
 import type { RepoGraphLayer } from "@/lib/api";
 
 export interface LayerNodeData extends Record<string, unknown> {
   layer: RepoGraphLayer;
   flagCounts: { flag: GraphFlag; count: number }[];
-  inCount: number;
   outCount: number;
   onOpen: (layerId: string) => void;
 }
 
 export type LayerNodeType = Node<LayerNodeData, "layer">;
 
+const HANDLE_STYLE = "!bg-transparent !border-0 !w-0 !h-0";
+
 function LayerNodeComponent({ data, selected }: NodeProps<LayerNodeType>) {
-  const { layer, flagCounts, inCount, outCount, onOpen } = data;
-  const accent = layerColor(layer.id);
+  const { layer, flagCounts, outCount, onOpen } = data;
   const fileCount = layer.file_count;
+
+  // Spelled-out stat lines rather than icon pills — a layer card is read at a
+  // glance from across the overview, where a glyph is guesswork. Zero counts are
+  // dropped, the way countFlags already drops them: "0 imports" is a line of
+  // noise on every leaf layer.
+  const stats = [
+    `${fileCount} file${fileCount === 1 ? "" : "s"}`,
+    ...flagCounts.map(({ flag, count }) => {
+      const meta = FLAG_META[flag];
+      return `${count} ${count === 1 ? meta.label : meta.plural}`;
+    }),
+    ...(outCount > 0 ? [`${outCount} import${outCount === 1 ? "" : "s"}`] : []),
+  ];
 
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col gap-2 rounded-lg border bg-card px-3 py-2.5 shadow-sm",
+        "flex h-full w-full flex-col gap-2.5 rounded-lg border border-dashed border-border/60 bg-card px-4 py-3 shadow-sm",
         selected &&
           "ring-2 ring-[hsl(var(--viz-highlight))] ring-offset-1 ring-offset-background",
       )}
-      style={{
-        background: `color-mix(in oklab, ${accent} 8%, hsl(var(--card)))`,
-      }}
     >
-      <Handle type="target" position={Position.Top} className="!bg-border" />
+      <Handle type="target" position={Position.Top} className={HANDLE_STYLE} />
+      <Handle type="target" id="left" position={Position.Left} className={HANDLE_STYLE} />
+      <Handle type="source" position={Position.Bottom} className={HANDLE_STYLE} />
+      <Handle type="source" id="right" position={Position.Right} className={HANDLE_STYLE} />
       <button
         type="button"
         onClick={() => onOpen(layer.id)}
-        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        className="flex w-full min-w-0 items-center justify-between gap-2 text-left"
         title={`${layer.label} (${fileCount} file${fileCount === 1 ? "" : "s"})`}
       >
-        <span
-          className="h-2 w-2 shrink-0 rounded-full"
-          style={{ background: accent }}
-        />
-        <span className="truncate font-mono text-xs font-medium">
-          {layer.label}
-        </span>
-        <span className="ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground">
+        <span className="truncate text-sm font-medium">{layer.label}</span>
+        <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground">
           {fileCount}
         </span>
       </button>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span
-          className="flex items-center gap-0.5"
-          title="incoming layer edges"
-        >
-          <ArrowDownToLine className="h-3 w-3" />
-          {inCount}
-        </span>
-        <span
-          className="flex items-center gap-0.5"
-          title="outgoing layer edges"
-        >
-          <ArrowUpFromLine className="h-3 w-3" />
-          {outCount}
-        </span>
+      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+        {stats.map((line) => (
+          <span key={line} className="truncate">
+            ↓ {line}
+          </span>
+        ))}
       </div>
-      {flagCounts.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
-          {flagCounts.map(({ flag, count }) => {
-            const Icon = FLAG_META[flag].icon;
-            return (
-              <span
-                key={flag}
-                className="flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-xs text-muted-foreground"
-                title={FLAG_META[flag].label}
-              >
-                <Icon className="h-3 w-3" />
-                {count}
-              </span>
-            );
-          })}
-        </div>
-      )}
-      <Handle type="source" position={Position.Bottom} className="!bg-border" />
     </div>
   );
 }
