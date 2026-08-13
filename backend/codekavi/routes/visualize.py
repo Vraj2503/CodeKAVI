@@ -411,7 +411,11 @@ async def visualize_dataflow(
 
     cached_llm = result.get("dataflow_llm")
     if cached_llm:
-        dataflow_data = cached_llm
+        # Re-normalize cached LLM structure against the current analyzer output.
+        # This backfills new evidence fields (such as detected technologies)
+        # without spending another LLM request.
+        refreshed = export_semantic_dataflow(analysis, file_profiles, llm_enrichment=cached_llm)
+        dataflow_data = refreshed if refreshed["metadata"]["is_llm_enriched"] else cached_llm
     else:
         from codekavi.quota import get_token_tracker
 

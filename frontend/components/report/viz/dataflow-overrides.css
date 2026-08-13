@@ -1,0 +1,5 @@
+/* Overrides for React Flow default styles */
+.react-flow__node-group {
+    background-color: transparent !important;
+    border: none !important;
+}

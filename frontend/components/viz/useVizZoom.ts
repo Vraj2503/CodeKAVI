@@ -24,12 +24,23 @@ const ZOOM_STEP = 1.3;
 /** Leave a margin so fitted content does not touch the frame. */
 const FIT_PADDING = 0.85;
 
+export interface ZoomController {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitToView: () => void;
+}
+
 export interface VizZoom {
   /** Call from the draw effect once the svg, behavior, and root <g> exist. */
   register(
     svg: SVGSVGElement | null,
     behavior: d3.ZoomBehavior<SVGSVGElement, unknown> | null,
     root: SVGGElement | null,
+  ): void;
+  /** Register a ReactFlow-style zoom controller (pass null for svg). */
+  register(
+    svg: null,
+    controller: ZoomController,
   ): void;
   zoomIn(): void;
   zoomOut(): void;
@@ -49,15 +60,43 @@ export function useVizZoom(animate = true): VizZoom {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const behaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const rootRef = useRef<SVGGElement | null>(null);
+  const controllerRef = useRef<ZoomController | null>(null);
 
-  const register: VizZoom["register"] = useCallback((svg, behavior, root) => {
-    svgRef.current = svg;
-    behaviorRef.current = behavior;
-    rootRef.current = root;
-  }, []);
+  const register = useCallback(
+    (
+      svg: SVGSVGElement | null,
+      behaviorOrController:
+        | d3.ZoomBehavior<SVGSVGElement, unknown>
+        | ZoomController
+        | null,
+      root?: SVGGElement | null,
+    ) => {
+      if (svg === null && behaviorOrController && "zoomIn" in behaviorOrController) {
+        // ReactFlow controller path
+        controllerRef.current = behaviorOrController as ZoomController;
+        svgRef.current = null;
+        behaviorRef.current = null;
+        rootRef.current = null;
+      } else {
+        // D3 path
+        controllerRef.current = null;
+        svgRef.current = svg;
+        behaviorRef.current = behaviorOrController as d3.ZoomBehavior<SVGSVGElement, unknown> ?? null;
+        rootRef.current = root ?? null;
+      }
+    },
+    [],
+  );
 
   const scaleBy = useCallback(
     (factor: number) => {
+      // ReactFlow path
+      if (controllerRef.current) {
+        if (factor > 1) controllerRef.current.zoomIn();
+        else controllerRef.current.zoomOut();
+        return;
+      }
+      // D3 path
       const svg = svgRef.current;
       const behavior = behaviorRef.current;
       if (!svg || !behavior) return;
@@ -75,6 +114,12 @@ export function useVizZoom(animate = true): VizZoom {
 
   const fitToView = useCallback(
     (opts?: { animate?: boolean }) => {
+    // ReactFlow path
+    if (controllerRef.current) {
+      controllerRef.current.fitToView();
+      return;
+    }
+    // D3 path
     const shouldAnimate = opts?.animate ?? animate;
     const svg = svgRef.current;
     const behavior = behaviorRef.current;
