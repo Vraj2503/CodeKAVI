@@ -742,6 +742,44 @@ _TYPE_SHAPES: dict[str, str] = {
 
 _VALID_DATA_TYPES = {"http", "db", "file", "event", "internal"}
 
+# External products are inferred from resolved and unresolved imports.  Keeping
+# this small and evidence based makes the diagram useful even when LLM
+# enrichment is unavailable.
+_TECHNOLOGY_RULES: tuple[tuple[str, str, str, str], ...] = (
+    ("supabase", "Supabase", "Authentication & Postgres", "data_store"),
+    ("@supabase/", "Supabase", "Authentication & Postgres", "data_store"),
+    ("pymilvus", "Milvus", "Vector database", "data_store"),
+    ("milvus", "Milvus", "Vector database", "data_store"),
+    ("zilliz", "Zilliz / Milvus", "Managed vector database", "data_store"),
+    ("google.genai", "Google Gemini", "LLM & embeddings", "transform"),
+    ("google", "Google OAuth", "Identity provider", "action"),
+    ("redis", "Redis", "Cache & queue", "data_store"),
+)
+
+
+def _stage_technologies(files: list[str], file_imports: dict) -> list[dict]:
+    """Return a bounded, source-evidenced list of products used by a stage."""
+    found: dict[str, dict] = {}
+    for path in files:
+        for item in file_imports.get(path, []) or []:
+            module = str(item.get("module") or item.get("raw") or item.get("name") or "").lower()
+            for needle, label, role, kind in _TECHNOLOGY_RULES:
+                if needle in module and label not in found:
+                    found[label] = {
+                        "id": label.lower().replace(" ", "-").replace("/", "-"),
+                        "label": label,
+                        "role": role,
+                        "kind": kind,
+                        "source_files": [path],
+                    }
+                elif needle in module:
+                    evidence = found[label]["source_files"]
+                    if path not in evidence:
+                        evidence.append(path)
+                if needle in module:
+                    break
+    return list(found.values())[:6]
+
 
 def export_semantic_dataflow(
     dep_data: dict,
@@ -763,7 +801,11 @@ def export_semantic_dataflow(
     if llm_enrichment is None:
         return static
 
-    merged = _merge_llm_dataflow(llm_enrichment, file_profiles)
+    merged = _merge_llm_dataflow(
+        llm_enrichment,
+        file_profiles,
+        dep_data.get("file_imports", {}),
+    )
     return merged if merged is not None else static
 
 
@@ -775,6 +817,7 @@ def _static_dataflow(dep_data: dict, file_profiles: list[dict]) -> dict:
         if p.get("role") in _ROLE_TIER_TYPE:
             stage_files[p["role"]].append(p["path"])
 
+    file_imports = dep_data.get("file_imports", {})
     nodes = []
     for role, files in stage_files.items():
         tier, node_type = _ROLE_TIER_TYPE[role]
@@ -786,6 +829,7 @@ def _static_dataflow(dep_data: dict, file_profiles: list[dict]) -> dict:
                 "shape": _TYPE_SHAPES[node_type],
                 "description": f"{len(files)} file(s) classified as {role.replace('_', ' ')}.",
                 "source_files": files,
+                "technologies": _stage_technologies(files, file_imports),
                 "tier": tier,
             }
         )
@@ -814,8 +858,8 @@ def _static_dataflow(dep_data: dict, file_profiles: list[dict]) -> dict:
     ]
 
     return {
-        "nodes": nodes,
-        "edges": edges,
+        "nodes": [normalize_flow_node(n) for n in nodes],
+        "edges": derive_edge_direction(edges),
         "metadata": {
             "is_llm_enriched": False,
             "repo_type": "unknown",
@@ -826,7 +870,11 @@ def _static_dataflow(dep_data: dict, file_profiles: list[dict]) -> dict:
     }
 
 
-def _merge_llm_dataflow(llm_enrichment: dict, file_profiles: list[dict]) -> dict | None:
+def _merge_llm_dataflow(
+    llm_enrichment: dict,
+    file_profiles: list[dict],
+    file_imports: dict | None = None,
+) -> dict | None:
     """Validate + normalize LLM-generated nodes/edges. Returns None if the
     response is too malformed to trust (caller falls back to static)."""
     valid_paths = {p["path"] for p in file_profiles}
@@ -842,7 +890,15 @@ def _merge_llm_dataflow(llm_enrichment: dict, file_profiles: list[dict]) -> dict
         if not node_id or node_id in node_ids:
             continue
         node_ids.add(node_id)
-        node_type = n.get("type") if n.get("type") in _TYPE_SHAPES else "process"
+        legacy_kind_type = {
+            "start": "io",
+            "end": "io",
+            "action": "process",
+            "decision": "transform",
+            "transform": "transform",
+            "data_store": "data_store",
+        }.get(n.get("kind"))
+        node_type = n.get("type") if n.get("type") in _TYPE_SHAPES else (legacy_kind_type or "process")
         source_files = [f for f in n.get("source_files", []) or [] if f in valid_paths]
         nodes.append(
             {
@@ -852,6 +908,8 @@ def _merge_llm_dataflow(llm_enrichment: dict, file_profiles: list[dict]) -> dict
                 "shape": _TYPE_SHAPES[node_type],
                 "description": n.get("description") or "",
                 "source_files": source_files,
+                # LLM nodes can still surface deterministic product evidence.
+                "technologies": _stage_technologies(source_files, file_imports or {}),
                 "tier": 0,
             }
         )
@@ -885,14 +943,14 @@ def _merge_llm_dataflow(llm_enrichment: dict, file_profiles: list[dict]) -> dict
         n["tier"] = tiers.get(n["id"], 0)
 
     return {
-        "nodes": nodes,
-        "edges": edges,
+        "nodes": [normalize_flow_node(n) for n in nodes],
+        "edges": derive_edge_direction(edges),
         "metadata": {
             "is_llm_enriched": True,
             "repo_type": llm_enrichment.get("repo_type", "unknown"),
             "total_nodes": len(nodes),
             "total_edges": len(edges),
-            "tiers": sorted({n["type"] for n in nodes}),
+            "tiers": sorted({n.get("type", n.get("kind", "process")) for n in nodes}),
         },
     }
 
@@ -1021,6 +1079,70 @@ def _deduplicate_cycles(cycles: list[list[str]]) -> list[list[str]]:
     # Sort by cycle length (shortest first, most actionable)
     unique.sort(key=len)
     return unique
+
+
+# ─────────────────────────────────────────────
+# 7. Data Flow Transformations
+# ─────────────────────────────────────────────
+
+def classify_kind(raw: dict) -> str:
+    """
+    Classify the node kind based on its type and in/out degrees.
+    """
+    if "dashboard" in str(raw.get("label", "")).lower():
+        return "end"
+    t = raw.get("type", "process")
+    if t == "io":
+        in_deg = raw.get("in_degree", 0)
+        out_deg = raw.get("out_degree", 0)
+        if in_deg == 0 and out_deg >= 0:
+            return "start"
+        if out_deg == 0 and in_deg > 0:
+            return "end"
+        return "start"
+    if t == "process":
+        return "action"
+    return t
+
+def derive_source(raw: dict) -> dict | None:
+    """
+    Derive the source field for io nodes.
+    """
+    return raw.get("source")
+
+def normalize_flow_node(raw: dict) -> dict:
+    """Coerce analyzer output to the frontend contract."""
+    return {
+        "id": raw["id"],
+        "label": raw["label"],
+        "kind": classify_kind(raw),
+        "shape": raw.get("shape"),
+        "tier": raw.get("tier"),
+        "description": raw.get("description"),
+        "source_files": raw.get("source_files", []),
+        "source": derive_source(raw),
+        "reads": raw.get("reads", []),
+        "writes": raw.get("writes", []),
+        "inputs": raw.get("inputs", []),
+        "outputs": raw.get("outputs", []),
+        "parent": raw.get("parent"),
+        "technologies": raw.get("technologies", []),
+    }
+
+def derive_edge_direction(edges: list[dict]) -> list[dict]:
+    """Mark the second of any (a,b) + (b,a) pair as 'response'."""
+    seen: dict[tuple[str, str], int] = {}
+    for e in edges:
+        key = (e["source"], e["target"])
+        rev = (e["target"], e["source"])
+        if seen.get(rev, 0):
+            e["direction"] = "response"   # a -> b came first, this is the return
+        else:
+            e["direction"] = e.get("direction", "request")
+
+        seen.setdefault(key, 0)
+        seen[key] += 1
+    return edges
 
 
 if __name__ == "__main__":

@@ -54,8 +54,8 @@ def _unresolved_reason(raw: str, target: str | None) -> str:
 
 
 # Languages are immutable and safe to share across threads.
-JS_LANGUAGE = Language(tsjs.language())
-TS_LANGUAGE = Language(tsts.language_typescript())
+JS_LANGUAGE = Language(tsjs.language(), "javascript")
+TS_LANGUAGE = Language(tsts.language_typescript(), "typescript")
 
 _JS_TS_QUERY_STR = """
     (import_statement source: (string (string_fragment) @path))
