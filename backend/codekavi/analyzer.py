@@ -704,9 +704,7 @@ def _extract_ipynb_imports(
 _EXTRACTORS: dict[str, Callable[..., Any]] = {
     "Python": _extract_python_imports,
     "JavaScript": _extract_js_ts_imports,
-    "JavaScript (React)": _extract_js_ts_imports,
     "TypeScript": _extract_js_ts_imports,
-    "TypeScript (React)": _extract_js_ts_imports,
     "Vue": _extract_vue_svelte_imports,
     "Svelte": _extract_vue_svelte_imports,
     "Go": _extract_go_imports,
@@ -714,8 +712,6 @@ _EXTRACTORS: dict[str, Callable[..., Any]] = {
     "Kotlin": _extract_java_imports,
     "C": _extract_c_cpp_includes,
     "C++": _extract_c_cpp_includes,
-    "C/C++ Header": _extract_c_cpp_includes,
-    "C++ Header": _extract_c_cpp_includes,
     "Ruby": _extract_ruby_requires,
     "Rust": _extract_rust_uses,
     "PHP": _extract_php_imports,

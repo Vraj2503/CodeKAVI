@@ -109,11 +109,34 @@ export function buildOverviewGraph(
       source: e.source,
       target: e.target,
       type: "countEdge",
-      markerEnd: { type: "arrowclosed" as const, color: "hsl(var(--muted-foreground))" },
+      markerEnd: {
+        type: "arrowclosed" as const,
+        color: "hsl(var(--muted-foreground))",
+      },
       data: { count: e.count },
     }));
 
   return { nodes, edges };
+}
+
+/** Basenames used by more than one file — those nodes need a folder to tell
+ * them apart (three `README.md` boxes look like a rendering bug otherwise). */
+function ambiguousNames(payload: RepoGraphPayload): Set<string> {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const f of payload.files) {
+    if (seen.has(f.name)) dupes.add(f.name);
+    else seen.add(f.name);
+  }
+  return dupes;
+}
+
+/** Trailing folder segments of a path, the end being the distinguishing part. */
+export function folderLabel(path: string, segments = 2): string {
+  const dirs = path.split("/").slice(0, -1);
+  if (dirs.length === 0) return "repo root";
+  const tail = dirs.slice(-segments).join("/");
+  return dirs.length > segments ? `…/${tail}` : tail;
 }
 
 export interface LayerViewCallbacks {
@@ -141,6 +164,7 @@ export function buildLayerViewGraph(
 
   const nodes: Node[] = [];
   const visibleIds = new Set<string>();
+  const ambiguous = ambiguousNames(payload);
 
   let maxContainerRight = 0;
 
@@ -195,7 +219,12 @@ export function buildLayerViewGraph(
           height: fileBox.height,
           selectable: true,
           selected: fileId === selectedFileId,
-          data: { file },
+          data: {
+            file,
+            folder: ambiguous.has(file.name)
+              ? folderLabel(file.path)
+              : undefined,
+          },
         };
         nodes.push(fileNode);
       }
