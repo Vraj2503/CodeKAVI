@@ -44,12 +44,14 @@ function FileNodeComponent({ data, selected }: NodeProps<FileNodeType>) {
         style={{ background: accent, opacity: 0.35 + importance * 0.65 }}
       />
       <div className="min-w-0 flex-1">
+        {/* Ambiguous basenames lead with the folder: `page.tsx` says nothing,
+         * `auth/signin` says everything. */}
         <div className="truncate font-mono text-xs font-medium">
-          {file.name}
+          {folder ?? file.name}
         </div>
         {folder ? (
           <div className="truncate font-mono text-xs text-muted-foreground">
-            {folder}
+            {file.name}
           </div>
         ) : (
           file.role_label && (

@@ -119,24 +119,44 @@ export function buildOverviewGraph(
   return { nodes, edges };
 }
 
-/** Basenames used by more than one file — those nodes need a folder to tell
- * them apart (three `README.md` boxes look like a rendering bug otherwise). */
-function ambiguousNames(payload: RepoGraphPayload): Set<string> {
-  const seen = new Set<string>();
-  const dupes = new Set<string>();
+/**
+ * Folder label by file id, for files whose basename is shared with another
+ * (three `README.md` boxes look like a rendering bug otherwise). Two segments
+ * normally; grown per basename group until the labels within it differ, so
+ * `apps/web/src/api/routes.ts` and `apps/admin/src/api/routes.ts` don't both
+ * come out as `src/api`.
+ */
+export function folderLabels(payload: RepoGraphPayload): Map<string, string> {
+  const groups = new Map<string, { id: string; path: string }[]>();
   for (const f of payload.files) {
-    if (seen.has(f.name)) dupes.add(f.name);
-    else seen.add(f.name);
+    const group = groups.get(f.name);
+    if (group) group.push(f);
+    else groups.set(f.name, [f]);
   }
-  return dupes;
+
+  const labels = new Map<string, string>();
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const deepest = Math.max(...group.map((f) => f.path.split("/").length - 1));
+    let segments = 2;
+    while (
+      segments < deepest &&
+      new Set(group.map((f) => folderLabel(f.path, segments))).size <
+        group.length
+    ) {
+      segments++;
+    }
+    for (const f of group) labels.set(f.id, folderLabel(f.path, segments));
+  }
+  return labels;
 }
 
-/** Trailing folder segments of a path, the end being the distinguishing part. */
+/** Trailing folder segments of a path — the end is what distinguishes two
+ * `page.tsx`, so the head of the path is dropped entirely. */
 export function folderLabel(path: string, segments = 2): string {
   const dirs = path.split("/").slice(0, -1);
   if (dirs.length === 0) return "repo root";
-  const tail = dirs.slice(-segments).join("/");
-  return dirs.length > segments ? `…/${tail}` : tail;
+  return dirs.slice(-segments).join("/");
 }
 
 export interface LayerViewCallbacks {
@@ -164,7 +184,7 @@ export function buildLayerViewGraph(
 
   const nodes: Node[] = [];
   const visibleIds = new Set<string>();
-  const ambiguous = ambiguousNames(payload);
+  const folders = folderLabels(payload);
 
   let maxContainerRight = 0;
 
@@ -219,12 +239,7 @@ export function buildLayerViewGraph(
           height: fileBox.height,
           selectable: true,
           selected: fileId === selectedFileId,
-          data: {
-            file,
-            folder: ambiguous.has(file.name)
-              ? folderLabel(file.path)
-              : undefined,
-          },
+          data: { file, folder: folders.get(fileId) },
         };
         nodes.push(fileNode);
       }
