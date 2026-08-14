@@ -679,7 +679,9 @@ class ExplanationOrchestrator:
             dep_data=self.analysis,
             file_profiles=self.classification or [],
         )
-        return semantic["graph_json"]
+        # Member files per layer node, so the frontend can expand a layer in
+        # place — same payload the /visualize/architecture route returns.
+        return {**semantic["graph_json"], "modules": semantic["modules"]}
 
     # ─────────────────────────────────────────
     # Helper methods

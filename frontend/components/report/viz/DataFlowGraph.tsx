@@ -1,4 +1,4 @@
-/*  */"use client";
+/*  */ "use client";
 
 /**
  * DataFlowGraph — semantic data flow diagram built on @xyflow/react.
@@ -50,8 +50,21 @@ import { useVizZoom } from "@/components/viz/useVizZoom";
 import { useReducedMotion } from "@/components/viz/useReducedMotion";
 
 // Internal dataflow modules
-import type { DataFlowGraphProps, FlowNode, RFNode, RFEdge } from "./dataflow/model";
-import { expandTechnologies, prepareFlowGraph, toRFNodes, toRFEdges, EDGE_KIND_LABEL, ALL_EDGE_KINDS } from "./dataflow/model";
+import type {
+  DataFlowGraphProps,
+  FlowNode,
+  RFNode,
+  RFEdge,
+} from "./dataflow/model";
+import {
+  expandTechnologies,
+  prepareFlowGraph,
+  toRFNodes,
+  toRFEdges,
+  assignClosestHandles,
+  EDGE_KIND_LABEL,
+  ALL_EDGE_KINDS,
+} from "./dataflow/model";
 import { runLayout } from "./dataflow/layout";
 import { minimapNodeColor } from "./dataflow/theming";
 import { dfgReducer, initialState } from "./dataflow/state/reducer";
@@ -119,7 +132,6 @@ function DataFlowGraphInner({
   const [rfEdges, setRfEdges] = useState<RFEdge[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [replayRun, setReplayRun] = useState(0);
-  const layoutVersion = useMemo(() => rfNodes.length > 0 ? Date.now() : 0, [rfNodes]);
   const replayTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState(false);
   const layoutRunning = useRef(false);
@@ -130,16 +142,26 @@ function DataFlowGraphInner({
     [propNodes, propEdges],
   );
   const displayGraph = useMemo(
-    () => expandTechnologies(preparedGraph.nodes, preparedGraph.edges, expanded),
+    () =>
+      expandTechnologies(preparedGraph.nodes, preparedGraph.edges, expanded),
     [preparedGraph, expanded],
   );
-  const baseNodes = useMemo(() => toRFNodes(displayGraph.nodes, expanded), [displayGraph.nodes, expanded]);
-  const baseEdges = useMemo(() => toRFEdges(displayGraph.edges), [displayGraph.edges]);
+  const baseNodes = useMemo(
+    () => toRFNodes(displayGraph.nodes, expanded),
+    [displayGraph.nodes, expanded],
+  );
+  const baseEdges = useMemo(
+    () => toRFEdges(displayGraph.edges),
+    [displayGraph.edges],
+  );
 
   // ── Run ELK layout on graph change ────────────────────────────────────────
   useEffect(() => {
     if (baseNodes.length === 0) {
-      const frame = requestAnimationFrame(() => { setRfNodes([]); setRfEdges([]); });
+      const frame = requestAnimationFrame(() => {
+        setRfNodes([]);
+        setRfEdges([]);
+      });
       return () => cancelAnimationFrame(frame);
     }
     let cancelled = false;
@@ -148,11 +170,13 @@ function DataFlowGraphInner({
       if (cancelled) return;
       layoutRunning.current = false;
       setRfNodes(laid);
-      setRfEdges(baseEdges);
+      setRfEdges(assignClosestHandles(laid, baseEdges));
       // Fit after layout settles (no animation on first paint)
       requestAnimationFrame(() => rf.fitView({ duration: 0, padding: 0.15 }));
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [baseNodes, baseEdges, rf]);
 
   // ── Register zoom controller with VizShell ─────────────────────────────────
@@ -189,25 +213,33 @@ function DataFlowGraphInner({
         ...e.data!,
         highlight: edgeHighlight(e.source, e.target, hlMap),
         replayRun: replayRun || undefined,
-        replayStep: replayPath.indexOf(`${e.source}->${e.target}`) >= 0
-          ? replayPath.indexOf(`${e.source}->${e.target}`)
-          : undefined,
+        replayStep:
+          replayPath.indexOf(`${e.source}->${e.target}`) >= 0
+            ? replayPath.indexOf(`${e.source}->${e.target}`)
+            : undefined,
       },
     }));
   }, [rfEdges, hlMap, replayRun, displayGraph]);
 
   // ── Event handlers ─────────────────────────────────────────────────────────
-  const handleNodeClick: NodeMouseHandler = useCallback((_evt, node) => {
-    dispatch({ type: "select", id: node.id });
-    if (preparedGraph.nodes.some((item) => item.id === node.id && item.technologies?.length)) {
-      setExpanded((current) => {
-        const next = new Set(current);
-        if (next.has(node.id)) next.delete(node.id);
-        else next.add(node.id);
-        return next;
-      });
-    }
-  }, [preparedGraph.nodes]);
+  const handleNodeClick: NodeMouseHandler = useCallback(
+    (_evt, node) => {
+      dispatch({ type: "select", id: node.id });
+      if (
+        preparedGraph.nodes.some(
+          (item) => item.id === node.id && item.technologies?.length,
+        )
+      ) {
+        setExpanded((current) => {
+          const next = new Set(current);
+          if (next.has(node.id)) next.delete(node.id);
+          else next.add(node.id);
+          return next;
+        });
+      }
+    },
+    [preparedGraph.nodes],
+  );
 
   const selectedNode: FlowNode | null = state.selected
     ? (preparedGraph.nodes.find((n) => n.id === state.selected) ?? null)
@@ -219,26 +251,24 @@ function DataFlowGraphInner({
   );
   const replay = useCallback(() => {
     if (reducedMotion || replayPath.length === 0) return;
-    
+
     if (replayRun > 0) {
       // Toggle off
       setReplayRun(0);
       if (replayTimeout.current) clearTimeout(replayTimeout.current);
       return;
     }
-    
+
     // Start playback
     setReplayRun((run) => (run === 0 ? 1 : run + 1));
-    
+
     const duration = replayPath.length * 700 + 900;
     if (replayTimeout.current) clearTimeout(replayTimeout.current);
-    
+
     replayTimeout.current = setTimeout(() => {
       setReplayRun(0);
     }, duration);
   }, [reducedMotion, replayPath, replayRun]);
-
-
 
   const toolbar = (
     <div className="flex items-center">
@@ -255,7 +285,9 @@ function DataFlowGraphInner({
       <div
         className={cn(
           "flex flex-nowrap items-center overflow-hidden transition-all duration-300 ease-in-out",
-          isToolbarExpanded ? "max-w-[800px] opacity-100 px-3" : "max-w-0 opacity-0 px-0 pointer-events-none"
+          isToolbarExpanded
+            ? "max-w-[800px] opacity-100 px-3"
+            : "max-w-0 opacity-0 px-0 pointer-events-none",
         )}
       >
         <div className="flex shrink-0 items-center gap-3">
@@ -268,10 +300,16 @@ function DataFlowGraphInner({
             onChange={(nextKinds) => {
               const curr = state.filters.nodes;
               for (const k of nextKinds) {
-                if (!curr.has(k)) { dispatch({ type: "toggle-n-kind", kind: k }); return; }
+                if (!curr.has(k)) {
+                  dispatch({ type: "toggle-n-kind", kind: k });
+                  return;
+                }
               }
               for (const k of curr) {
-                if (!nextKinds.has(k)) { dispatch({ type: "toggle-n-kind", kind: k }); return; }
+                if (!nextKinds.has(k)) {
+                  dispatch({ type: "toggle-n-kind", kind: k });
+                  return;
+                }
               }
             }}
           />
@@ -286,12 +324,16 @@ function DataFlowGraphInner({
             type="button"
             onClick={replay}
             disabled={reducedMotion || replayPath.length === 0}
-            title={reducedMotion ? "Animation is disabled by your motion preference" : "Replay one entry-to-exit flow"}
+            title={
+              reducedMotion
+                ? "Animation is disabled by your motion preference"
+                : "Replay one entry-to-exit flow"
+            }
             className={cn(
               "shrink-0 rounded border px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-              replayRun > 0 
-                ? "border-viz-highlight text-viz-highlight hover:bg-viz-highlight hover:text-white" 
-                : "border-border text-muted-foreground hover:text-foreground"
+              replayRun > 0
+                ? "border-viz-highlight text-viz-highlight hover:bg-viz-highlight hover:text-white"
+                : "border-border text-muted-foreground hover:text-foreground",
             )}
           >
             {replayRun > 0 ? "Stop replay" : "Replay flow"}
@@ -316,8 +358,12 @@ function DataFlowGraphInner({
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           onNodeClick={handleNodeClick}
-          onNodesChange={(changes) => setRfNodes((nds) => applyNodeChanges(changes, nds))}
-          onEdgesChange={(changes) => setRfEdges((eds) => applyEdgeChanges(changes, eds))}
+          onNodesChange={(changes) =>
+            setRfNodes((nds) => applyNodeChanges(changes, nds))
+          }
+          onEdgesChange={(changes) =>
+            setRfEdges((eds) => applyEdgeChanges(changes, eds))
+          }
           onPaneClick={() => dispatch({ type: "select", id: null })}
           elementsSelectable={false}
           nodesDraggable={true}
@@ -333,7 +379,9 @@ function DataFlowGraphInner({
             pannable
             zoomable
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            nodeColor={(n: any) => minimapNodeColor(n?.data?.flow?.kind ?? "action")}
+            nodeColor={(n: any) =>
+              minimapNodeColor(n?.data?.flow?.kind ?? "action")
+            }
             maskColor="hsl(var(--background) / 0.85)"
             nodeStrokeWidth={2}
           />
@@ -345,12 +393,14 @@ function DataFlowGraphInner({
           onClose={() => dispatch({ type: "select", id: null })}
           onTraceFrom={(id) => dispatch({ type: "trace", from: id })}
           expanded={selectedNode ? expanded.has(selectedNode.id) : false}
-          onToggleExpanded={(id) => setExpanded((current) => {
-            const next = new Set(current);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-          })}
+          onToggleExpanded={(id) =>
+            setExpanded((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
         />
       </div>
     </VizShell>

@@ -4,7 +4,7 @@ import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
 import type { RFNode } from "../model";
 import { highlightToStyle, nodeBorderColor } from "../theming";
-import { DetailToggleHint, LeftHandle, RightHandle } from "./shared";
+import { DetailToggleHint, NodeHandles } from "./shared";
 
 const SOURCE_ICON: Record<string, string> = {
   http: "🌐",
@@ -24,7 +24,7 @@ export const StartNode = memo(function StartNode(props: NodeProps<RFNode>) {
         borderColor: nodeBorderColor("start"),
       }}
     >
-      <RightHandle id="out" />
+      <NodeHandles />
       <DetailToggleHint count={props.data.detailCount} expanded={props.data.expanded} />
       <div className="font-semibold text-foreground leading-tight">{flow.label}</div>
       {flow.source && (
@@ -48,7 +48,7 @@ export const EndNode = memo(function EndNode(props: NodeProps<RFNode>) {
         background: "hsl(var(--viz-cat-1) / 0.06)",
       }}
     >
-      <LeftHandle id="in" />
+      <NodeHandles />
       <DetailToggleHint count={props.data.detailCount} expanded={props.data.expanded} />
       <div className="font-semibold text-foreground leading-tight">{flow.label}</div>
       <div className="mt-0.5 flex flex-wrap gap-1">

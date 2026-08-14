@@ -55,6 +55,50 @@ async def _load_repo(repo_id: str, cache: AnalysisCache, user_id: str):
     return result, clone_path
 
 
+def _layer_of(node: dict[str, Any]) -> str:
+    """
+    Swim-lane for one file node. The classifier's role wins when it names an
+    architectural one; `leaf`, `barrel` and friends map to "other", which is no
+    opinion at all — for those the path keywords get the say.
+    """
+    from codekavi.graph import ROLE_TO_LAYER
+
+    layer = ROLE_TO_LAYER.get(node.get("role") or "")
+    return layer if layer and layer != "other" else _detect_layer(node["id"])
+
+
+def _disambiguate_labels(nodes: list[dict[str, Any]]) -> None:
+    """
+    Prefix a node's label with its parent directory when the basename alone is
+    ambiguous. Twelve chips all reading `__init__.py` name nothing; the id
+    carries the full path for anyone who needs it.
+    """
+
+    def clashing(labels: list[str]) -> set[str]:
+        counts: dict[str, int] = {}
+        for label in labels:
+            counts[label] = counts.get(label, 0) + 1
+        return {label for label, c in counts.items() if c > 1}
+
+    # Grow one path segment at a time: `__init__.py` → `parser/__init__.py` →
+    # `lang/parser/__init__.py`. Stops when every label is unique or no node in
+    # a clashing group has another segment left to add.
+    depth = 1
+    while dupes := clashing([n["label"] for n in nodes]):
+        grew = False
+        for n in nodes:
+            if n["label"] not in dupes:
+                continue
+            parts = n["id"].split("/")
+            if depth >= len(parts):
+                continue
+            n["label"] = "/".join(parts[-(depth + 1) :])
+            grew = True
+        if not grew:
+            break
+        depth += 1
+
+
 # ─────────────────────────────────────────
 # 1. Dependency Graph (NO LLM)
 # ─────────────────────────────────────────
@@ -311,20 +355,32 @@ async def visualize_architecture(
     user_id: str = Depends(verify_supabase_token),
 ):
     """
-    Build module-level architecture graph from module_graph data.
-    Zero LLM cost — uses module groupings from /analyze.
+    Build the architecture graph: one node per file, `type` naming the
+    architectural swim-lane it belongs to. Zero LLM cost — the roles come from
+    /analyze's classifier, the edges from its resolved imports.
+
+    File-level, not layer-level, on purpose: a diagram of eight fat "services —
+    24 files" boxes says nothing an inventory list wouldn't. The lane is the
+    grouping; the file is the unit worth pointing at.
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
-
-    from codekavi.graph import build_semantic_module_graph
 
     dep_data = result.get("dep_data", {})
     file_profiles = result.get("file_profiles", [])
 
-    semantic_graph = build_semantic_module_graph(dep_data, file_profiles)
-    graph_json = semantic_graph["graph_json"]
-    viz_nodes = graph_json["nodes"]
-    viz_edges = graph_json["edges"]
+    graph_json = export_graph_json(dep_data, file_profiles, max_nodes=settings.graph_max_nodes)
+    viz_nodes = [
+        {
+            "id": n["id"],
+            "label": n["label"],
+            # Role is the better signal — it read the file. Path keywords answer
+            # for the rest, including the structural roles (leaf, barrel) that
+            # say where a file sits in the import tree, not what it does.
+            "type": _layer_of(n),
+        }
+        for n in graph_json["nodes"]
+    ]
+    viz_edges = [{"source": e["source"], "target": e["target"]} for e in graph_json["edges"]]
 
     if not viz_nodes:
         # Fallback: build from dep_data adjacency (same as dependency graph)
@@ -355,11 +411,19 @@ async def visualize_architecture(
                 module_counts[mod] = module_counts.get(mod, 0) + 1
             viz_nodes = [{"id": mod, "label": mod, "type": _detect_layer(mod)} for mod in sorted(module_counts)][:40]
 
+    # After the fallbacks, not before: they build their own labels with
+    # basename() and clash the same way the primary path does.
+    _disambiguate_labels(viz_nodes)
+
     diagnostics = _build_diagnostics(dep_data, file_profiles, edge_count=len(viz_edges), node_count=len(viz_nodes))
 
     return {
         "type": "architecture_graph",
-        "data": {"nodes": viz_nodes, "edges": viz_edges, "diagnostics": diagnostics},
+        "data": {
+            "nodes": viz_nodes,
+            "edges": viz_edges,
+            "diagnostics": diagnostics,
+        },
     }
 
 

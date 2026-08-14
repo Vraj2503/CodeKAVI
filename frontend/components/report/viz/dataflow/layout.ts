@@ -12,6 +12,7 @@ interface ElkNode {
   x?: number;
   y?: number;
   children?: ElkNode[];
+  edges?: { id: string; sources: string[]; targets: string[] }[];
   layoutOptions?: Record<string, string>;
 }
 
@@ -49,9 +50,9 @@ export async function runLayout(
         "elk.algorithm": "layered",
         "elk.direction": "RIGHT",
         "elk.layered.spacing.nodeNodeBetweenLayers": "100",
-        "elk.spacing.nodeNode": "0",
-        "elk.spacing.edgeNode": "80",
-        "elk.spacing.edgeEdge": "10",
+        "elk.spacing.nodeNode": "60",
+        "elk.spacing.edgeNode": "60",
+        "elk.spacing.edgeEdge": "25",
         "elk.edgeRouting": "ORTHOGONAL",
         "elk.layered.cycleBreaking.strategy": "DEPTH_FIRST",
         "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -74,11 +75,10 @@ export async function runLayout(
                   height: c.height ?? 52,
                 })),
               layoutOptions: {
-                "elk.algorithm": "layered",
-                "elk.direction": "DOWN",
-                "elk.spacing.nodeNode": "10w",
-                "elk.layered.spacing.nodeNodeBetweenLayers": "10",
-                "elk.padding": "[top=30,left=24,bottom=16,right=24]",
+                "elk.algorithm": "box",
+                "elk.aspectRatio": "0.1",
+                "elk.spacing.nodeNode": "24",
+                "elk.padding": "[top=40,left=32,bottom=24,right=32]",
               },
             }
             : {}),

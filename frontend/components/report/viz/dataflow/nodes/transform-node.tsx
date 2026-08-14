@@ -4,7 +4,7 @@ import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
 import type { RFNode } from "../model";
 import { highlightToStyle, nodeBorderColor } from "../theming";
-import { DetailToggleHint, LeftHandle, RightHandle } from "./shared";
+import { DetailToggleHint, NodeHandles } from "./shared";
 
 export const TransformNode = memo(function TransformNode(props: NodeProps<RFNode>) {
   const { flow, highlight } = props.data;
@@ -12,7 +12,7 @@ export const TransformNode = memo(function TransformNode(props: NodeProps<RFNode
   const points = `${skew},0 ${w},0 ${w - skew},${h} 0,${h}`;
   return (
     <div className="relative" style={highlightToStyle(highlight)}>
-      <LeftHandle id="in" />
+      <NodeHandles />
       <DetailToggleHint count={props.data.detailCount} expanded={props.data.expanded} />
       <svg width={w} height={h} style={{ display: "block" }}>
         <rect
@@ -37,7 +37,6 @@ export const TransformNode = memo(function TransformNode(props: NodeProps<RFNode
           {flow.label}
         </text>
       </svg>
-      <RightHandle id="out" />
     </div>
   );
 });

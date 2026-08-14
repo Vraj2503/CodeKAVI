@@ -4,7 +4,7 @@ import { memo } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  getSmoothStepPath,
+  getBezierPath,
   Position,
   type EdgeProps,
 } from "@xyflow/react";
@@ -47,10 +47,10 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
   const flow = data?.flow;
   const highlight = data?.highlight ?? "off";
 
-  const [path, midX, midY] = getSmoothStepPath({
+  const [path, midX, midY] = getBezierPath({
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
-    borderRadius: 8,
+    curvature: 0.15,
   });
 
   if (!flow) {

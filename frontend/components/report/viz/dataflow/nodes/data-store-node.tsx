@@ -4,7 +4,7 @@ import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
 import type { RFNode } from "../model";
 import { highlightToStyle, nodeBorderColor } from "../theming";
-import { DetailToggleHint, LeftHandle, RightHandle } from "./shared";
+import { DetailToggleHint, NodeHandles } from "./shared";
 
 export const DataStoreNode = memo(function DataStoreNode(props: NodeProps<RFNode>) {
   const { flow, highlight } = props.data;
@@ -13,7 +13,7 @@ export const DataStoreNode = memo(function DataStoreNode(props: NodeProps<RFNode
 
   return (
     <div className="relative" style={highlightToStyle(highlight)}>
-      <LeftHandle id="in" />
+      <NodeHandles />
       <DetailToggleHint count={props.data.detailCount} expanded={props.data.expanded} />
       <svg width={w} height={h + ry} style={{ display: "block" }}>
         {/* Cylinder body */}
@@ -57,7 +57,6 @@ export const DataStoreNode = memo(function DataStoreNode(props: NodeProps<RFNode
           </span>
         ))}
       </div>
-      <RightHandle id="out" />
     </div>
   );
 });

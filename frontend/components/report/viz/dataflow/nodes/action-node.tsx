@@ -4,7 +4,7 @@ import { memo } from "react";
 import type { NodeProps } from "@xyflow/react";
 import type { RFNode } from "../model";
 import { highlightToStyle, nodeBorderColor } from "../theming";
-import { DetailToggleHint, LeftHandle, RightHandle } from "./shared";
+import { DetailToggleHint, NodeHandles } from "./shared";
 
 export const ActionNode = memo(function ActionNode(props: NodeProps<RFNode>) {
   const { flow, highlight } = props.data;
@@ -17,7 +17,7 @@ export const ActionNode = memo(function ActionNode(props: NodeProps<RFNode>) {
         borderColor: nodeBorderColor("action"),
       }}
     >
-      <LeftHandle id="in" />
+      <NodeHandles />
       <DetailToggleHint count={props.data.detailCount} expanded={props.data.expanded} />
       <div className="font-medium text-foreground leading-tight">{flow.label}</div>
       {file && (
@@ -25,7 +25,6 @@ export const ActionNode = memo(function ActionNode(props: NodeProps<RFNode>) {
           {file}
         </div>
       )}
-      <RightHandle id="out" />
     </div>
   );
 });

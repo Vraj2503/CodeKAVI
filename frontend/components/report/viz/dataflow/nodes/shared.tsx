@@ -1,31 +1,51 @@
 "use client";
 // dataflow/nodes/shared.tsx — shared handle components
+import { Fragment } from "react";
 import { Handle, Position } from "@xyflow/react";
 
-export function LeftHandle({ id }: { id: string }) {
-  return (
-    <Handle
-      id={id}
-      type="target"
-      position={Position.Left}
-      className="!h-2 !w-2 !rounded-full !border-0 !opacity-0"
-    />
-  );
-}
+const SIDES = {
+  left: Position.Left,
+  right: Position.Right,
+  top: Position.Top,
+  bottom: Position.Bottom,
+} as const;
 
-export function RightHandle({ id }: { id: string }) {
+/**
+ * Places source + target handles on all 4 sides so edges can connect
+ * from whichever direction gives the shortest path. Handle ids are
+ * `<side>-src` / `<side>-tgt` — assignClosestHandles() picks the pair.
+ */
+export function NodeHandles() {
   return (
-    <Handle
-      id={id}
-      type="source"
-      position={Position.Right}
-      className="!h-2 !w-2 !rounded-full !border-0 !opacity-0"
-    />
+    <>
+      {Object.entries(SIDES).map(([side, position]) => (
+        <Fragment key={side}>
+          <Handle
+            id={`${side}-tgt`}
+            type="target"
+            position={position}
+            className="!h-2 !w-2 !rounded-full !border-0 !opacity-0"
+          />
+          <Handle
+            id={`${side}-src`}
+            type="source"
+            position={position}
+            className="!h-2 !w-2 !rounded-full !border-0 !opacity-0"
+          />
+        </Fragment>
+      ))}
+    </>
   );
 }
 
 /** Visible affordance: clicking the node toggles its implementation detail. */
-export function DetailToggleHint({ count, expanded }: { count?: number; expanded?: boolean }) {
+export function DetailToggleHint({
+  count,
+  expanded,
+}: {
+  count?: number;
+  expanded?: boolean;
+}) {
   if (!count) return null;
   return (
     <span

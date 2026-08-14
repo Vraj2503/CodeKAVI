@@ -97,7 +97,9 @@ function EmptyViz({
         <AlertCircle size={40} aria-hidden="true" />
       </div>
       <h3 className="text-xl font-bold text-foreground mb-3">
-        {unresolvedEdges ? "Nothing connects, yet" : `No ${label.toLowerCase()} to draw`}
+        {unresolvedEdges
+          ? "Nothing connects, yet"
+          : `No ${label.toLowerCase()} to draw`}
       </h3>
       <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
         {unresolvedEdges
@@ -271,7 +273,11 @@ export function FocusedVisualization({
                 ~200ms before generate() lands would be a flash of a control the
                 user never needs to touch. */}
             {state.status === "idle" && !costsTokens && (
-              <motion.div key="pending" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <motion.div
+                key="pending"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+              >
                 <VizSkeleton />
               </motion.div>
             )}
