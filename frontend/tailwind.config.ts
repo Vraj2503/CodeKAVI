@@ -11,8 +11,11 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
-        mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
+        // These were both Geist Mono, which set every word of body copy in
+        // the app in monospace. Three faces, three jobs — see layout.tsx.
+        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        serif: ["var(--font-serif)", "ui-serif", "Georgia", "serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -53,6 +56,31 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      /*
+       * Three elevations instead of the blanket `shadow-2xl` that was on
+       * every panel. A shadow that appears on everything reads as no
+       * hierarchy at all; these are tuned warm so they sit in the palette
+       * rather than greying it out.
+       */
+      boxShadow: {
+        raise: "0 1px 2px hsl(var(--shadow-hue) / 0.06), 0 1px 1px hsl(var(--shadow-hue) / 0.04)",
+        lift: "0 2px 4px hsl(var(--shadow-hue) / 0.06), 0 8px 16px -4px hsl(var(--shadow-hue) / 0.08)",
+        float:
+          "0 4px 8px hsl(var(--shadow-hue) / 0.08), 0 24px 48px -12px hsl(var(--shadow-hue) / 0.18)",
+      },
+      /*
+       * Three curves, and never `ease-in` on a UI element — it delays the
+       * first frame, which is exactly the moment the user is watching, so
+       * it reads as sluggish at any duration.
+       */
+      transitionTimingFunction: {
+        // Entrances/exits. Strong ease-out — moves immediately, settles long.
+        out: "cubic-bezier(0.23, 1, 0.32, 1)",
+        // On-screen movement and morphs.
+        "in-out": "cubic-bezier(0.77, 0, 0.175, 1)",
+        // The iOS drawer curve. Panels, sheets, anything with weight.
+        swift: "cubic-bezier(0.32, 0.72, 0, 1)",
       },
     },
   },

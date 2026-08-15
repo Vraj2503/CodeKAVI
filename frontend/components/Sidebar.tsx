@@ -18,12 +18,14 @@ import {
   PanelLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { normalizeRepoUrl } from "@/lib/repoUrl";
 import { useRepo } from "@/components/RepoProvider";
 import { useMediaQuery, NARROW_QUERY } from "@/hooks/useMediaQuery";
 import type { AnalyzeResponse } from "@/lib/api";
 import { ScrollArea } from "./ui/ScrollArea";
 import { Skeleton } from "./ui/Skeleton";
 import { FileTree } from "./ui/FileTree";
+import { Button } from "./ui/button";
 import {
   Tooltip,
   TooltipTrigger,
@@ -67,7 +69,7 @@ export function Sidebar({
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (url.trim() && !isAnalyzing) {
-      onAnalyze(url.trim());
+      onAnalyze(normalizeRepoUrl(url));
     }
   };
 
@@ -116,9 +118,16 @@ export function Sidebar({
       )}
     <aside
       className={cn(
-        "flex-shrink-0 bg-card/40 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl flex flex-col h-full overflow-hidden transition-all duration-300",
+        "flex h-full flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border",
+        "bg-card/60 backdrop-blur-xl",
+        // `transition-all` was animating every property including width's
+        // layout pass; only the width actually changes here.
+        "transition-[width] duration-300 ease-swift",
         isCollapsed ? "w-14" : "w-80",
-        isNarrow && !isCollapsed && "absolute inset-y-4 left-4 z-30",
+        // Flat while docked, lifted only when it floats over the canvas.
+        isNarrow && !isCollapsed
+          ? "absolute inset-y-4 left-4 z-30 shadow-float"
+          : "shadow-raise",
       )}
     >
       {/* View Mode Tabs */}
@@ -128,67 +137,87 @@ export function Sidebar({
         Two rows of two gives each label the width it needs. The cost is ~36px
         of height, which the list below absorbs by scrolling.
       */}
-      <div
-        className={cn(
-          "border-b border-border/40 p-2",
-          isCollapsed ? "flex flex-col gap-2" : "grid grid-cols-2 gap-1",
-        )}
-      >
-        <TooltipProvider delayDuration={100}>
-          {tabs.map((tab) => (
-            <Tooltip key={tab.key}>
-              <TooltipTrigger asChild>
-                <Link
-                  href={tab.href}
-                  className={cn(
-                    "rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
-                    isCollapsed ? "p-3" : "min-w-0 px-3 py-2",
-                    activeTab === tab.key
-                      ? "bg-primary/20 border border-primary/50 text-primary"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-                  )}
-                >
-                  <tab.icon
-                    size={isCollapsed ? 20 : 14}
-                    className="flex-shrink-0"
-                  />
-                  {!isCollapsed && (
-                    <span className="truncate">{tab.label}</span>
-                  )}
-                </Link>
-              </TooltipTrigger>
-              <TooltipContent side={isCollapsed ? "right" : "bottom"}>
-                {tab.label}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </TooltipProvider>
+      {/*
+        A segmented control sitting in a recessed well, rather than four
+        independent buttons where the active one grew a coloured border.
+        The well makes the four read as one control with one selection —
+        and the selected segment lifts out of it on a card, which is a
+        clearer "you are here" than a tint plus an outline.
+
+        `delayDuration`/`skipDelayDuration`: the first tooltip waits, but
+        moving between adjacent tabs inside 300ms opens the next one with
+        no delay and no animation (see `.overlay-pop[data-instant]`).
+      */}
+      <div className={cn("p-2", isCollapsed ? "" : "pb-2.5")}>
+        <div
+          className={cn(
+            "rounded-lg bg-muted/50 p-1",
+            isCollapsed ? "flex flex-col gap-1" : "grid grid-cols-2 gap-1",
+          )}
+        >
+          <TooltipProvider delayDuration={400} skipDelayDuration={300}>
+            {tabs.map((tab) => {
+              const isActive = activeTab === tab.key;
+              return (
+                <Tooltip key={tab.key}>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href={tab.href}
+                      aria-current={isActive ? "page" : undefined}
+                      className={cn(
+                        "flex items-center justify-center gap-2 rounded-md font-sans text-[13px] font-medium",
+                        "transition-[background-color,color,box-shadow] duration-150 ease-out",
+                        isCollapsed ? "p-2.5" : "min-w-0 px-2.5 py-1.5",
+                        isActive
+                          ? "bg-card text-foreground shadow-raise"
+                          : "text-muted-foreground [@media(hover:hover)]:hover:text-foreground",
+                      )}
+                    >
+                      <tab.icon
+                        size={isCollapsed ? 18 : 14}
+                        className={cn(
+                          "flex-shrink-0 transition-colors",
+                          isActive && "text-primary",
+                        )}
+                      />
+                      {!isCollapsed && (
+                        <span className="truncate">{tab.label}</span>
+                      )}
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side={isCollapsed ? "right" : "bottom"}>
+                    {tab.label}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </TooltipProvider>
+        </div>
       </div>
 
       {/* Toggle Header (Always visible) */}
       <div
         className={cn(
-          "flex items-center border-b border-border/30",
-          isCollapsed ? "justify-center p-3" : "justify-between px-4 py-3",
+          "flex items-center border-b border-border/60",
+          isCollapsed ? "justify-center p-3" : "justify-between px-4 py-2.5",
         )}
       >
-        {!isCollapsed && (
-          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Source Repository
-          </label>
-        )}
+        {!isCollapsed && <span className="eyebrow">Source</span>}
         <button
           onClick={() => setIsCollapsed(!isCollapsed)}
           className={cn(
-            "p-1.5 rounded-lg hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground",
+            "rounded-md p-1.5 text-muted-foreground transition-colors duration-150",
+            "[@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:hover:text-foreground",
             !isCollapsed && "-mr-1.5",
           )}
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!isCollapsed}
         >
           {isCollapsed ? (
-            <PanelLeft className="w-5 h-5" />
+            <PanelLeft className="h-[18px] w-[18px]" />
           ) : (
-            <PanelLeftClose className="w-4 h-4" />
+            <PanelLeftClose className="h-4 w-4" />
           )}
         </button>
       </div>
@@ -202,13 +231,14 @@ export function Sidebar({
         {activeTab === "visualize" ? (
           <div className="flex-1 flex flex-col min-h-0">
             {/* Header / Repo Name */}
-            <div className="px-4 py-4 border-b border-border/30">
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Visualization Studio
-              </h2>
+            <div className="border-b border-border/60 px-4 py-4">
+              <h2 className="eyebrow mb-2">Visualizations</h2>
               {repoData && (
-                <p className="text-sm font-bold text-foreground truncate">
-                  {repoData.owner}/{repoData.repo_name}
+                <p className="truncate font-mono text-[13px] text-foreground">
+                  <span className="text-muted-foreground/60">
+                    {repoData.owner}/
+                  </span>
+                  {repoData.repo_name}
                 </p>
               )}
             </div>
@@ -231,30 +261,27 @@ export function Sidebar({
                     <Link
                       key={viz.type}
                       href={`/repo/${repoId}/visualize?type=${viz.type}`}
+                      aria-current={isActive ? "page" : undefined}
                       className={cn(
-                        "w-full flex flex-col items-start p-3 rounded-xl transition-all duration-200 text-left border",
+                        "flex w-full flex-col items-start rounded-lg border p-2.5 text-left",
+                        "transition-[background-color,border-color,color] duration-150 ease-out",
                         isActive
-                          ? "bg-primary/10 border-primary/20 shadow-sm"
-                          : "hover:bg-accent/40 border-transparent text-muted-foreground hover:text-foreground",
+                          ? "border-border bg-card shadow-raise"
+                          : "border-transparent text-muted-foreground [@media(hover:hover)]:hover:bg-accent/50 [@media(hover:hover)]:hover:text-foreground",
                       )}
                     >
                       <div className="flex items-center gap-2.5">
-                        <div
+                        <Icon
+                          size={15}
                           className={cn(
-                            "p-1.5 rounded-md",
-                            isActive
-                              ? "bg-primary/20 text-primary"
-                              : "bg-muted text-muted-foreground",
+                            "shrink-0",
+                            isActive ? "text-primary" : "text-muted-foreground",
                           )}
-                        >
-                          <Icon size={16} />
-                        </div>
+                        />
                         <span
                           className={cn(
-                            "text-sm font-semibold",
-                            isActive
-                              ? "text-foreground"
-                              : "text-muted-foreground",
+                            "font-sans text-[13px] font-medium",
+                            isActive ? "text-foreground" : "text-inherit",
                           )}
                         >
                           {viz.label}
@@ -264,7 +291,8 @@ export function Sidebar({
                         <motion.p
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: "auto" }}
-                          className="text-xs text-muted-foreground mt-2 leading-relaxed"
+                          transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+                          className="mt-1.5 overflow-hidden pl-[25px] font-sans text-[11.5px] leading-relaxed text-muted-foreground"
                         >
                           {viz.description}
                         </motion.p>
@@ -276,9 +304,9 @@ export function Sidebar({
             </ScrollArea>
 
             {/* Bottom info panel */}
-            <div className="p-4 border-t border-border/30 bg-muted/10">
-              <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-background/30 p-3 rounded-xl border border-border/40">
-                <div className="w-2 h-2 rounded-full bg-primary animate-pulse mt-1 flex-shrink-0" />
+            <div className="border-t border-border/60 p-3">
+              <div className="flex items-start gap-2.5 rounded-lg border border-border/60 bg-background/40 p-3 font-sans text-[11.5px] leading-relaxed text-muted-foreground">
+                <div className="live-dot mt-[5px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
                 <span className="leading-relaxed">
                   {/* T13 changed what this describes: charts now render on
                       arrival, so "on-demand generation" was no longer true of
@@ -292,50 +320,48 @@ export function Sidebar({
         ) : (
           <>
             {/* Repo Input */}
-            <div className="px-4 pb-4 pt-2 border-b border-border/30">
-              <form onSubmit={handleSubmit} className="flex flex-col gap-2.5">
+            <div className="border-b border-border/60 px-4 pb-4 pt-3">
+              <form onSubmit={handleSubmit} className="flex flex-col gap-2">
                 <div className="relative">
-                  <GitBranch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <GitBranch className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/70" />
                   <input
                     ref={inputRef}
                     type="text"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    placeholder="github.com/user/repo"
+                    placeholder="github.com/owner/repo"
+                    aria-label="Repository to analyze"
                     className={cn(
-                      "w-full pl-9 pr-3 py-2.5 text-sm rounded-xl",
-                      "bg-background/50 border border-border/50",
-                      "text-foreground placeholder:text-muted-foreground",
-                      "focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20",
-                      "transition-all duration-200",
+                      "w-full rounded-lg py-2 pl-9 pr-3 font-mono text-[13px]",
+                      "border border-border bg-background/60",
+                      "text-foreground placeholder:text-muted-foreground/55",
+                      "transition-[border-color,box-shadow] duration-150 ease-out",
+                      "focus:border-primary/50 focus:outline-none",
                     )}
                   />
                 </div>
-                <button
+                <Button
                   type="submit"
+                  size="sm"
                   disabled={!url.trim() || isAnalyzing}
-                  className={cn(
-                    "flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold",
-                    "bg-primary text-primary-foreground shadow-md shadow-primary/20",
-                    "hover:bg-primary/90 active:scale-[0.98]",
-                    "disabled:opacity-40 disabled:cursor-not-allowed",
-                    "transition-all duration-200",
-                  )}
+                  className="w-full"
                 >
                   {isAnalyzing ? (
                     <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <Loader2 className="animate-spin" />
                       Analyzing…
                     </>
                   ) : (
                     <>
-                      <Search className="w-3.5 h-3.5" />
-                      Analyze Repository
+                      <Search />
+                      Analyze
                     </>
                   )}
-                </button>
+                </Button>
                 {error && (
-                  <p className="text-[11px] text-destructive mt-1">{error}</p>
+                  <p role="alert" className="mt-0.5 font-sans text-[11px] text-destructive">
+                    {error}
+                  </p>
                 )}
               </form>
             </div>
@@ -376,16 +402,15 @@ export function Sidebar({
                 >
                   <ScrollArea className="h-full">
                     {/* Stats */}
-                    <div className="px-4 py-4 border-b border-border/30">
-                      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                        Repository
-                      </h2>
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-sm font-bold text-foreground">
-                          {repoData.owner}/{repoData.repo_name}
+                    <div className="border-b border-border/60 px-4 py-4">
+                      <h2 className="eyebrow mb-2.5">Repository</h2>
+                      <p className="mb-3 truncate font-mono text-[13px] text-foreground">
+                        <span className="text-muted-foreground/60">
+                          {repoData.owner}/
                         </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
+                        {repoData.repo_name}
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
                         <Stat label="Files" value={repoData.total_files} />
                         <Stat
                           label="Size"
@@ -403,40 +428,51 @@ export function Sidebar({
                     </div>
 
                     {/* Language Breakdown */}
-                    <div className="px-4 py-4 border-b border-border/30">
-                      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-                        Languages
-                      </h2>
-                      <div className="space-y-1.5">
+                    <div className="border-b border-border/60 px-4 py-4">
+                      <h2 className="eyebrow mb-3">Languages</h2>
+                      <div className="space-y-2">
                         {Object.entries(repoData.languages || {})
                           .sort(([, a], [, b]) => b - a)
-                          .map(([lang, count]) => {
+                          .map(([lang, count], i) => {
                             const max = Math.max(
                               ...Object.values(repoData.languages || {}),
                             );
                             const pct = (count / max) * 100;
                             return (
-                              <div
-                                key={lang}
-                                className="flex items-center gap-2"
-                              >
-                                <span className="text-[12px] text-foreground/80 w-20 truncate text-right">
-                                  {lang}
-                                </span>
-                                <div className="flex-1 h-1.5 bg-accent rounded-full overflow-hidden">
+                              /*
+                               * Label over bar, not label | bar | count in
+                               * three columns — the old layout gave the
+                               * name a fixed 80px and right-aligned it,
+                               * so "TypeScript" and "Go" started in
+                               * different places and the eye had nothing
+                               * to run down.
+                               *
+                               * The bar grows with scaleX rather than
+                               * width. Width animates layout on every
+                               * frame, once per language, on mount.
+                               */
+                              <div key={lang}>
+                                <div className="mb-1 flex items-baseline justify-between gap-2">
+                                  <span className="truncate font-sans text-[11.5px] text-foreground/85">
+                                    {lang}
+                                  </span>
+                                  <span className="tabular shrink-0 text-[10.5px] text-muted-foreground">
+                                    {count}
+                                  </span>
+                                </div>
+                                <div className="h-[3px] overflow-hidden rounded-full bg-muted">
                                   <motion.div
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${pct}%` }}
+                                    initial={{ transform: "scaleX(0)" }}
+                                    animate={{ transform: `scaleX(${pct / 100})` }}
                                     transition={{
-                                      duration: 0.8,
-                                      ease: "easeOut",
+                                      duration: 0.5,
+                                      ease: [0.23, 1, 0.32, 1],
+                                      delay: Math.min(i * 0.04, 0.32),
                                     }}
-                                    className="h-full rounded-full bg-gradient-to-r from-primary to-ring"
+                                    style={{ transformOrigin: "left" }}
+                                    className="h-full rounded-full bg-primary/70"
                                   />
                                 </div>
-                                <span className="text-[11px] text-muted-foreground font-mono w-5 text-right">
-                                  {count}
-                                </span>
                               </div>
                             );
                           })}
@@ -459,11 +495,16 @@ export function Sidebar({
 }
 
 // ── Stat pill ──
+// Value above label, and the value set in tabular mono: these numbers
+// change when a repo is re-analyzed, and tabular figures keep the four
+// cells from reflowing as digit counts change.
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-background rounded-md px-2.5 py-1.5 border border-border/50">
-      <p className="text-[10px] text-muted-foreground">{label}</p>
-      <p className="text-[13px] font-semibold text-foreground">{value}</p>
+    <div className="rounded-lg border border-border/70 bg-background/50 px-2.5 py-2">
+      <p className="tabular text-[15px] leading-none text-foreground">{value}</p>
+      <p className="mt-1.5 font-sans text-[10.5px] leading-none text-muted-foreground">
+        {label}
+      </p>
     </div>
   );
 }
