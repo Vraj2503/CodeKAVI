@@ -1,0 +1,748 @@
+"""
+orchestrator.py — Parallel explanation orchestrator.
+
+Generates 8 explanation sections in 3 parallel batches,
+yielding SSE event dicts as each section completes.
+
+Event types:
+  - "stats"    → instant repo statistics (zero LLM cost)
+  - "tree"     → directory structure (zero LLM cost)
+  - "progress" → {phase, progress, message}
+  - "section"  → {name, title, content, code_snippets, ...}
+  - "warning"  → {section, message} for failed sections
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+from collections.abc import AsyncIterator
+
+from rune.config import EXTENSION_LANGUAGE_MAP, detect_layer
+from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
+from rune.llm.providers import get_provider
+from rune.normalizer import normalize_node_type, normalize_viz_data, validate_section
+from rune.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Auto-viz caps (shared with settings; bound to settings on import).
+# T2.3 prep: replaces hard-coded 60/100 with configurable constants.
+# ──────────────────────────────────────────────────────────────────────
+MAX_VIZ_NODES: int = settings.graph_max_nodes
+MAX_VIZ_EDGES: int = settings.viz_max_edges
+
+
+class ExplanationOrchestrator:
+    def __init__(
+        self,
+        repo_path: str,
+        tree: dict,
+        analysis: dict,
+        classification: list,
+        selected_files: list,
+        depth: str = "detailed",
+    ):
+        self.repo_path = repo_path
+        self.tree = tree
+        self.analysis = analysis
+        self.classification = classification
+        self.selected_files = selected_files
+        self.depth = depth
+        self.sections_completed = 0
+        self.sections_failed = 0
+        self.total_sections = 8
+
+    async def run(self) -> AsyncIterator[dict]:
+        """
+        Yields event dicts: {"type": str, "data": dict}
+        """
+        # ── INSTANT EVENTS (no LLM, no cost, no latency) ──
+        yield {
+            "type": "stats",
+            "data": {
+                "total_files": len(self.tree.get("files", [])),
+                "languages": self._count_languages(),
+                "selected_files": len(self.selected_files),
+                "entry_points": self.analysis.get("entry_points", []),
+            },
+        }
+        yield {"type": "tree", "data": {"structure": self.tree.get("tree", self.tree)}}
+        yield self._progress(10, "generating", "AI is reading your codebase...")
+
+        # Load file contents
+        self.file_contents = self._load_selected_file_contents()
+        file_contents = self.file_contents
+
+        # ── BATCH 1 — 3 sections in parallel ──
+        batch_1 = {
+            "overview": self._gen("overview", "overview", self._prompt_overview(file_contents)),
+            "dependencies": self._gen("dependencies", "viz_data", self._prompt_dependencies()),
+            "complexity": self._gen("complexity", "viz_data", self._prompt_complexity()),
+        }
+        async for ev in self._run_batch(batch_1, 15, 40):
+            yield ev
+
+        # Rate-limit pause: stay safely under Groq's 30 RPM
+        await asyncio.sleep(settings.orchestrator_batch_delay_s)
+
+        # ── BATCH 2 — 3 sections in parallel ──
+        batch_2 = {
+            "architecture": self._gen("architecture", "architecture", self._prompt_architecture(file_contents)),
+            "components": self._gen("components", "components", self._prompt_components(file_contents)),
+            "data_flow": self._gen("data_flow", "data_flow", self._prompt_dataflow(file_contents)),
+        }
+        async for ev in self._run_batch(batch_2, 40, 75):
+            yield ev
+
+        # Rate-limit pause: stay safely under Groq's 30 RPM
+        await asyncio.sleep(settings.orchestrator_batch_delay_s)
+
+        # ── BATCH 3 — 2 sections in parallel ──
+        batch_3 = {
+            "patterns": self._gen("patterns", "patterns", self._prompt_patterns(file_contents)),
+            "mindmap": self._gen("mindmap", "mindmap_data", self._prompt_mindmap(file_contents), json_mode=True),
+        }
+        async for ev in self._run_batch(batch_3, 75, 95):
+            yield ev
+
+        yield self._progress(100, "complete", "Report generation complete!")
+
+    # ─────────────────────────────────────────
+    # Batch runner
+    # ─────────────────────────────────────────
+
+    async def _run_batch(self, tasks: dict, p_start: int, p_end: int):
+        """Run a dict of {name: coroutine} in parallel, yield events as each completes."""
+        named_tasks = {name: asyncio.create_task(coro) for name, coro in tasks.items()}
+        done_count = 0
+        total = len(named_tasks)
+
+        pending = set(named_tasks.values())
+        task_to_name = {v: k for k, v in named_tasks.items()}
+
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=60.0)
+
+                if not done and pending:
+                    # Timeout reached — a timed-out section is a failure, not
+                    # a completion (L-05): count it under sections_failed so
+                    # progress reporting can't claim "8/8" when some sections
+                    # never actually finished.
+                    logger.warning(f"Timeout generating sections: {[task_to_name[p] for p in pending]}")
+                    for task in pending:
+                        if not task.done():
+                            task.cancel()
+                            name = task_to_name[task]
+                            self.sections_failed += 1
+                            done_count += 1
+                            yield {"type": "warning", "data": {"section": name, "message": "Generation timed out."}}
+
+                            # Provide deterministic fallback
+                            viz_data = self._auto_viz(name)
+                            yield {
+                                "type": "section",
+                                "data": {
+                                    "name": name,
+                                    "title": self._title(name),
+                                    "content": "",
+                                    "code_snippets": [],
+                                    "visualization_type": self._viz_type(name),
+                                    "visualization_data": viz_data,
+                                },
+                            }
+                    break
+
+                for task in done:
+                    name = task_to_name[task]
+                    done_count += 1
+                    try:
+                        result = task.result()
+                        # L-05: only count as completed once result() has
+                        # actually succeeded — previously this incremented
+                        # unconditionally before the try, so a raised
+                        # exception still counted as "done".
+                        self.sections_completed += 1
+                        progress = p_start + int((done_count / total) * (p_end - p_start))
+                        yield {"type": "section", "data": {"name": name, **result}}
+                        yield self._progress(
+                            progress,
+                            "generating",
+                            f"Generated {result['title']} ({self.sections_completed}/{self.total_sections})",
+                        )
+                    except Exception as e:
+                        self.sections_failed += 1
+                        progress = p_start + int((done_count / total) * (p_end - p_start))
+                        logger.error(f"Section {name} failed: {e}")
+                        yield {"type": "warning", "data": {"section": name, "message": str(e)[:200]}}
+        finally:
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+
+    # ─────────────────────────────────────────
+    # Section generator
+    # ─────────────────────────────────────────
+
+    async def _gen(self, name: str, task_type: str, prompt: dict, json_mode: bool = False) -> dict:
+        """Generate a single section via async LLM call.
+
+        Validation flow (T2.1+T2.2):
+          - JSON-mode path: ``viz_data`` comes from parsed LLM JSON, so it
+            is normalized through ``normalize_viz_data``.
+          - Text-mode path: ``viz_data`` comes from ``self._auto_viz(name)``
+            which is already deterministic — no normalization.
+          - After both branches, the assembled section dict (title/content/
+            snippets/viz_type/viz_data) is passed through
+            ``validate_section`` (4-tier pipeline). On Tier 3 failure the
+            viz_data is dropped to None and ``_auto_viz`` retries. On Tier
+            4 (content missing), ``_validation_failed=True`` is set so the
+            caller can emit a warning event instead of a section event.
+        """
+        provider = get_provider(task_type)
+        response = await provider.generate(
+            system_prompt=prompt["system"],
+            user_prompt=prompt["user"],
+            temperature=prompt.get("temperature", 0.3),
+            max_tokens=prompt.get("max_tokens", 3000),
+            json_mode=json_mode,
+        )
+
+        snippets = self._extract_snippets(response)
+        viz_data = None
+
+        if json_mode:
+            # Strip markdown code blocks if the model wrapped the JSON output
+            clean_response = re.sub(r"^```(?:json)?\s*(.*?)\s*```$", r"\1", response.strip(), flags=re.DOTALL)
+            try:
+                parsed = json.loads(clean_response)
+                raw_viz = parsed.get("visualization", {})
+                # Normalize node/edge types in the JSON payload before
+                # shaping it for the frontend. This is the only place LLM
+                # output flows into viz_data — text-mode uses _auto_viz()
+                # which already canonicalizes types via _detect_layer().
+                normalized = normalize_viz_data({"root": raw_viz} if raw_viz else None)
+                viz_data = normalized if normalized else None
+                response = parsed.get("content", "")
+            except json.JSONDecodeError:
+                viz_data = None
+                response = ""  # Prevent raw JSON string from being shown to the user
+
+        if viz_data is None:
+            viz_data = self._auto_viz(name)
+
+        section = {
+            "title": self._title(name),
+            "content": response,
+            "code_snippets": snippets,
+            "visualization_type": self._viz_type(name),
+            "visualization_data": viz_data,
+        }
+
+        validated = validate_section(section)
+        # Tier 4 fallback — reroute to deterministic viz when content is
+        # empty AND the validation pipeline flagged the section as fatal.
+        if validated.get("_validation_failed"):
+            validated["visualization_data"] = self._auto_viz(name)
+        return validated
+
+    # ─────────────────────────────────────────
+    # Prompt builders
+    # ─────────────────────────────────────────
+
+    _SYSTEM_PROMPT = (
+        "You are a senior software architect explaining a codebase. "
+        "Be specific — reference actual file names and function names. "
+        "Use markdown formatting with headers, bullet points, and code blocks. "
+        "Do NOT generate ASCII diagrams, mermaid syntax, or any kind of "
+        "visual diagram in your response. Write prose and structured "
+        "markdown only. Visualization data is handled separately.\n\n" + UNTRUSTED_CODE_DISCLAIMER
+    )
+
+    def _prompt_overview(self, file_contents: dict) -> dict:
+        files_list = list(file_contents.keys())[:30]
+        entry_points = self.analysis.get("entry_points", [])[:2]
+        entry_code = ""
+        for ep in entry_points:
+            ep_file = ep.get("file", "")
+            if ep_file in file_contents:
+                entry_code += f"\n### {ep_file}\n```\n{file_contents[ep_file][:3000]}\n```\n"
+
+        languages = self._count_languages()
+        dep_count = self.analysis.get("stats", {}).get("total_edges", 0)
+
+        user = (
+            f"## Files in repository (first 30)\n{chr(10).join(f'- {f}' for f in files_list)}\n\n"
+            f"## Entry point code\n{entry_code}\n\n"
+            f"## Language distribution\n{json.dumps(languages, indent=2)}\n\n"
+            f"## Dependency count: {dep_count}\n\n"
+            "## Please analyze:\n"
+            "1. **Purpose** — What does this project do?\n"
+            "2. **Tech Stack** — What languages, frameworks, libraries are used?\n"
+            "3. **Architecture** — What architectural pattern does it follow?\n"
+            "4. **Design Decisions** — Key design choices visible in the code\n"
+            "5. **Maturity** — How mature/production-ready does it appear?"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
+
+    def _prompt_architecture(self, file_contents: dict) -> dict:
+        classifications = []
+        for fp in (self.classification or [])[:20]:
+            classifications.append(f"- `{fp.get('path', '')}` — {fp.get('role_label', fp.get('role', '?'))}")
+
+        # Deterministic import map (preferred over the generic adjacency subset)
+        complete = self.analysis.get("adjacency", {}) or {}
+        import_lines = []
+        for src, targets in list(complete.items())[:30]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:5]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+        if not import_lines:
+            # Fall back to adjacency if complete_imports is empty for any reason
+            dep_graph = self.analysis.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:20]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
+
+        key_files = []
+        for path, content in list(file_contents.items())[:10]:
+            key_files.append(f"### {path}\n```\n{content[:2000]}\n```")
+
+        user = (
+            f"## File classifications (top 20)\n{chr(10).join(classifications)}\n\n"
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
+            f"## Key file contents\n{chr(10).join(key_files)}\n\n"
+            "## Please analyze:\n"
+            "1. **Pattern** — What architectural pattern is used? (MVC, layered, microservices, etc.)\n"
+            "2. **Layers** — Break down the system into logical layers\n"
+            "3. **Communication** — How do components communicate?\n"
+            "4. **Request Flow** — Trace a typical request through the system\n"
+            "5. **State Management** — How is state managed?"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3500}
+
+    def _prompt_components(self, file_contents: dict) -> dict:
+        components = []
+        for fp in (self.classification or [])[:15]:
+            path = fp.get("path", "")
+            content = file_contents.get(path, "")
+            if content:
+                components.append(
+                    f"### {path}\n"
+                    f"- Role: {fp.get('role_label', '?')}\n"
+                    f"- Importance: {fp.get('importance_score', 0)}\n"
+                    f"```\n{content[:2000]}\n```"
+                )
+
+        user = (
+            f"## Top components with source code\n{chr(10).join(components)}\n\n"
+            "## For each component, explain:\n"
+            "1. **Purpose** — What is this component responsible for?\n"
+            "2. **Key Functions** — What are the main functions/classes?\n"
+            "3. **Connections** — How does it connect to other components?\n"
+            "4. **Patterns** — Notable design patterns used"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3500}
+
+    def _prompt_dataflow(self, file_contents: dict) -> dict:
+        entry_points = self.analysis.get("entry_points", [])[:3]
+        entry_code = ""
+        for ep in entry_points:
+            ep_file = ep.get("file", "")
+            if ep_file in file_contents:
+                entry_code += f"\n### {ep_file}\n```\n{file_contents[ep_file][:2500]}\n```\n"
+
+        # Deterministic import map (preferred over the generic adjacency subset)
+        complete = self.analysis.get("adjacency", {}) or {}
+        import_lines = []
+        for src, targets in list(complete.items())[:25]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:3]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+        if not import_lines:
+            dep_graph = self.analysis.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:20]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
+
+        user = (
+            f"## Entry point code\n{entry_code}\n\n"
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
+            "## Please analyze:\n"
+            "1. **User Flows** — Trace step-by-step flows from entry points\n"
+            "2. **Transformations** — How is data transformed as it moves through?\n"
+            "3. **External Calls** — What external services or APIs are called?\n"
+            "4. **Error Handling** — How are errors propagated?\n"
+            "5. **Side Effects** — What side effects occur (DB writes, file I/O, etc.)?"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
+
+    def _prompt_dependencies(self) -> dict:
+        # Deterministic import map — every edge below has been resolved from
+        # the actual parsed tree and is not inferred. The LLM must NOT guess
+        # additional dependencies beyond what is listed.
+        complete = self.analysis.get("adjacency", {}) or {}
+        import_lines: list[str] = []
+        for src, targets in list(complete.items())[:30]:
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list[:5]:
+                import_lines.append(f"- `{src}` imports `{t}`")
+
+        if not import_lines:
+            # Graceful fallback when complete_imports isn't populated
+            dep_graph = self.analysis.get("adjacency", {})
+            for src, targets in list(dep_graph.items())[:25]:
+                target_list = targets if isinstance(targets, list) else [targets]
+                for t in target_list[:3]:
+                    import_lines.append(f"- `{src}` → `{t}`")
+
+        central = self.analysis.get("central_files", [])[:10]
+        central_lines = [
+            f"- `{c.get('file', '')}` (in: {c.get('in_degree', 0)}, out: {c.get('out_degree', 0)})" for c in central
+        ]
+
+        entry_lines = [f"- `{e.get('file', '')}`" for e in self.analysis.get("entry_points", [])[:5]]
+
+        user = (
+            f"## Complete import map (deterministic — do NOT guess additional dependencies)\n{chr(10).join(import_lines)}\n\n"
+            f"## Most central files\n{chr(10).join(central_lines)}\n\n"
+            f"## Entry points\n{chr(10).join(entry_lines)}\n\n"
+            "## Please analyze using the deterministically accurate graph above (do NOT guess dependencies):\n"
+            "1. **Core Chains** — What are the main dependency chains based on the provided graph?\n"
+            "2. **Hub Modules** — Which modules are dependency hubs?\n"
+            "3. **External Libraries** — What major external dependencies exist?\n"
+            "4. **Circular Dependencies** — Any circular dependency risks?\n"
+            "5. **Coupling Assessment** — How tightly coupled is the codebase?"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
+
+    def _prompt_complexity(self) -> dict:
+        classifications = []
+        for fp in (self.classification or [])[:30]:
+            classifications.append(
+                f"- `{fp.get('path', '')}` — role: {fp.get('role', '?')}, "
+                f"importance: {fp.get('importance_score', 0)}, "
+                f"in_degree: {fp.get('in_degree', 0)}, out_degree: {fp.get('out_degree', 0)}"
+            )
+        file_count = len(self.tree.get("files", []))
+
+        user = (
+            f"## File classifications (top 30)\n{chr(10).join(classifications)}\n\n"
+            f"## Total file count: {file_count}\n\n"
+            "## Please analyze:\n"
+            "1. **Most Complex Files** — Which files are likely the most complex and why?\n"
+            "2. **Maintenance Hotspots** — Which areas will be hardest to maintain?\n"
+            "3. **Risky Files** — Which files carry the most risk if changed?\n"
+            "4. **Reduction Suggestions** — How could complexity be reduced?"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 2500}
+
+    def _prompt_patterns(self, file_contents: dict) -> dict:
+        samples = []
+        for fp in (self.classification or [])[:10]:
+            path = fp.get("path", "")
+            content = file_contents.get(path, "")
+            if content:
+                samples.append(f"### {path}\n```\n{content[:1500]}\n```")
+
+        user = (
+            f"## Code samples from top files\n{chr(10).join(samples)}\n\n"
+            "## Please analyze:\n"
+            "1. **Design Patterns** — What design patterns are used? (Factory, Singleton, Observer, etc.)\n"
+            "2. **Naming Conventions** — What naming conventions are followed?\n"
+            "3. **Error Handling** — How are errors handled throughout?\n"
+            "4. **Configuration Approach** — How is configuration managed?\n"
+            "5. **Code Quality** — Overall code quality assessment"
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
+
+    def _prompt_mindmap(self, file_contents: dict) -> dict:
+        files_list = list(file_contents.keys())[:20]
+        entry_points = [e.get("file", "") for e in self.analysis.get("entry_points", [])[:5]]
+        languages = self._count_languages()
+        classifications = []
+        for fp in (self.classification or [])[:20]:
+            classifications.append(f"{fp.get('path', '')} ({fp.get('role_label', '?')})")
+
+        user = (
+            f"## Files: {', '.join(files_list)}\n\n"
+            f"## Entry points: {', '.join(entry_points)}\n\n"
+            f"## Languages: {json.dumps(languages)}\n\n"
+            f"## Classifications: {', '.join(classifications)}\n\n"
+            "## IMPORTANT: You MUST return valid JSON in this exact format:\n"
+            '{"content": "Brief description of the codebase architecture", '
+            '"visualization": {"name": "Root", "children": ['
+            '{"name": "Category", "children": [{"name": "Item"}]}'
+            "]}}\n\n"
+            "Categories to include: Tech Stack, Architecture Layers, Core Modules, "
+            "Data Flow, External Services, Key Patterns."
+        )
+        return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.2, "max_tokens": 3000}
+
+    # ─────────────────────────────────────────
+    # Code snippet extraction
+    # ─────────────────────────────────────────
+
+    def _within_repo(self, candidate: str) -> bool:
+        """M-16: reject any resolved path that escapes ``self.repo_path``.
+
+        Defense-in-depth — callers already filter matches against the
+        curated ``selected_set`` first, but this mirrors the containment
+        check already applied in analyzer.py so a malicious backticked path
+        from the LLM (e.g. `` `../../../../etc/passwd` ``) can never resolve
+        to a read outside the clone.
+        """
+        real_root = os.path.realpath(self.repo_path)
+        try:
+            return os.path.commonpath([os.path.realpath(candidate), real_root]) == real_root
+        except ValueError:
+            return False
+
+    def _extract_snippets(self, response: str) -> list[dict]:
+        """Extract code snippets referenced in the LLM response by matching backtick-wrapped file paths."""
+        from typing import Any
+
+        snippets: list[dict[str, Any]] = []
+        # Match backtick-wrapped file paths like `src/auth.js`
+        matches = re.findall(r"`([^\s`]+\.[a-zA-Z]{1,5})`", response)
+
+        selected_set = (
+            set((f["path"] if isinstance(f, dict) else f) for f in self.selected_files)
+            if self.selected_files
+            else set()
+        )
+        seen = set()
+
+        for match in matches:
+            if match in seen or len(snippets) >= 5:
+                break
+            seen.add(match)
+
+            # Check if the matched path exists in selected files
+            if match not in selected_set:
+                continue
+
+            # Fast path: Use memory cache if available
+            if hasattr(self, "file_contents") and match in self.file_contents:
+                code = self.file_contents[match][:2000]
+                lines = code.count("\n") + 1
+                snippets.append(
+                    {
+                        "file_path": match,
+                        "code": code,
+                        "line_start": 1,
+                        "line_end": lines,
+                    }
+                )
+                continue
+
+            # Read actual file content from disk
+            abs_path = os.path.join(self.repo_path, match)
+            if not self._within_repo(abs_path):
+                continue
+            try:
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
+                    code = f.read(2000)
+                lines = code.count("\n") + 1
+                snippets.append(
+                    {
+                        "file_path": match,
+                        "code": code,
+                        "line_start": 1,
+                        "line_end": lines,
+                    }
+                )
+            except OSError:
+                continue
+
+        return snippets
+
+    # ─────────────────────────────────────────
+    # Auto-visualization (zero LLM cost)
+    # ─────────────────────────────────────────
+
+    def _auto_viz(self, section_name: str) -> dict | None:
+        if section_name == "dependencies":
+            return self._auto_viz_dependencies()
+        elif section_name == "complexity":
+            return self._auto_viz_complexity()
+        elif section_name == "architecture":
+            return self._auto_viz_architecture()
+        elif section_name == "data_flow":
+            return self._auto_viz_dataflow()
+        elif section_name == "mindmap":
+            return {"root": {"name": "Root", "children": []}}
+        return None
+
+    def _auto_viz_dependencies(self) -> dict:
+        """Build dependency graph viz from analysis data.
+
+        Caps are bounded by the module-level :data:`MAX_VIZ_NODES` and
+        :data:`MAX_VIZ_EDGES` constants (T2.3) which are initialized from
+        ``settings.graph_max_nodes`` and ``settings.viz_max_edges``.
+        """
+        from typing import Any
+
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        seen_nodes = set()
+
+        adjacency = self.analysis.get("adjacency", {})
+        for src, targets in adjacency.items():
+            if len(nodes) >= MAX_VIZ_NODES:
+                break
+            if src not in seen_nodes:
+                seen_nodes.add(src)
+                nodes.append(
+                    {
+                        "id": src,
+                        "label": os.path.basename(src),
+                        "type": normalize_node_type(src),
+                    }
+                )
+            target_list = targets if isinstance(targets, list) else [targets]
+            for t in target_list:
+                if len(edges) >= MAX_VIZ_EDGES:
+                    break
+                if t not in seen_nodes and len(nodes) < MAX_VIZ_NODES:
+                    seen_nodes.add(t)
+                    nodes.append(
+                        {
+                            "id": t,
+                            "label": os.path.basename(t),
+                            "type": normalize_node_type(t),
+                        }
+                    )
+                if t in seen_nodes:
+                    edges.append({"source": src, "target": t})
+
+        return {"nodes": nodes, "edges": edges}
+
+    def _auto_viz_complexity(self) -> dict:
+        children = []
+        for fp in (self.classification or [])[:80]:
+            children.append(
+                {
+                    "name": os.path.basename(fp.get("path", "")),
+                    "value": fp.get("importance_score", 1),
+                }
+            )
+        return {"name": "Complexity", "children": children}
+
+    def _auto_viz_dataflow(self) -> dict:
+        """Build data flow viz via BFS from entry points (depth ≤ 3)."""
+        adjacency = self.analysis.get("adjacency", {})
+        entry_points = self.analysis.get("entry_points", [])
+
+        from typing import Any
+
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        seen = set()
+
+        # Start BFS from the top entry points
+        queue = [(ep.get("file", ""), 0) for ep in entry_points[:5]]
+
+        while queue and len(nodes) < 50:
+            file_path, depth = queue.pop(0)
+            if file_path in seen or depth > 3:
+                continue
+            seen.add(file_path)
+            nodes.append(
+                {
+                    "id": file_path,
+                    "label": os.path.basename(file_path),
+                    "type": "entry_point" if depth == 0 else detect_layer(file_path),
+                }
+            )
+            targets = adjacency.get(file_path, [])
+            if not isinstance(targets, list):
+                targets = [targets]
+            for target in targets:
+                edges.append({"source": file_path, "target": target})
+                if target not in seen:
+                    queue.append((target, depth + 1))
+
+        return {"nodes": nodes, "edges": edges}
+
+    def _auto_viz_architecture(self) -> dict:
+        """Build module-level architecture graph from file classifications."""
+        from rune.graph import build_semantic_module_graph
+
+        semantic = build_semantic_module_graph(
+            dep_data=self.analysis,
+            file_profiles=self.classification or [],
+        )
+        # Member files per layer node, so the frontend can expand a layer in
+        # place — same payload the /visualize/architecture route returns.
+        return {**semantic["graph_json"], "modules": semantic["modules"]}
+
+    # ─────────────────────────────────────────
+    # Helper methods
+    # ─────────────────────────────────────────
+
+    def _count_languages(self) -> dict[str, int]:
+        """Count file extensions from tree files, map using EXTENSION_LANGUAGE_MAP."""
+        lang_counts: dict[str, int] = {}
+        for f in self.tree.get("files", []):
+            path = f.get("path", "") if isinstance(f, dict) else str(f)
+            _, ext = os.path.splitext(path)
+            lang = EXTENSION_LANGUAGE_MAP.get(ext.lower(), None)
+            if lang:
+                lang_counts[lang] = lang_counts.get(lang, 0) + 1
+        return lang_counts
+
+    def _load_selected_file_contents(self) -> dict[str, str]:
+        """Read selected files from disk, truncate to 12000 chars each."""
+        contents = {}
+        for item in self.selected_files:
+            # Handle both dict (from SmartFileSelector) and plain string formats
+            file_path = item["path"] if isinstance(item, dict) else item
+            abs_path = os.path.join(self.repo_path, file_path)
+            if not self._within_repo(abs_path):
+                continue
+            try:
+                with open(abs_path, encoding="utf-8", errors="ignore") as f:
+                    contents[file_path] = f.read(12000)
+            except OSError:
+                continue
+        return contents
+
+    def _progress(self, pct: int, phase: str, msg: str) -> dict:
+        return {
+            "type": "progress",
+            "data": {
+                "phase": phase,
+                "progress": pct,
+                "message": msg,
+            },
+        }
+
+    def _title(self, name: str) -> str:
+        titles = {
+            "overview": "Project Overview",
+            "architecture": "Architecture Analysis",
+            "components": "Component Breakdown",
+            "data_flow": "Data Flow Analysis",
+            "dependencies": "Dependency Analysis",
+            "complexity": "Complexity Assessment",
+            "patterns": "Design Patterns & Code Quality",
+            "mindmap": "Codebase Mind Map",
+        }
+        return titles.get(name, name.replace("_", " ").title())
+
+    def _viz_type(self, name: str) -> str | None:
+        viz_types = {
+            "dependencies": "dependency_graph",
+            "complexity": "treemap",
+            "architecture": "architecture_graph",
+            "data_flow": "flow_diagram",
+            "mindmap": "radial_mindmap",
+        }
+        return viz_types.get(name)

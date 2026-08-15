@@ -539,7 +539,7 @@ export function mockAnalyzeResponse(): any {
     success: true,
     repo_id: "dev-mock-repo",
     repo_name: "Mock Neural Network Repo",
-    owner: "CodeKavi",
+    owner: "Rune",
     github_url: "mock://nn",
     total_files: 10,
     total_size: 1024,

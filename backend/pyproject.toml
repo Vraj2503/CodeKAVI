@@ -1,5 +1,5 @@
 [project]
-name = "codekavi"
+name = "rune"
 version = "0.2.0"
 description = "AI-powered codebase intelligence platform"
 requires-python = ">=3.12"
@@ -14,7 +14,7 @@ reload-excludes = ["cloned_repos/*", "output/*"]
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-src = ["codekavi", "tests"]
+src = ["rune", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -37,7 +37,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["codekavi"]
+known-first-party = ["rune"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -61,7 +61,7 @@ no_implicit_optional = true
 # pytest
 # ─────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths = ["codekavi"]
+testpaths = ["rune"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
@@ -70,10 +70,10 @@ addopts = "-v --tb=short"
 # coverage
 # ─────────────────────────────────────────
 [tool.coverage.run]
-source = ["codekavi"]
+source = ["rune"]
 omit = [
-    "codekavi/llm/prompts.py",  # prompt templates, not logic
-    "codekavi/routes/export.py", # placeholder stubs
+    "rune/llm/prompts.py",  # prompt templates, not logic
+    "rune/routes/export.py", # placeholder stubs
 ]
 
 [tool.coverage.report]

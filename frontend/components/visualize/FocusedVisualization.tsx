@@ -5,7 +5,7 @@ import { useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, RefreshCw, Sparkles, X } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, Telescope, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
@@ -215,7 +215,7 @@ export function FocusedVisualization({
                     : "bg-background/90 border-border text-foreground hover:bg-muted"
                 }`}
               >
-                <Sparkles size={18} />
+                <Telescope size={18} />
                 {/* Label drops below `sm`; the icon plus `aria-label` still
                     names the control where there is no room for both. */}
                 <span className="hidden text-sm font-semibold sm:inline">
@@ -362,7 +362,7 @@ export function FocusedVisualization({
             <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur-xl z-10">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <Sparkles size={16} className="text-primary" />
+                  <Telescope size={16} className="text-primary" />
                 </div>
                 <h3 className="font-bold text-foreground text-base">
                   AI Insights
@@ -382,7 +382,7 @@ export function FocusedVisualization({
               {explanationState.status === "idle" && (
                 <div className="flex flex-col items-center text-center text-muted-foreground py-10">
                   <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-5">
-                    <Sparkles size={26} className="text-muted-foreground/50" />
+                    <Telescope size={26} className="text-muted-foreground/50" />
                   </div>
                   <h4 className="text-foreground font-semibold text-lg mb-2">
                     Ready to Analyze
@@ -443,8 +443,8 @@ export function FocusedVisualization({
 
                     <div className="mt-8 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
                       <div className="flex items-center gap-1.5">
-                        <Sparkles size={12} className="text-primary" />
-                        <span className="font-medium">CodeKavi AI</span>
+                        <Telescope size={12} className="text-primary" />
+                        <span className="font-medium">Rune AI</span>
                       </div>
                       <span className="font-mono bg-background px-2 py-1 rounded border border-border">
                         {explanationState.tokensUsed} tokens

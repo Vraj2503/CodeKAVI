@@ -400,9 +400,19 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
       {/* Canvas region: the absolutely-positioned chrome below resolves against
           this box, not the window, so it can't slide under the docked tour. */}
       <div className="relative min-w-0 flex-1">
-        {/* max-w keeps the box shrink-to-fit while still giving flex-wrap a
-            bound to wrap against — without it an absolute flex row never wraps. */}
-        <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-2">
+        {/*
+          Toolbar and notices share ONE absolutely-positioned column.
+
+          They used to be separate siblings both pinned at `top-3`, so the
+          centred notice landed directly on top of the chips — and because
+          the toolbar wraps, no fixed offset could have cleared it. Stacking
+          them means the notice always sits below, at any wrap depth.
+
+          `pointer-events-none` on the column keeps the canvas draggable in
+          the gaps; each child turns them back on.
+        */}
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2">
+        <div className="pointer-events-auto flex max-w-full flex-wrap items-center gap-2">
           <GraphBreadcrumb
             activeLayer={activeLayer}
             onNavigate={handleBreadcrumbNavigate}
@@ -422,7 +432,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
           </button>
         </div>
         {(hasNoEdges || showLargeRepoNotice || usedLayoutFallback) && (
-          <div className="absolute left-1/2 top-3 z-10 flex w-full max-w-xs -translate-x-1/2 flex-col items-center gap-2 px-3">
+          <div className="pointer-events-auto mx-auto flex w-full max-w-xs flex-col items-center gap-2">
             {hasNoEdges && (
               <p className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 border border-border/50">
                 No dependencies could be resolved — files are grouped by role
@@ -443,6 +453,7 @@ function GraphCanvasInner({ repoId }: GraphCanvasProps) {
             )}
           </div>
         )}
+        </div>
         <ReactFlow
           key={state.activeLayerId ?? "overview"}
           nodes={nodes}

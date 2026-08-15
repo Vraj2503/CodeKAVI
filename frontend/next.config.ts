@@ -5,6 +5,14 @@ import { fileURLToPath } from "node:url";
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  /*
+   * Hides the floating "N" dev-tools badge Next.js pins to the corner in
+   * development. It is Next's chrome, not ours, and it sat on top of the app
+   * UI. Build and runtime errors are still surfaced — this only removes the
+   * always-on indicator.
+   */
+  devIndicators: false,
+
   /**
    * Pin the Turbopack root to this directory.
    *

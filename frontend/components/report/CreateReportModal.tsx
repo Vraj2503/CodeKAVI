@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, X, FileText, Sparkles } from "lucide-react";
+import { ArrowLeft, X, FileText, Telescope } from "lucide-react";
 
 interface CreateReportModalProps {
   isOpen: boolean;
@@ -118,7 +118,7 @@ export function CreateReportModal({
                   disabled={isStreaming}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg"
                 >
-                  <Sparkles size={15} />
+                  <Telescope size={15} />
                   Generate
                 </button>
               </div>

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, CheckCircle, RefreshCw } from "lucide-react";
+import { Telescope, CheckCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useSSE } from "@/hooks/useSSE";
 import { ProgressTracker } from "./ProgressTracker";
@@ -117,7 +117,7 @@ export function ReportView({
               onClick={openModal}
               className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
             >
-              <Sparkles size={16} /> Generate Report
+              <Telescope size={16} /> Generate Report
             </button>
           )}
           {isStreaming && (
@@ -133,7 +133,7 @@ export function ReportView({
               onClick={openModal}
               className="bg-foreground hover:bg-foreground/90 text-background rounded-lg px-4 py-2 font-medium transition-colors flex items-center gap-2"
             >
-              <Sparkles size={16} /> Load AI Analysis
+              <Telescope size={16} /> Load AI Analysis
             </button>
           )}
         </div>
@@ -175,7 +175,7 @@ export function ReportView({
       {!hasStarted && !isStreaming && !needsReanalysis && (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
           <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-6">
-            <Sparkles size={40} className="text-muted-foreground" />
+            <Telescope size={40} className="text-muted-foreground" />
           </div>
           <h2 className="text-2xl font-bold text-foreground mb-2">
             Ready to Generate Report
@@ -189,7 +189,7 @@ export function ReportView({
             onClick={openModal}
             className="flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.98] transition-all duration-200 shadow-lg"
           >
-            <Sparkles size={16} />
+            <Telescope size={16} />
             Generate Report
           </button>
         </div>

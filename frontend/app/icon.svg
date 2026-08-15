@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none">
+  <!-- ᚱ Raidō — the same mark the app rail draws. Squared background so the
+       glyph keeps its counters at 16px in a browser tab. -->
+  <rect width="20" height="20" rx="4" fill="#0A0A0B"/>
+  <path d="M5.5 3.4v13.2" stroke="#F5F5F4" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M5.5 3.4h5.2a3.3 3.3 0 0 1 0 6.6H5.5" stroke="#F5F5F4" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m9.1 10 5.4 6.6" stroke="#22D3EE" stroke-width="1.8" stroke-linecap="round"/>
+</svg>

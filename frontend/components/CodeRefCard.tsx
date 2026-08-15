@@ -78,19 +78,19 @@ export function CodeBlockWithFile({
   const gutterWidth = String(maxLineNum).length;
 
   return (
-    <div className="not-prose my-3 rounded-xl overflow-hidden border border-border/40 shadow-sm">
+    <div className="not-prose my-3 overflow-hidden rounded-md border border-border">
       {/* File header bar */}
       <div
         className={cn(
           "flex items-center gap-2",
-          "px-4 py-2",
-          "bg-muted/60 border-b border-border/30",
-          "border-l-[3px] border-l-primary"
+          "px-3 py-2",
+          "bg-muted/70 border-b border-border",
+          "border-l-2 border-l-signal"
         )}
       >
-        <FileCode2 className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+        <FileCode2 className="h-3.5 w-3.5 flex-shrink-0 text-signal" />
         <span
-          className="text-xs font-mono font-medium text-primary truncate"
+          className="truncate font-mono text-[11.5px] text-foreground"
           title={filePath}
         >
           {filePath}
@@ -98,7 +98,7 @@ export function CodeBlockWithFile({
       </div>
 
       {/* Code content with line numbers */}
-      <div className="overflow-x-auto bg-background/80">
+      <div className="overflow-x-auto bg-card">
         <table className="w-full border-collapse">
           <tbody>
             {lines.map((line, i) => (
@@ -108,9 +108,9 @@ export function CodeBlockWithFile({
                   className={cn(
                     "select-none text-right align-top",
                     "pr-4 pl-4 py-0",
-                    "text-[13px] font-mono",
-                    "text-muted-foreground/40",
-                    "border-r border-border/20",
+                    "text-[12.5px] font-mono tnum",
+                    "text-muted-foreground/45",
+                    "border-r border-border",
                     i === 0 && "pt-3",
                     i === lines.length - 1 && "pb-3"
                   )}
@@ -122,7 +122,7 @@ export function CodeBlockWithFile({
                 <td
                   className={cn(
                     "pl-4 pr-4 py-0",
-                    "text-[13px] font-mono text-foreground whitespace-pre",
+                    "text-[12.5px] font-mono text-foreground whitespace-pre",
                     i === 0 && "pt-3",
                     i === lines.length - 1 && "pb-3"
                   )}

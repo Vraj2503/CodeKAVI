@@ -4,26 +4,47 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
+/**
+ * One button, five voices.
+ *
+ * Every variant shares the same press behaviour: a 3% scale down on
+ * `:active`, transitioning transform only. That single detail is what makes a
+ * click feel received rather than merely registered — and it costs one
+ * compositor property, so it never drops a frame.
+ */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
+  [
+    "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md",
+    "text-sm font-medium",
+    "transition-[background-color,border-color,color,opacity,transform] duration-150 ease-out",
+    "active:scale-[0.97]",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+    "disabled:pointer-events-none disabled:opacity-40",
+  ].join(" "),
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        /** Ink on paper. The page's one true call to action. */
+        default:
+          "bg-foreground text-background hover:bg-foreground/88 shadow-pop",
+        /** Reserved for live/destructive-adjacent emphasis, used sparingly. */
+        signal:
+          "bg-signal text-signal-foreground hover:bg-signal/90 shadow-pop",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
-          "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+          "border border-border bg-card hover:bg-accent hover:text-accent-foreground",
+        /** Quiet fill — toolbars, secondary rows. */
+        subtle: "bg-muted text-foreground hover:bg-accent",
+        ghost: "text-muted-foreground hover:bg-accent hover:text-foreground",
+        link: "text-foreground underline underline-offset-4 decoration-border hover:decoration-foreground",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-md px-3",
-        lg: "h-11 rounded-md px-8",
-        icon: "h-10 w-10",
+        default: "h-9 px-4",
+        sm: "h-8 rounded-md px-3 text-[13px]",
+        lg: "h-11 rounded-lg px-6",
+        icon: "h-9 w-9",
+        "icon-sm": "h-8 w-8 rounded-md",
       },
     },
     defaultVariants: {

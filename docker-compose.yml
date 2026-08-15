@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: codekavi-backend
+    container_name: rune-backend
     ports:
       - "8000:8000"
     environment:
@@ -26,7 +26,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: codekavi-frontend
+    container_name: rune-frontend
     ports:
       - "3000:3000"
     environment:
@@ -39,7 +39,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: codekavi-redis
+    container_name: rune-redis
     ports:
       - "6379:6379"
     volumes:
