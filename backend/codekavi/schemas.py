@@ -108,6 +108,17 @@ class NNLayer(BaseModel):
     param_count: int | None = None
     activation: str | None = None
     block_dims: NNBlockDims | None = None
+    # Feature-map size relative to the input (1.0 = input size, halved by each
+    # stride-2 layer). None once the spatial dimension is gone, or when the
+    # layer has none. Deliberately relative: repo code rarely states its input
+    # resolution, and the figure must not print a shape the source never gave.
+    spatial_extent: float | None = None
+    # Channel / feature width flowing OUT of this layer, carried forward from
+    # the last layer that declared one. Read from the source, never inferred:
+    # None the moment the chain passes through an op we cannot resolve. This is
+    # what the figure prints on its arrows, so a guess here would be a guess on
+    # the page.
+    feature_width: int | None = None
 
 
 class NNConnection(BaseModel):
@@ -127,6 +138,20 @@ class NNBlock(BaseModel):
     has_skip: bool = False
 
 
+class NNRepeat(BaseModel):
+    """A contiguous run of identical layers, collapsed to one group in the chart.
+
+    Emitted alongside ``layers``, never in place of them, so the renderer can
+    expand a collapsed stack without a second request.
+    """
+
+    start: int  # Index into NNModel.layers where the run begins
+    length: int  # Layers per repetition (the period)
+    count: int  # Number of repetitions
+    label: str | None = None
+    param_count: int | None = None  # Cost of a single repetition
+
+
 class NNModel(BaseModel):
     """Complete neural network model architecture extracted from source code."""
 
@@ -141,3 +166,4 @@ class NNModel(BaseModel):
     layers: list[NNLayer] = Field(default_factory=list)
     connections: list[NNConnection] = Field(default_factory=list)
     blocks: list[NNBlock] | None = None
+    repeats: list[NNRepeat] = Field(default_factory=list)

@@ -5,7 +5,7 @@ import { useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, RefreshCw, Sparkles, X } from "lucide-react";
+import { Loader2, AlertCircle, Network, RefreshCw, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
@@ -91,19 +91,42 @@ function EmptyViz({
       ? { type: "complexity", label: "Complexity Treemap" }
       : { type: "dependencies", label: "Dependency Graph" };
 
+  // The neural network view is listed for every repository, so most visitors
+  // to this empty state are on a repo that simply has no model in it. Saying
+  // "not enough structure" there is wrong and sounds like a failure — the
+  // honest message is which frameworks we read and which we do not.
+  const isNN = type === "neural_network";
+
   return (
     <div className="w-full h-full flex flex-col items-center justify-center p-10 text-center">
       <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
-        <AlertCircle size={40} aria-hidden="true" />
+        {isNN ? (
+          <Network size={40} aria-hidden="true" />
+        ) : (
+          <AlertCircle size={40} aria-hidden="true" />
+        )}
       </div>
       <h3 className="text-xl font-bold text-foreground mb-3">
-        {unresolvedEdges ? "Nothing connects, yet" : `No ${label.toLowerCase()} to draw`}
+        {isNN
+          ? "No model architecture to draw"
+          : unresolvedEdges
+            ? "Nothing connects, yet"
+            : `No ${label.toLowerCase()} to draw`}
       </h3>
       <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-        {unresolvedEdges
-          ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
-          : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`}
+        {isNN
+          ? "We didn't find a neural network in this repository. This view reads PyTorch (nn.Module, nn.Sequential), Keras and TensorFlow models, and Hugging Face transformers loaded with from_pretrained."
+          : unresolvedEdges
+            ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
+            : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`}
       </p>
+      {isNN && (
+        <p className="mt-3 max-w-md text-xs leading-relaxed text-muted-foreground/80">
+          Classical machine learning — scikit-learn pipelines, XGBoost, LightGBM —
+          isn&apos;t drawn here yet. Neither are models built entirely at runtime from a
+          config file, since there is no architecture in the source to read.
+        </p>
+      )}
       <Link
         href={`?type=${suggestion.type}`}
         className="mt-8 inline-flex items-center gap-2 rounded-xl border border-border bg-muted px-6 py-3 text-sm font-semibold transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

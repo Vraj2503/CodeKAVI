@@ -216,15 +216,15 @@ export function Sidebar({
             {/* List of visualizations */}
             <ScrollArea className="flex-1 px-3 py-4">
               <div className="space-y-1.5">
-                {VIZ_CONFIG.filter((viz) => {
-                  if (
-                    viz.type === "neural_network" &&
-                    (!repoData?.nn_models || repoData.nn_models.length === 0)
-                  ) {
-                    return false;
-                  }
-                  return true;
-                }).map((viz) => {
+                {/*
+                  Every visualization is always listed, including Neural
+                  Network. Hiding it when `nn_models` is empty made the feature
+                  invisible to exactly the people who needed to know it exists,
+                  and an entry that appears for some repos and not others reads
+                  as a bug. When there is nothing to draw, the view itself
+                  explains why — same as the dependency graph does.
+                */}
+                {VIZ_CONFIG.map((viz) => {
                   const isActive = activeViz === viz.type;
                   const Icon = viz.icon as any;
                   return (

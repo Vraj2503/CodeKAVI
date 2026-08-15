@@ -221,12 +221,25 @@ export interface NNLayer {
   param_count?: number;
   activation?: string;
   block_dims?: NNBlockDims;
+  /** Feature-map size relative to the input; 1.0 = input, halved per stride-2 layer. */
+  spatial_extent?: number | null;
+  /**
+   * Channel / feature width flowing out of this layer. Read from the source and
+   * carried forward, never inferred — null once the chain hits an op the
+   * extractor cannot resolve. The figure prints it on the arrows.
+   */
+  feature_width?: number | null;
 }
 
 export interface NNConnection {
   from_id: string;
   to_id: string;
-  type: "sequential" | "skip" | "concat" | "add";
+  /**
+   * `sequential-unverified` is declaration order from a model with no traced
+   * `forward()`, not a confirmed execution graph. The backend has always emitted
+   * it (`_sequential_connections`); this union simply never listed it.
+   */
+  type: "sequential" | "sequential-unverified" | "skip" | "concat" | "add";
   label?: string;
 }
 
@@ -234,6 +247,21 @@ export interface NNBlock {
   name: string;
   layers: string[];
   has_skip: boolean;
+}
+
+/**
+ * A contiguous run of identical layers, collapsed to one group in the chart.
+ *
+ * Emitted alongside `layers`, never in place of them, so the renderer can
+ * expand a collapsed stack without a second request. `length` is the period
+ * (layers per repetition) and `param_count` the cost of a single repetition.
+ */
+export interface NNRepeat {
+  start: number;
+  length: number;
+  count: number;
+  label?: string;
+  param_count?: number;
 }
 
 export interface NNModel {
@@ -248,6 +276,8 @@ export interface NNModel {
   layers: NNLayer[];
   connections: NNConnection[];
   blocks?: NNBlock[];
+  /** Absent on analyses cached before repeat detection shipped. */
+  repeats?: NNRepeat[];
 }
 
 export interface ExplanationResponse {

@@ -11,6 +11,7 @@ Extraction strategies:
 """
 
 import ast
+import json
 import logging
 import math
 import re
@@ -162,6 +163,19 @@ _PRETRAINED_PREFIXES: dict[str, str] = {
 }
 _PRETRAINED_FROM_PRETRAINED_SUFFIX = ".from_pretrained"
 
+# Classes that share the `.from_pretrained` loader but are not models. Matched
+# against the lowercased receiver class name, so `RobertaTokenizerFast`,
+# `AutoProcessor` and `Wav2Vec2FeatureExtractor` are all rejected.
+_NON_MODEL_PRETRAINED_SUFFIXES = (
+    "tokenizer",
+    "tokenizerfast",
+    "processor",
+    "featureextractor",
+    "imageprocessor",
+    "extractor",
+    "config",
+)
+
 
 # ─────────────────────────────────────────────
 # Import alias resolution (alias/local-base aware extraction)
@@ -243,48 +257,106 @@ def _compute_block_dims(
     layer_type: str,
     params: dict[str, Any],
     output_shape: list[int] | None,
+    spatial_extent: float | None = None,
+    channels: int | None = None,
+    head: bool = False,
 ) -> dict:
     """Compute PlotNeuralNet-style 3D block dimensions.
 
-    - height/depth: proportional to spatial dimensions (log-scaled)
-    - width: proportional to channel/feature count (log-scaled)
+    Three axes, but only two of them carry data:
+
+    - height: the spatial footprint — absolute when the shape is known,
+      otherwise the relative extent from `_propagate_spatial_shapes`
+    - width: the channel/feature count (log-scaled), along the flow axis
+    - depth: a constant lip. NOT a data channel.
+
+    Depth used to mirror height, on the theory that a square face is the honest
+    drawing of a square feature map. In practice it made every block a sheared
+    parallelogram — at `Z_X = 0.52` an early conv threw 75px of horizontal shear,
+    so the figure read as a row of ribbons rather than the reference's clean
+    slabs. Both mockups keep the extrusion short and near-constant and let
+    height carry the whole spatial story, which is also what makes the blocks
+    pack tightly enough to read as one figure.
     """
-    min_dim, max_dim = 8.0, 80.0
-    min_width, max_width = 1.5, 25.0
+    min_dim, max_dim = 26.0, 110.0
+    min_width, max_width = 6.0, 46.0
 
     def _log_scale(val: Any, lo: float, hi: float) -> float:
-        if not isinstance(val, (int, float)):
+        if not isinstance(val, int | float):
             return lo
         if val <= 0:
             return lo
         scaled = lo + (hi - lo) * (math.log2(val + 1) / math.log2(1024))
         return max(lo, min(hi, scaled))
 
-    height = 20.0
-    depth = 20.0
-    width = 2.0
+    def _extent_scale(extent: float) -> float:
+        """Map a relative extent onto the face size.
+
+        log2 so that each halving is an equal visual step: 1.0 lands at the top
+        of the range, `_EXTENT_FLOOR` (six halvings down) at the bottom. Linear
+        would crush every layer past the second stride into the same size.
+        """
+        t = 1.0 + math.log2(max(extent, _EXTENT_FLOOR)) / 6.0
+        return min_dim + (max_dim - min_dim) * max(0.0, min(1.0, t))
+
+    # Sits below every scaled value, so "we know nothing about this layer" is
+    # visibly the smallest thing in the figure without disappearing.
+    height = 40.0
+    depth = _DEPTH_LIP
+    width = min_width
 
     if output_shape:
         if len(output_shape) >= 3:  # [C, H, W]
             height = _log_scale(output_shape[-2], min_dim, max_dim)
-            depth = _log_scale(output_shape[-1], min_dim, max_dim)
+            # A declared spatial width is real, so it is allowed to move the
+            # lip — but only within the lip's range. Letting it run to `max_dim`
+            # would put a model that declares its input shape in a completely
+            # different visual register from one that does not.
+            depth = _log_scale(output_shape[-1], _DEPTH_LIP_MIN, _DEPTH_LIP_MAX)
             width = _log_scale(output_shape[0], min_width, max_width)
         elif len(output_shape) == 2:  # [C, L] (1D)
             height = _log_scale(output_shape[-1], min_dim, max_dim)
-            depth = 10.0
             width = _log_scale(output_shape[0], min_width, max_width)
         elif len(output_shape) == 1:  # [features]
             height = _log_scale(output_shape[0], min_dim, max_dim)
-            depth = 10.0
-            width = 3.0
+
+    # Relative silhouette: height alone. We know the map shrank, not by how much
+    # in each axis, so there is no second spatial number to draw even if the
+    # geometry had a slot for one.
+    elif spatial_extent is not None:
+        height = _extent_scale(spatial_extent)
+        # Thickness follows the running channel count, so a BatchNorm or pool
+        # sitting after a 512-channel conv stays as thick as the conv rather
+        # than collapsing to a wafer.
+        carrier = params.get("out_channels", channels)
+        width = _log_scale(carrier, min_width, max_width) if carrier is not None else min_width
 
     # Fallback from params
     elif "out_channels" in params:
         width = _log_scale(params["out_channels"], min_width, max_width)
-    elif "out_features" in params:
-        height = _log_scale(params["out_features"], min_dim, max_dim)
-        depth = 10.0
-        width = 3.0
+    else:
+        # Any declared feature width, whatever the framework calls it. Without
+        # `units`/`hidden_size`/`embedding_dim` here, a Keras model's every layer
+        # fell through to the bare default and the isometric figure was a row
+        # of identical slabs — the geometry is the whole point of the view.
+        # A classifier head sitting after a collapsed feature map is a small bar,
+        # not the tallest thing in the figure. Without the squeeze a 1000-way
+        # `fc` out-towers the input conv and inverts the whole silhouette. A
+        # pure MLP never sets `head`, so it still uses the full range.
+        #
+        # 0.12, not the old 0.4: the floor moved from 8 to 26, so the same
+        # fraction now buys far more absolute height. At 0.4 a 1000-way `fc`
+        # came out TALLER than the last conv block, which is the inversion the
+        # squeeze exists to prevent.
+        feature_hi = min_dim + (max_dim - min_dim) * 0.12 if head else max_dim
+        for key in ("out_features", "units", "hidden_size", "embedding_dim"):
+            if key in params:
+                height = _log_scale(params[key], min_dim, feature_hi)
+                # A dense layer is a vector, not a map. Drawn at the full lip it
+                # reads as a slab like the convs; a thin one reads as the bar the
+                # reference figure ends on.
+                width = min_width
+                break
 
     return {"height": round(height, 1), "depth": round(depth, 1), "width": round(width, 1)}
 
@@ -292,6 +364,105 @@ def _compute_block_dims(
 # ─────────────────────────────────────────────
 # AST Helpers
 # ─────────────────────────────────────────────
+
+
+def _layer_signature(layer: dict) -> str:
+    """Stable identity for a layer, used to spot repeated blocks.
+
+    Two layers share a signature when they would render identically: same type,
+    same category, same constructor params. ``id`` is deliberately excluded —
+    ids are positional, so including one would make every layer unique and no
+    repeat would ever be found.
+    """
+    params = layer.get("params") or {}
+    try:
+        params_key = json.dumps(params, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        params_key = repr(sorted(params.items(), key=lambda kv: kv[0]))
+    return f"{layer.get('type')}|{layer.get('category')}|{params_key}"
+
+
+def _repeat_label(block: list[dict]) -> str:
+    """Human label for one repetition, derived from the layer types it holds."""
+    types = list(dict.fromkeys(layer.get("type") or "?" for layer in block))
+    if len(types) == 1:
+        return types[0]
+    head = " + ".join(types[:3])
+    return f"{head} block" if len(types) <= 3 else f"{head} + … block"
+
+
+def detect_repeats(layers: list[dict], min_count: int = 2) -> list[dict]:
+    """Find contiguous repeated runs of layers, so the chart can collapse them.
+
+    A twelve-layer transformer encoder is twelve identical ``(MultiheadAttention,
+    LayerNorm, Linear, Linear)`` groups in a row, and drawing all forty-eight is
+    both unreadable and untrue to how anyone describes the model. This collapses
+    them into one ``x12`` group.
+
+    Emitted **alongside** ``layers``, never in place of them, so the frontend can
+    expand a collapsed stack without a second request.
+
+    Returns non-overlapping repeats sorted by position, each shaped::
+
+        {"start": 3, "length": 6, "count": 12, "label": ..., "param_count": ...}
+
+    where ``length`` is the period (layers per repetition), ``count`` is how many
+    repetitions, and ``param_count`` is the cost of a *single* repetition.
+    """
+    n = len(layers)
+    if n < 2 * min_count:
+        return []
+
+    sigs = [_layer_signature(layer) for layer in layers]
+
+    # Candidate runs. For a period p, layers i and i+p match iff sigs agree, so a
+    # maximal run of consecutive matches at stride p is exactly a p-periodic
+    # region. That keeps this O(n^2) rather than the O(n^3) of comparing every
+    # (start, period, repetition) triple.
+    candidates: list[tuple[int, int, int]] = []  # (covered, start, period)
+    for period in range(1, n // min_count + 1):
+        start = 0
+        while start < n - period:
+            if sigs[start] != sigs[start + period]:
+                start += 1
+                continue
+            end = start
+            while end < n - period and sigs[end] == sigs[end + period]:
+                end += 1
+            # Region [start, end + period) is p-periodic.
+            count = (end + period - start) // period
+            if count >= min_count:
+                candidates.append((count * period, start, period))
+            start = end + 1
+
+    if not candidates:
+        return []
+
+    # Widest coverage wins. On a tie prefer the smaller period: twelve identical
+    # single layers are a x12 of period 1, not a x6 of period 2, and the
+    # primitive period is what a reader would call the block.
+    candidates.sort(key=lambda c: (-c[0], c[2], c[1]))
+
+    repeats: list[dict] = []
+    taken: list[tuple[int, int]] = []
+    for covered, start, period in candidates:
+        stop = start + covered
+        if any(start < t_stop and t_start < stop for t_start, t_stop in taken):
+            continue
+        taken.append((start, stop))
+        block = layers[start : start + period]
+        repeats.append(
+            {
+                "start": start,
+                "length": period,
+                "count": covered // period,
+                "label": _repeat_label(block),
+                "param_count": sum(layer.get("param_count") or 0 for layer in block) or None,
+            }
+        )
+
+    repeats.sort(key=lambda r: r["start"])
+    return repeats
 
 
 def _ast_to_value(node: ast.AST) -> Any:
@@ -453,14 +624,20 @@ def _match_pretrained_call(call_node: ast.Call, alias_map: dict[str, str] | None
     params = _extract_call_params(call_node)
 
     if resolved.endswith(_PRETRAINED_FROM_PRETRAINED_SUFFIX):
+        receiver = resolved[: -len(_PRETRAINED_FROM_PRETRAINED_SUFFIX)].split(".")[-1]
+        # `.from_pretrained` is the loader for tokenizers, processors and configs
+        # too, and none of those is a neural network. Without this a repo using
+        # `RobertaTokenizer.from_pretrained(...)` reports a text preprocessor as
+        # a model, and the chart draws a box for something with no layers.
+        if receiver.lower().endswith(_NON_MODEL_PRETRAINED_SUFFIXES):
+            return None
         arch = None
         if call_node.args:
             first = _ast_to_value(call_node.args[0])
             if isinstance(first, str):
                 arch = first
         if arch is None:
-            receiver = resolved[: -len(_PRETRAINED_FROM_PRETRAINED_SUFFIX)]
-            arch = receiver.split(".")[-1]
+            arch = receiver
         return {"arch": arch, "framework": "pytorch", "weights": params.get("weights", arch)}
 
     if resolved == "timm.create_model" or resolved.endswith(".timm.create_model"):
@@ -500,6 +677,19 @@ def _normalize_params(layer_type: str, params: dict) -> dict:
     # PyTorch Conv2d: (in_channels, out_channels, kernel_size, ...)
     if layer_type in ("Conv1d", "Conv2d", "Conv3d", "ConvTranspose1d", "ConvTranspose2d", "ConvTranspose3d"):
         pos_map = ["in_channels", "out_channels", "kernel_size", "stride", "padding"]
+    elif layer_type in ("Conv1D", "Conv2D", "Conv3D"):
+        # Keras: Conv2D(filters, kernel_size, strides=...). Aliased to the torch
+        # vocabulary below so one set of downstream rules covers both frameworks.
+        pos_map = ["filters", "kernel_size", "strides"]
+    elif layer_type in (
+        "MaxPooling1D",
+        "MaxPooling2D",
+        "MaxPooling3D",
+        "AveragePooling1D",
+        "AveragePooling2D",
+        "AveragePooling3D",
+    ):
+        pos_map = ["pool_size", "strides"]
     elif layer_type in ("Linear", "LazyLinear"):
         pos_map = ["in_features", "out_features", "bias"]
     elif layer_type in ("BatchNorm1d", "BatchNorm2d", "BatchNorm3d"):
@@ -528,32 +718,105 @@ def _normalize_params(layer_type: str, params: dict) -> dict:
         if key in params and name not in normalized:
             normalized[name] = params[key]
 
+    # Keras spellings aliased onto the torch vocabulary, so stride/channel rules
+    # downstream do not need a branch per framework. The originals are kept for
+    # display — the tooltip should show what the author actually wrote.
+    for keras_name, torch_name in (("filters", "out_channels"), ("strides", "stride"), ("pool_size", "kernel_size")):
+        if keras_name in normalized and torch_name not in normalized:
+            normalized[torch_name] = normalized[keras_name]
+
     return normalized
+
+
+"""Smallest relative feature-map extent the geometry distinguishes: six
+halvings below the input, which covers ResNet's 224 -> 7 and then some."""
+_EXTENT_FLOOR = 1.0 / 64.0
+
+"""Depth of the oblique extrusion. Constant, and deliberately not a data
+channel: it exists to make a block read as a solid rather than a rectangle.
+`_DEPTH_LIP_MIN/MAX` bound the one case that may vary it, a declared spatial
+width from a real `output_shape`."""
+_DEPTH_LIP = 14.0
+_DEPTH_LIP_MIN = 10.0
+_DEPTH_LIP_MAX = 22.0
+
+
+def _is_pos_int(value: Any) -> bool:
+    """True for a usable size. Params come from AST literals, so a value can be
+    a variable name (`'vocab_size'`) or a bool — neither is a dimension."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _kernel_volume(kernel_size: Any, ndim: int) -> int | None:
+    """Weights per (in_channel, out_channel) pair for an ``ndim``-dimensional kernel.
+
+    ``kernel_size`` is either a scalar applying to every axis, or a per-axis
+    sequence. A scalar 3 on a Conv2d means 3x3 = 9; an explicit ``(3, 5)``
+    means 15.
+    """
+    if isinstance(kernel_size, bool):
+        return None
+    if isinstance(kernel_size, int):
+        return kernel_size**ndim
+    if isinstance(kernel_size, list | tuple) and kernel_size:
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in kernel_size):
+            return None
+        if len(kernel_size) < ndim:  # under-specified, treat as a scalar
+            return int(kernel_size[0]) ** ndim
+        volume = 1
+        for axis in kernel_size[:ndim]:
+            volume *= axis
+        return volume
+    return None
 
 
 def _estimate_param_count(layer_type: str, params: dict) -> int | None:
     """Rough parameter count estimation for common layer types."""
     try:
-        if layer_type in ("Conv2d", "Conv1d", "Conv3d"):
+        if layer_type in (
+            "Conv1d",
+            "Conv2d",
+            "Conv3d",
+            "ConvTranspose1d",
+            "ConvTranspose2d",
+            "ConvTranspose3d",
+        ):
             ic = params.get("in_channels", 0)
             oc = params.get("out_channels", 0)
-            ks = params.get("kernel_size", 3)
-            ks = ks if isinstance(ks, int) else (ks[0] * ks[1] if len(ks) >= 2 else ks[0])
             bias = 1 if params.get("bias", True) else 0
-            if ic and oc:
-                if layer_type == "Conv1d":
-                    return int(ic * oc * ks + oc * bias)
-                elif layer_type == "Conv2d":
-                    k2 = ks * ks if isinstance(ks, int) else ks
-                    return int(ic * oc * k2 + oc * bias)
-                elif layer_type == "Conv3d":
-                    k3 = ks**3 if isinstance(ks, int) else ks
-                    return int(ic * oc * k3 + oc * bias)
-        elif layer_type in ("Linear", "Dense"):
-            inf = params.get("in_features", params.get("units", 0))
-            outf = params.get("out_features", params.get("units", 0))
-            if inf and outf:
-                return int(inf * outf + outf)
+            volume = _kernel_volume(params.get("kernel_size", 3), int(layer_type[-2]))
+            groups = params.get("groups", 1)
+            if not isinstance(groups, int) or isinstance(groups, bool) or groups < 1:
+                groups = 1
+            if ic and oc and volume:
+                # Depthwise convs (groups == in_channels) cost a fraction of the
+                # dense equivalent, so ignoring groups overstates MobileNet- and
+                # EfficientNet-style nets by orders of magnitude.
+                return int(ic * oc * volume // groups + oc * bias)
+        elif layer_type == "MultiheadAttention":
+            # q/k/v/out projections: four embed_dim x embed_dim matrices plus
+            # four bias vectors. Without this a transformer's largest component
+            # counts as zero.
+            embed_dim = params.get("embed_dim", 0)
+            if embed_dim:
+                bias = 1 if params.get("bias", True) else 0
+                return int(4 * embed_dim * embed_dim + 4 * embed_dim * bias)
+        elif layer_type == "GroupNorm":
+            nc = params.get("num_channels", 0)
+            if nc:
+                return int(nc * 2)  # gamma + beta
+        elif layer_type in ("Linear", "LazyLinear", "Dense"):
+            # in_features is NOT defaulted to `units`. Keras `Dense(64)` declares
+            # only its output width, and assuming the input matches invented a
+            # number that was right solely when in == out — a Dense(6) after a
+            # 64-wide layer was reported as 42 instead of 390. Unknown input
+            # means no estimate; `_propagate_feature_widths` fills it in when the
+            # preceding layer actually tells us.
+            inf = params.get("in_features")
+            outf = params.get("out_features", params.get("units"))
+            if _is_pos_int(inf) and _is_pos_int(outf):
+                bias = 1 if params.get("bias", True) else 0
+                return int(inf * outf + outf * bias)
         elif layer_type in ("BatchNorm1d", "BatchNorm2d", "BatchNorm3d"):
             nf = params.get("num_features", 0)
             if nf:
@@ -563,16 +826,17 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
             ed = params.get("embedding_dim", 0)
             if ne and ed:
                 return int(ne * ed)
-        elif layer_type in ("LSTM", "GRU"):
+        elif layer_type in ("LSTM", "GRU", "RNN"):
             inp = params.get("input_size", 0)
             hid = params.get("hidden_size", 0)
             nl = params.get("num_layers", 1)
             if inp and hid:
-                gates = 4 if layer_type == "LSTM" else 3
-                return int(nl * gates * (inp * hid + hid * hid + hid))
+                gates = {"LSTM": 4, "GRU": 3}.get(layer_type, 1)
+                total = int(nl * gates * (inp * hid + hid * hid + hid))
+                return total * 2 if params.get("bidirectional") else total
         elif layer_type == "LayerNorm":
             ns = params.get("normalized_shape", 0)
-            if isinstance(ns, (list, tuple)):
+            if isinstance(ns, list | tuple):
                 ns = 1
                 for v in params.get("normalized_shape", []):
                     ns *= v
@@ -586,6 +850,264 @@ def _estimate_param_count(layer_type: str, params: dict) -> int | None:
 # ─────────────────────────────────────────────
 # Module-based extraction (nn.Module subclass)
 # ─────────────────────────────────────────────
+
+
+_CONV_TYPES = (
+    "Conv1d",
+    "Conv2d",
+    "Conv3d",
+    "ConvTranspose1d",
+    "ConvTranspose2d",
+    "ConvTranspose3d",
+    "Conv1D",
+    "Conv2D",
+    "Conv3D",
+)
+
+_POOL_TYPES = (
+    "MaxPool1d",
+    "MaxPool2d",
+    "MaxPool3d",
+    "AvgPool1d",
+    "AvgPool2d",
+    "AvgPool3d",
+    "MaxPooling1D",
+    "MaxPooling2D",
+    "MaxPooling3D",
+    "AveragePooling1D",
+    "AveragePooling2D",
+    "AveragePooling3D",
+)
+
+# Collapse the feature map to a single cell whatever came in.
+_GLOBAL_POOL_TYPES = (
+    "AdaptiveAvgPool1d",
+    "AdaptiveAvgPool2d",
+    "AdaptiveMaxPool2d",
+    "GlobalAveragePooling1D",
+    "GlobalAveragePooling2D",
+    "GlobalMaxPooling1D",
+    "GlobalMaxPooling2D",
+)
+
+# Past these there is no spatial extent left to draw.
+_SPATIAL_TERMINATORS = ("Flatten", "Linear", "LazyLinear", "Dense")
+
+# Layers that pass the feature width through untouched. Pooling included: it
+# changes spatial extent, not channel count.
+_WIDTH_PRESERVING = {
+    "ReLU",
+    "LeakyReLU",
+    "GELU",
+    "SiLU",
+    "ELU",
+    "Tanh",
+    "Sigmoid",
+    "Softmax",
+    "Dropout",
+    "Dropout1d",
+    "Dropout2d",
+    "Dropout3d",
+    "BatchNorm1d",
+    "BatchNorm2d",
+    "BatchNorm3d",
+    "LayerNorm",
+    "GroupNorm",
+    "MaxPool1d",
+    "MaxPool2d",
+    "MaxPool3d",
+    "AvgPool1d",
+    "AvgPool2d",
+    "AvgPool3d",
+    "AdaptiveAvgPool1d",
+    "AdaptiveAvgPool2d",
+    "AdaptiveMaxPool2d",
+    "Activation",
+    "Flatten",
+    "Identity",
+}
+
+
+def _declared_output_width(layer: dict, framework: str) -> int | None:
+    """The feature/channel width a layer emits, when it states one outright."""
+    layer_type = layer["type"]
+    params = layer["params"]
+
+    if layer_type in _CONV_TYPES:
+        candidate = params.get("out_channels")
+    elif layer_type in ("Linear", "LazyLinear", "Dense"):
+        candidate = params.get("out_features", params.get("units"))
+    elif layer_type in ("Embedding", "EmbeddingBag"):
+        candidate = params.get("embedding_dim")
+    elif layer_type == "MultiheadAttention":
+        candidate = params.get("embed_dim")
+    elif layer_type in ("LSTM", "GRU", "RNN"):
+        candidate = params.get("hidden_size")
+        if not _is_pos_int(candidate) and framework != "pytorch":
+            # Keras `LSTM(64)` means 64 units, but the positional map is
+            # PyTorch's `(input_size, hidden_size, ...)`, so it landed in
+            # input_size. Read it back as the hidden width.
+            candidate = params.get("input_size")
+        if _is_pos_int(candidate) and params.get("bidirectional"):
+            return candidate * 2
+    else:
+        return None
+
+    return candidate if _is_pos_int(candidate) else None
+
+
+def _propagate_feature_widths(model: dict) -> None:
+    """Fill in each layer's INPUT width from the layer before it, in place.
+
+    A layer usually declares only what it emits: `Dense(64)` says nothing about
+    what it consumes. Walking the chain recovers the missing half, which is what
+    turns a parameter count from a guess into a number. Where the chain breaks
+    (an `Embedding(vocab_size, ...)` whose arguments are variables) the width
+    goes unknown and downstream layers correctly report no estimate rather than
+    inventing one.
+
+    Only sound for a linear chain, which is what `layers` is — a branching
+    graph would need the connection list, and guessing there would reintroduce
+    exactly the fabrication this removes.
+    """
+    framework = model.get("framework") or "pytorch"
+    width: int | None = None
+
+    for layer in model.get("layers") or []:
+        layer_type = layer["type"]
+        params = layer["params"]
+
+        if width is not None:
+            if layer_type in ("Linear", "Dense") and not _is_pos_int(params.get("in_features")):
+                params["in_features"] = width
+            elif layer_type in _CONV_TYPES and not _is_pos_int(params.get("in_channels")):
+                params["in_channels"] = width
+            elif (
+                layer_type in ("LSTM", "GRU", "RNN")
+                and framework != "pytorch"
+                # Keras put units in input_size; move it and use the real input.
+                and _is_pos_int(params.get("input_size"))
+                and not _is_pos_int(params.get("hidden_size"))
+            ):
+                params["hidden_size"] = params["input_size"]
+                params["input_size"] = width
+
+        declared = _declared_output_width(layer, framework)
+        if declared is not None:
+            width = declared
+        elif layer_type not in _WIDTH_PRESERVING:
+            width = None  # unknown transform — stop claiming to know
+
+        layer["param_count"] = _estimate_param_count(layer_type, params)
+        layer["block_dims"] = _compute_block_dims(layer_type, params, layer.get("output_shape"))
+
+    total = sum(layer.get("param_count") or 0 for layer in model.get("layers") or [])
+    model["total_params"] = total if total > 0 else None
+
+
+def _first_int(value: Any) -> int | None:
+    """First usable integer from a scalar or a per-axis sequence."""
+    if _is_pos_int(value):
+        return int(value)
+    if isinstance(value, list | tuple):
+        for item in value:
+            if _is_pos_int(item):
+                return int(item)
+    return None
+
+
+def _spatial_stride(layer_type: str, params: dict) -> int:
+    """How much this layer divides the feature map by.
+
+    Pooling strides default to the pool window, which is why a bare
+    ``MaxPool2d(2)`` halves the map. Convolution strides default to 1.
+    """
+    stride = _first_int(params.get("stride"))
+    if stride:
+        return stride
+    if layer_type in _POOL_TYPES:
+        return _first_int(params.get("kernel_size")) or 1
+    return 1
+
+
+def _propagate_spatial_shapes(model: dict) -> None:
+    """Track how the feature map shrinks through the network, in place.
+
+    This is what gives the figure its silhouette: a tall slab at the input
+    collapsing to a small block at the head, which is the whole visual argument
+    of a PlotNeuralNet-style diagram. Without it every block is the same size
+    and the isometric view says nothing.
+
+    Extent is **relative** — 1.0 at the input, halved by each stride-2 layer.
+    Repo code almost never states its input resolution, and inventing one would
+    put tensor shapes on a figure meant for papers that the source never
+    claimed. `output_shape` is therefore left alone unless the model genuinely
+    declares an input, which is the only case where absolute numbers are ours to
+    print.
+    """
+    extent: float | None = 1.0
+    channels: int | None = None
+    had_spatial = False
+    prev_dims: dict | None = None
+    framework = model.get("framework") or "pytorch"
+
+    for layer in model.get("layers") or []:
+        layer_type = layer["type"]
+        params = layer["params"]
+
+        if layer_type in _SPATIAL_TERMINATORS:
+            extent = None
+        elif extent is not None:
+            if layer_type in _CONV_TYPES or layer_type in _POOL_TYPES or layer_type in _GLOBAL_POOL_TYPES:
+                had_spatial = True
+            if layer_type in _GLOBAL_POOL_TYPES:
+                # Collapses to a single cell regardless of what came in, so it
+                # lands at the small end of the scale.
+                extent = _EXTENT_FLOOR
+            elif layer_type in _CONV_TYPES or layer_type in _POOL_TYPES:
+                stride = _spatial_stride(layer_type, params)
+                if stride > 1:
+                    extent = extent / stride
+
+        declared = _declared_output_width(layer, framework)
+        if declared is not None:
+            channels = declared
+        elif layer_type not in _WIDTH_PRESERVING:
+            # Same reset `_propagate_feature_widths` applies. Without it the
+            # carrier survived an unknown op forever, so a block downstream of
+            # something we cannot read still drew — and would now still label —
+            # the last width we happened to recognise.
+            channels = None
+
+        layer["spatial_extent"] = round(extent, 6) if extent is not None else None
+        # The running width is already load-bearing for the geometry; publishing
+        # it is what lets the figure label its arrows. `_declared_output_width`
+        # is the single gate on whether a width is known, so this stays read
+        # rather than inferred: a layer downstream of an unresolvable
+        # `Embedding(vocab_size, ...)` carries None and gets no label.
+        layer["feature_width"] = channels
+        dims = _compute_block_dims(
+            layer_type,
+            params,
+            layer.get("output_shape"),
+            spatial_extent=extent,
+            channels=channels,
+            head=had_spatial and extent is None,
+        )
+
+        # An activation or dropout declares no size of its own. Left at the
+        # default it renders as a 36px dot wedged between 130px slabs, which
+        # reads as a gap in the model rather than a step in it. It passes its
+        # input through unchanged, so it should look like what it received.
+        declares_size = any(
+            key in params for key in ("out_channels", "out_features", "units", "hidden_size", "embedding_dim")
+        )
+        if prev_dims and extent is None and not declares_size and layer_type in _WIDTH_PRESERVING:
+            dims["height"] = prev_dims["height"]
+            dims["depth"] = prev_dims["depth"]
+
+        layer["block_dims"] = dims
+        prev_dims = dims
 
 
 def _flatten_layer_elements(node: ast.expr) -> list[ast.Call]:
@@ -682,7 +1204,7 @@ def _extract_module_class(
     init_method = None
     forward_method = None
     for item in class_node.body:
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
             if item.name == "__init__":
                 init_method = item
             elif item.name == "forward":
@@ -1284,6 +1806,7 @@ def extract_models_from_source(
                     changed = True
                     break
 
+    extracted_classes: list[ast.ClassDef] = []
     for cd in class_defs:
         fw = local_model_fw.get(cd.name)
         if fw is None:
@@ -1291,6 +1814,17 @@ def extract_models_from_source(
         model = _extract_module_class(cd, file_path, framework=fw, alias_map=alias_map)
         if model and len(model["layers"]) >= 1:  # relaxed floor — small models are valid
             models.append(model)
+            extracted_classes.append(cd)
+
+    # `self.x = nn.Sequential(...)` inside an extracted class is already folded
+    # into that class's layers by _collect_layers_from_value, so emitting it
+    # again below would report a submodule as a sibling model — a two-model file
+    # would list four. Only assignments inside classes that actually produced a
+    # model are claimed; if class extraction bailed (no __init__, no layers),
+    # the standalone pass is the only chance to capture them.
+    claimed_assigns: set[int] = {
+        id(sub) for cd in extracted_classes for sub in ast.walk(cd) if isinstance(sub, ast.Assign)
+    }
 
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)):
@@ -1311,6 +1845,8 @@ def extract_models_from_source(
                 and isinstance(node.targets[0].value, ast.Name)
                 and node.targets[0].value.id == "self"
             ):
+                if id(node) in claimed_assigns:
+                    continue  # already a submodule of an extracted class model
                 model_name = node.targets[0].attr
 
             resolved = _resolve_with_alias(call_name, alias_map) or call_name
@@ -1347,6 +1883,12 @@ def extract_models_from_source(
         claimed_lines = {m["line"] for m in models if m.get("line") is not None}
         if _is_ml_file(alias_map):
             models.extend(_extract_heuristic_models(tree, file_path, alias_map, claimed_lines))
+
+    # Order matters: widths first, because they fill in the channel counts that
+    # the spatial pass then uses for block thickness.
+    for model in models:
+        _propagate_feature_widths(model)
+        _propagate_spatial_shapes(model)
 
     return models
 
@@ -1436,6 +1978,39 @@ def select_nn_candidates(file_profiles: list, dep_data: Any) -> list[dict]:
     return candidates
 
 
+def _dedupe_models(models: list[dict]) -> list[dict]:
+    """Drop models that repeat one already seen in another file.
+
+    Notebooks get saved as revisions — `final-code-v1.ipynb`, `final-code-v2`,
+    `final_code` — and each copy re-declares the same architecture, so one model
+    is reported three times and the chart offers three identical figures.
+
+    Keyed on name AND layer signature, and only across files. Two same-named
+    models with different layers are genuinely different and both survive; two
+    differently-named models in one file are left alone, because within a single
+    file distinct names usually mean distinct models.
+    """
+    seen: dict[tuple, str] = {}
+    kept: list[dict] = []
+
+    for model in models:
+        signature = (
+            model.get("name"),
+            tuple(_layer_signature(layer) for layer in model.get("layers") or []),
+        )
+        origin = seen.get(signature)
+        if origin is not None and origin != model.get("file"):
+            continue
+        if origin is None:
+            seen[signature] = model.get("file") or ""
+        kept.append(model)
+
+    dropped = len(models) - len(kept)
+    if dropped:
+        logger.info(f"Dropped {dropped} duplicate NN model(s) repeated across files")
+    return kept
+
+
 async def extract_all_models(
     ml_model_files: list[dict],
     content_cache: dict[str, str] | BoundedContentCache | None = None,
@@ -1487,6 +2062,14 @@ async def extract_all_models(
             models = extract_models_from_source(content, rel_path)
 
         all_models.extend(models)
+
+    all_models = _dedupe_models(all_models)
+
+    # Collapse repeated blocks (a 12-layer encoder stack, 2 BasicBlocks per
+    # ResNet stage). Runs here rather than at request time so the visualize
+    # endpoint stays zero-cost and serves straight from the analysis cache.
+    for model in all_models:
+        model["repeats"] = detect_repeats(model.get("layers") or [])
 
     logger.info(f"Extracted {len(all_models)} NN model(s) from {len(ml_model_files)} ML file(s)")
     return all_models
