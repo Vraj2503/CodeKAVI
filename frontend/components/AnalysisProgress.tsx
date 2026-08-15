@@ -85,14 +85,30 @@ export function AnalysisProgress({
 
   // Start the analysis stream
   useEffect(() => {
+    /*
+     * `cancelled` alone used to be the whole cleanup: it silenced the
+     * callbacks but left the POST running. In development React
+     * StrictMode mounts, cleans up, then mounts again — so every click
+     * on Analyze opened two streams, and the backend's 5/min cap on
+     * `/analyze/stream` produced a 429 after three clicks.
+     *
+     * The controller aborts the request itself, which also means
+     * navigating away or hitting Cancel actually stops the work rather
+     * than orphaning it.
+     */
+    const controller = new AbortController();
     let cancelled = false;
 
     (async () => {
       try {
-        const data = await analyzeRepoStream(repoUrl, (event) => {
-          if (cancelled) return;
-          handleProgress(event);
-        });
+        const data = await analyzeRepoStream(
+          repoUrl,
+          (event) => {
+            if (cancelled) return;
+            handleProgress(event);
+          },
+          controller.signal,
+        );
 
         if (cancelled) return;
 
@@ -107,7 +123,13 @@ export function AnalysisProgress({
           if (!cancelled) onComplete(data);
         }, 800);
       } catch (err: unknown) {
-        if (cancelled) return;
+        // An abort is us tearing the stream down on purpose — never a
+        // failure to report. Without this guard StrictMode's first,
+        // deliberately-discarded pass would surface "The user aborted a
+        // request" as an error toast on every analysis.
+        if (cancelled || (err instanceof Error && err.name === "AbortError")) {
+          return;
+        }
         const msg = err instanceof Error ? err.message : "Analysis failed";
         setError(msg);
         onError(msg);
@@ -116,6 +138,7 @@ export function AnalysisProgress({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoUrl]);

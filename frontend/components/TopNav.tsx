@@ -1,13 +1,17 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
-import { BookOpen, LogOut } from "lucide-react";
+import { LogOut, Terminal, ChevronRight } from "lucide-react";
 import ThemeSwitch from "./ui/theme-switch";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Button } from "./ui/button";
+import { Kbd } from "./ui/Kbd";
+import { useRepo } from "./RepoProvider";
 
 export function TopNav() {
   const { user, signOut } = useAuth();
+  const { repoData } = useRepo();
   const router = useRouter();
 
   const handleSignOut = async () => {
@@ -16,37 +20,68 @@ export function TopNav() {
   };
 
   return (
-    <header className="flex h-14 flex-shrink-0 items-center justify-between px-6 border-b border-border/40 bg-card/40 backdrop-blur-xl">
-      <div className="flex items-center gap-3">
-        <Link href="/" className="flex items-center gap-3 transition-opacity hover:opacity-80">
-          <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center glow-pulse">
-            <BookOpen className="w-4 h-4 text-primary" />
-          </div>
-          <h1 className="text-lg font-bold tracking-tight text-foreground">
-            CodeKavi
-          </h1>
-        </Link>
-      </div>
+    <header className="flex h-12 flex-shrink-0 items-center gap-2.5 border-b border-border bg-card/70 px-4 backdrop-blur-xl">
+      {/*
+        The mark was a generic book glyph in a rounded square with a
+        box-shadow that pulsed forever — motion with nothing to say,
+        running on every frame of every page. A wordmark is more specific
+        to this product and one less thing animating.
+      */}
+      <Link
+        href="/"
+        className="group flex items-center gap-2"
+        aria-label="CodeKavi console"
+      >
+        <Terminal className="h-4 w-4 text-signal" />
+        <span className="font-display text-[14px] text-foreground transition-colors group-hover:text-signal">
+          CODEKAVI
+        </span>
+      </Link>
 
-      <div className="flex items-center gap-4">
+      {/* Breadcrumb — the repo under observation. This was previously
+          only visible inside the sidebar, which collapses. */}
+      {repoData && (
+        <>
+          <ChevronRight
+            className="h-3.5 w-3.5 text-muted-foreground/40"
+            aria-hidden="true"
+          />
+          <span className="min-w-0 truncate font-mono text-[12.5px]">
+            <span className="text-muted-foreground/60">
+              {repoData.owner}/
+            </span>
+            <span className="text-foreground">{repoData.repo_name}</span>
+          </span>
+        </>
+      )}
+
+      <div className="ml-auto flex items-center gap-2">
+        <span className="hidden items-center gap-1 md:flex">
+          <Kbd>⌘</Kbd>
+          <Kbd>K</Kbd>
+        </span>
+
         <ThemeSwitch />
-        
+
         {user?.user_metadata?.avatar_url && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.user_metadata.avatar_url}
-            alt={user.user_metadata.full_name || "Avatar"}
-            className="w-8 h-8 rounded-full border border-border/50"
+            alt={user.user_metadata.full_name || "Your avatar"}
+            className="h-6 w-6 border border-border"
             referrerPolicy="no-referrer"
           />
         )}
-        <button
+
+        <Button
+          variant="ghost"
+          size="icon-sm"
           onClick={handleSignOut}
-          className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
           title="Sign out"
+          aria-label="Sign out"
         >
-          <LogOut className="w-4 h-4" />
-        </button>
+          <LogOut />
+        </Button>
       </div>
     </header>
   );
