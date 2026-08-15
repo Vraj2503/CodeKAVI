@@ -4,15 +4,19 @@
  * ArchitectureGraph — swim-lanes as real React Flow groups (mockup B).
  *
  * Replaces the D3 implementation: ELK seeds the geometry, then the canvas is
- * the user's — drag, pan, minimap, zoom. Two ELK passes rather than one
- * compound graph: lane-local layout for the files, then a graph-of-lanes
- * layout for the lanes. Every edge endpoint stays a direct sibling in its
- * pass, which is the case ELK handles best, and it hands React Flow exactly
- * the parent/child geometry it wants.
+ * the user's — drag, pan, minimap, zoom. ELK lays out each lane's files on
+ * its own, where every edge endpoint is a direct sibling — the case ELK
+ * handles best — and the lanes themselves are stacked here, in read order.
  *
  * One node is one file — `/visualize/architecture` sends them all, with `type`
  * naming the lane. Hovering a file isolates its edges; clicking opens the
  * detail panel.
+ *
+ * Styling follows `arch-diagram-codekavi-theme.html`: tiers are dashed rules
+ * with the name in the margin, a file is a card (kind / name / directory)
+ * behind its accent rail, and an edge takes the colour of the lane it lands
+ * in. The mockup's own labelled edges and pipeline strip are not portable —
+ * it hardcodes nine services, this draws whatever repo was analysed.
  */
 
 import {
@@ -71,9 +75,9 @@ interface ArchitectureGraphProps {
   edges: Edge[];
 }
 
-/** ELK's box for a file chip. The rendered chip fills it exactly. */
-const NODE_W = 168;
-const NODE_H = 38;
+/** ELK's box for a file card. The rendered card fills it exactly. */
+const NODE_W = 208;
+const NODE_H = 62;
 
 /**
  * Layer → categorical slot. Each layer draws its accent from one palette
@@ -126,6 +130,19 @@ const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const layerOf = (n: Node) => n.type?.toLowerCase() || "other";
 
+/** `codekavi/routes/visualize.py` → `PY`. The card's small-caps kind line. */
+function extOf(id: string): string {
+  const base = id.slice(id.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toUpperCase() : "FILE";
+}
+
+/** `codekavi/routes/visualize.py` → `codekavi/routes`. */
+function dirOf(id: string): string {
+  const cut = id.lastIndexOf("/");
+  return cut === -1 ? "root" : id.slice(0, cut);
+}
+
 /* ── Node renderers ───────────────────────────────────────── */
 
 type Highlight = "hot" | "faded" | "";
@@ -136,32 +153,35 @@ const HOT = cssVar("viz-highlight");
 interface LaneData extends Record<string, unknown> {
   label: string;
   accent: string;
-  border: string;
+  /** Painted by the minimap only — the lane itself is a rule, not a box. */
   wash: string;
   count: number;
 }
 
 interface FileData extends Record<string, unknown> {
   label: string;
+  /** File extension, the card's small caps line. */
+  kind: string;
+  /** Directory the file sits in. */
+  sub: string;
   accent: string;
   state: Highlight;
 }
 
 type RFNode = RFNodeBase<LaneData | FileData>;
 
+/**
+ * A tier band: a dashed rule with its name in the margin. Color is spent on
+ * the cards and the wiring, not on the container — a tinted box behind
+ * every card is a second row of chrome competing with the thing it holds.
+ */
 const LaneNode = memo(function LaneNode({ data }: { data: LaneData }) {
   return (
-    <div
-      className="h-full w-full rounded-xl border border-dashed"
-      style={{ borderColor: data.border, background: data.wash }}
-    >
-      <span
-        className="absolute left-4 top-3 text-[11px] font-semibold uppercase tracking-wider"
-        style={{ color: data.accent }}
-      >
+    <div className="h-full w-full border-t border-dashed border-border">
+      <span className="absolute left-0 top-3 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground opacity-60">
         {data.label}
       </span>
-      <span className="absolute right-4 top-3 text-[11px] text-muted-foreground">
+      <span className="absolute right-0 top-3 text-[10px] tracking-[0.12em] text-muted-foreground opacity-60">
         {data.count}
       </span>
     </div>
@@ -169,21 +189,33 @@ const LaneNode = memo(function LaneNode({ data }: { data: LaneData }) {
 });
 
 const FileNode = memo(function FileNode({ data }: { data: FileData }) {
+  const hot = data.state === "hot";
   return (
     <div
-      className="group flex h-full items-center gap-2.5 rounded-[10px] border bg-card pl-2 pr-2 text-[12px] text-foreground transition-opacity"
+      className="group relative h-full w-full overflow-hidden rounded-[10px] border bg-card/70 py-2.5 pl-[18px] pr-4 backdrop-blur-md transition-[border-color,box-shadow,opacity]"
       style={{
-        borderColor: data.state === "hot" ? HOT : "hsl(var(--border))",
-        boxShadow: data.state === "hot" ? `0 0 0 1px ${HOT}` : undefined,
+        borderColor: hot ? HOT : "hsl(var(--border))",
+        boxShadow: hot ? `0 0 0 1px ${HOT}` : undefined,
         opacity: data.state === "faded" ? 0.25 : 1,
       }}
     >
       <NodeHandles />
       <span
-        className="h-[22px] w-[3px] shrink-0 rounded-sm"
+        className="absolute bottom-2.5 left-0 top-2.5 w-[3px] rounded-r-sm opacity-85"
         style={{ background: data.accent }}
       />
-      <span className="truncate">{data.label}</span>
+      <div
+        className="text-[8px] font-semibold uppercase leading-[11px] tracking-[0.12em] opacity-90"
+        style={{ color: data.accent }}
+      >
+        {data.kind}
+      </div>
+      <div className="truncate text-[12px] font-semibold leading-[16px] text-foreground">
+        {data.label}
+      </div>
+      <div className="truncate text-[10px] font-light leading-[13px] tracking-[0.04em] text-muted-foreground">
+        {data.sub}
+      </div>
     </div>
   );
 });
@@ -247,48 +279,28 @@ export async function runLaneLayout(
     }),
   );
 
-  const cross = known
-    .filter((e) => laneOf.get(e.source) !== laneOf.get(e.target))
-    .map((e, i) => ({
-      id: `x${i}`,
-      sources: [laneOf.get(e.source)!],
-      targets: [laneOf.get(e.target)!],
-    }));
-
-  const outer = await elk.layout({
-    id: "root",
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": "DOWN",
-      "elk.spacing.nodeNode": "40",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "48",
-    },
-    children: inner.map((g) => ({
-      id: g.id,
-      width: g.width,
-      height: g.height,
-    })),
-    edges: cross,
-  });
-
-  const lanePos = new Map((outer.children ?? []).map((c) => [c.id, c]));
   const rfNodes: RFNode[] = [];
+
+  // Tiers are a fixed stack in read order, full width, each row centred in its
+  // band. No second ELK pass: a graph-of-lanes layout puts every lane with no
+  // cross-edge into one layer — same y, side by side — which is the opposite
+  // of a band, and the y it produced was the only thing left to take from it.
+  const laneW = Math.max(...inner.map((g) => g.width ?? 0));
+  const indentOf = (g: (typeof inner)[number]) => (laneW - (g.width ?? 0)) / 2;
+  const laneGap = 40;
+  let laneY = 0;
 
   // Parents first — React Flow requires a parent to precede its children.
   inner.forEach((g) => {
-    const p = lanePos.get(g.id);
     rfNodes.push({
       id: `lane-${g.id}`,
       type: "lane",
-      position: { x: p?.x ?? 0, y: p?.y ?? 0 },
-      width: g.width,
+      position: { x: 0, y: laneY },
+      width: laneW,
       height: g.height,
       data: {
         label: titleCase(g.id),
         accent: accentOf(g.id),
-        // Dashed lane border sits at low alpha so it reads as a boundary, not
-        // a second row of chips.
-        border: accentOf(g.id, 0.45),
         wash: washOf(g.id),
         count: g.children?.length ?? 0,
       },
@@ -296,8 +308,10 @@ export async function runLaneLayout(
       draggable: false,
       zIndex: 0,
     });
+    laneY += (g.height ?? 0) + laneGap;
   });
   inner.forEach((g) => {
+    const indent = indentOf(g);
     (g.children ?? []).forEach((c) => {
       const node = nodes.find((n) => n.id === c.id)!;
       rfNodes.push({
@@ -305,11 +319,13 @@ export async function runLaneLayout(
         type: "file",
         parentId: `lane-${g.id}`,
         extent: "parent",
-        position: { x: c.x ?? 0, y: c.y ?? 0 },
+        position: { x: (c.x ?? 0) + indent, y: c.y ?? 0 },
         width: NODE_W,
         height: NODE_H,
         data: {
           label: node.label,
+          kind: extOf(node.id),
+          sub: dirOf(node.id),
           accent: accentOf(layerOf(node)),
           state: "",
         },
@@ -317,20 +333,27 @@ export async function runLaneLayout(
     });
   });
 
-  const rfEdges: RFEdge[] = known.map((e, i) => ({
-    id: `e${i}`,
-    source: e.source,
-    target: e.target,
-    label: e.label,
-    type: "smoothstep",
-    pathOptions: { borderRadius: 12 },
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      width: 14,
-      height: 14,
-      color: inkDimVar(),
-    },
-  }));
+  const laneOfNode = new Map(nodes.map((n) => [n.id, layerOf(n)]));
+
+  const rfEdges: RFEdge[] = known.map((e, i) => {
+    // An edge takes the colour of what it arrives at, so a card's inbound
+    // wiring names its destination lane at a glance.
+    const accent = accentOf(laneOfNode.get(e.target) ?? "other");
+    return {
+      id: `e${i}`,
+      source: e.source,
+      target: e.target,
+      label: e.label,
+      type: "default",
+      data: { accent },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 14,
+        height: 14,
+        color: accent,
+      },
+    };
+  });
 
   // Leave each chip from the side that faces the target. Fixed bottom→top
   // handles make every edge that isn't going straight down — a sibling in the
@@ -442,18 +465,22 @@ function ArchitectureGraphInner({ nodes, edges }: ArchitectureGraphProps) {
       const hot =
         hoveredId !== null &&
         (e.source === hoveredId || e.target === hoveredId);
+      const accent = (e.data as { accent?: string })?.accent ?? inkDimVar(0.55);
       return {
         ...e,
         // Marching dashes are the hover reward, not the resting state — every
         // edge animating at once is what makes the first look a mess.
         animated: hot && !reducedMotion,
+        markerEnd: hot
+          ? { type: MarkerType.ArrowClosed, width: 14, height: 14, color: HOT }
+          : e.markerEnd,
         style: {
-          stroke: hot ? HOT : inkDimVar(0.55),
-          strokeWidth: hot ? 2 : 1,
+          stroke: hot ? HOT : accent,
+          strokeWidth: hot ? 2 : 1.2,
           // At rest the wiring is a faint substrate: enough to see that the
-          // lanes are connected, not enough to compete with the chips. Hover
+          // lanes are connected, not enough to compete with the cards. Hover
           // is what makes one path legible.
-          opacity: hot ? 1 : hoveredId ? 0.06 : 0.3,
+          opacity: hot ? 1 : hoveredId ? 0.06 : 0.45,
         },
         zIndex: hot ? 1 : 0,
       };

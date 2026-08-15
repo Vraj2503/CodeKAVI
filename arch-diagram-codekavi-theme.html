@@ -9,25 +9,25 @@
   <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     /* ═══════════════════════════════════════════
-       DESIGN TOKENS — CodeKAVI Dark Theme
+       DESIGN TOKENS — mirrors app/globals.css (dark)
        ═══════════════════════════════════════════ */
     :root {
-      --bg:           hsl(0 0% 4%);
-      --bg-card:      hsl(0 0% 9%);
-      --fg:           hsl(0 0% 98%);
-      --fg-dim:       hsl(0 0% 65%);
-      --border:       hsl(0 0% 18%);
-      --border-sub:   hsl(0 0% 14%);
+      --bg:         hsl(0 0% 4%);
+      --bg-card:    hsl(0 0% 9%);
+      --fg:         hsl(0 0% 98%);
+      --fg-dim:     hsl(0 0% 65%);
+      --border:     hsl(0 0% 18%);
+      --border-sub: hsl(0 0% 14%);
 
-      /* Categorical palette from viz tokens */
-      --cat-1: hsl(212 100% 67%);   /* blue   */
-      --cat-2: hsl(129  49% 49%);   /* green  */
-      --cat-3: hsl(266 100% 77%);   /* purple */
-      --cat-4: hsl(26   85% 59%);   /* orange */
-      --cat-5: hsl(328  89% 72%);   /* pink   */
-      --cat-6: hsl(209 100% 74%);   /* sky    */
-      --cat-7: hsl(126  57% 58%);   /* mint   */
-      --cat-8: hsl(267 100% 83%);   /* lilac  */
+      /* --viz-cat-1..8 (dark) */
+      --cat-1: 212 100% 67%;   /* blue   */
+      --cat-2: 129  49% 49%;   /* green  */
+      --cat-3: 266 100% 77%;   /* purple */
+      --cat-4:  26  85% 59%;   /* orange */
+      --cat-5: 328  89% 72%;   /* pink   */
+      --cat-6: 209 100% 74%;   /* sky    */
+      --cat-7: 126  57% 58%;   /* mint   */
+      --cat-8: 267 100% 83%;   /* lilac  */
 
       --font: "Geist Mono", ui-monospace, monospace;
     }
@@ -39,449 +39,448 @@
       color: var(--fg);
       font-family: var(--font);
       min-height: 100vh;
-      overflow: hidden;
+      padding: 40px 32px;
       display: flex;
-      align-items: center;
       justify-content: center;
     }
 
-    /* ═══════════════════════════════════════════
-       CANVAS & AMBIENT BACKGROUND
-       ═══════════════════════════════════════════ */
-    .canvas {
-      position: relative;
-      width: 1200px;
-      height: 800px;
-    }
-
-    .ambient {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(120px);
-      opacity: 0.12;
+    /* Ambient wash — same palette, kept under 0.1 so it never fights the ink */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
       pointer-events: none;
+      background:
+        radial-gradient(60% 45% at 18% 6%,  hsl(var(--cat-1) / 0.09), transparent 70%),
+        radial-gradient(50% 40% at 88% 92%, hsl(var(--cat-3) / 0.08), transparent 70%);
     }
-    .ambient-1 { width: 500px; height: 500px; background: var(--cat-1); top: -80px; left: -100px; }
-    .ambient-2 { width: 400px; height: 400px; background: var(--cat-3); bottom: -60px; right: -80px; }
-    .ambient-3 { width: 300px; height: 300px; background: var(--cat-5); top: 50%; left: 50%; transform: translate(-50%, -50%); }
 
-    /* ═══════════════════════════════════════════
-       TITLE
-       ═══════════════════════════════════════════ */
-    .title {
-      position: absolute;
-      top: 24px;
-      left: 32px;
-      z-index: 20;
+    .sheet { position: relative; width: 100%; max-width: 1180px; }
+
+    /* ═══════════ HEADER ═══════════ */
+    .head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 34px;
     }
-    .title h1 {
-      font-size: 14px;
+    .head h1 {
+      font-size: 18px;
       font-weight: 600;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--fg-dim);
     }
-    .title h1 span {
-      color: var(--cat-1);
-    }
-
-    /* ═══════════════════════════════════════════
-       SVG EDGES LAYER
-       ═══════════════════════════════════════════ */
-    .edges-layer {
-      position: absolute;
-      inset: 0;
-      z-index: 1;
-      pointer-events: none;
-    }
-
-    .edge-line {
-      fill: none;
-      stroke-width: 1.5;
-      stroke-linecap: round;
-    }
-
-    .edge-line.dashed {
-      stroke-dasharray: 6 4;
-    }
-
-    /* Animated particle along edge */
-    .edge-particle {
-      r: 3;
-      opacity: 0.9;
-    }
-
-    /* ═══════════════════════════════════════════
-       NODE CARDS — Glass Panels
-       ═══════════════════════════════════════════ */
-    .node {
-      position: absolute;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 12px 16px;
-      border-radius: 10px;
-      background: hsl(0 0% 9% / 0.55);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1.5px solid var(--border);
-      min-width: 140px;
-      transition: border-color 0.3s, box-shadow 0.3s;
-      cursor: default;
-    }
-
-    .node:hover {
-      border-color: var(--accent-color, var(--border));
-      box-shadow: 0 0 20px hsl(0 0% 100% / 0.04), 0 0 40px var(--glow-color, transparent);
-    }
-
-    .node-label {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.02em;
-      color: var(--fg);
-      white-space: nowrap;
-    }
-
-    .node-sub {
-      font-size: 9px;
-      font-weight: 400;
-      color: var(--fg-dim);
-      letter-spacing: 0.03em;
-      white-space: nowrap;
-    }
-
-    .node-icon {
-      position: absolute;
-      top: -8px;
-      left: -8px;
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    .head h1 b { color: hsl(var(--cat-1)); font-weight: 700; }
+    .head p {
       font-size: 10px;
-      border: 1.5px solid var(--border);
-      background: var(--bg-card);
+      font-weight: 300;
+      letter-spacing: 0.06em;
+      color: var(--fg-dim);
+      opacity: 0.75;
     }
 
-    /* Accent stripe on left */
+    /* ═══════════ DIAGRAM GRID ═══════════
+       Left rail = tier label, right = node row.
+       Edges are drawn from measured DOM geometry, so nothing
+       here is pinned to a magic pixel coordinate. */
+    .diagram { position: relative; }
+
+    .tier {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      align-items: center;
+      gap: 24px;
+      padding: 26px 0;
+    }
+    .tier + .tier { border-top: 1px dashed var(--border-sub); }
+
+    .tier-name {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      opacity: 0.6;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      justify-content: center;
+    }
+    .row.lead { justify-content: center; }
+
+    /* ═══════════ NODES ═══════════ */
+    .node {
+      position: relative;
+      z-index: 10;
+      flex: 0 0 auto;
+      min-width: 168px;
+      padding: 13px 16px 13px 18px;
+      border-radius: 10px;
+      background: hsl(0 0% 9% / 0.72);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid var(--border);
+      transition: border-color .25s, box-shadow .25s, transform .25s;
+    }
     .node::before {
       content: '';
       position: absolute;
-      left: 0;
-      top: 8px;
-      bottom: 8px;
+      left: 0; top: 10px; bottom: 10px;
       width: 3px;
       border-radius: 0 3px 3px 0;
-      background: var(--accent-color, var(--border));
-      opacity: 0.8;
+      background: hsl(var(--c));
+      opacity: .85;
+    }
+    .node:hover {
+      border-color: hsl(var(--c) / 0.55);
+      box-shadow: 0 6px 18px hsl(0 0% 0% / 0.45);
+      transform: translateY(-1px);
     }
 
-    /* ═══════════════════════════════════════════
-       BADGE (data store / cylinder style)
-       ═══════════════════════════════════════════ */
-    .node.cylinder {
-      border-radius: 10px;
-      padding-top: 18px;
+    .node-top {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 5px;
     }
-    .node.cylinder::after {
+    .node-kind {
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: hsl(var(--c));
+      opacity: .9;
+    }
+    .node-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+    .node-sub {
+      font-size: 10px;
+      font-weight: 300;
+      letter-spacing: 0.04em;
+      color: var(--fg-dim);
+      white-space: nowrap;
+    }
+
+    /* Data stores get the cylinder cap */
+    .node.store { padding-top: 17px; }
+    .node.store::after {
       content: '';
       position: absolute;
-      top: -1px;
-      left: 10%;
-      right: 10%;
-      height: 10px;
-      border-radius: 0 0 50% 50%;
-      background: var(--accent-color, var(--border));
-      opacity: 0.35;
+      top: -1px; left: 14%; right: 14%;
+      height: 8px;
+      border-radius: 0 0 60% 60%;
+      background: hsl(var(--c) / 0.30);
     }
 
-    /* Edge labels */
+    /* Entry node breathes */
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 hsl(var(--cat-1) / 0.35); }
+      70%  { box-shadow: 0 0 0 12px hsl(var(--cat-1) / 0); }
+      100% { box-shadow: 0 0 0 0 hsl(var(--cat-1) / 0); }
+    }
+    .node.entry { animation: pulse-ring 3s ease-out infinite; }
+
+    /* ═══════════ EDGES ═══════════ */
+    .edges { position: absolute; inset: 0; z-index: 1; pointer-events: none; overflow: visible; }
+    .edge-line { fill: none; stroke-width: 1.4; stroke-linecap: round; opacity: .75; }
+    .edge-line.async { stroke-dasharray: 5 5; opacity: .55; }
+    .edge-dot { r: 2.6; opacity: .95; }
+
     .edge-label {
       position: absolute;
       z-index: 15;
+      transform: translate(-50%, -50%);
       font-size: 8px;
       font-weight: 500;
       letter-spacing: 0.05em;
       color: var(--fg-dim);
-      background: hsl(0 0% 6% / 0.85);
+      background: hsl(0 0% 5% / 0.92);
+      border: 1px solid var(--border-sub);
       padding: 2px 6px;
       border-radius: 4px;
       white-space: nowrap;
       pointer-events: none;
     }
 
-    /* ═══════════════════════════════════════════
-       LEGEND
-       ═══════════════════════════════════════════ */
-    .legend {
-      position: absolute;
-      bottom: 20px;
-      right: 28px;
-      z-index: 20;
+    /* ═══════════ PIPELINE STRIP ═══════════ */
+    .pipeline {
+      margin-top: 34px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border-sub);
       display: flex;
-      gap: 16px;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .pipeline .cap {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+      opacity: .6;
+      margin-right: 8px;
+    }
+    .step {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      color: var(--fg-dim);
+    }
+    .step i {
+      font-style: normal;
+      font-size: 8px;
+      font-weight: 600;
+      color: hsl(var(--c));
+    }
+    .step b { font-weight: 500; color: var(--fg); }
+    .sep { color: var(--border); font-size: 10px; }
+
+    /* ═══════════ LEGEND ═══════════ */
+    .legend {
+      margin-top: 18px;
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-wrap: wrap;
     }
     .legend-item {
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 9px;
+      font-size: 10px;
+      letter-spacing: 0.05em;
       color: var(--fg-dim);
-      letter-spacing: 0.04em;
     }
-    .legend-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-    }
-    .legend-line {
-      width: 20px;
-      height: 2px;
-      border-radius: 1px;
-    }
-    .legend-line.dashed-legend {
-      background: repeating-linear-gradient(
-        90deg,
-        var(--cat-4) 0 6px,
-        transparent 6px 10px
-      );
+    .legend-dot { width: 7px; height: 7px; border-radius: 50%; background: hsl(var(--c)); }
+    .legend-dash {
+      width: 20px; height: 0; border-top: 1.4px dashed var(--fg-dim); opacity: .7;
     }
 
-    /* Pulse animation for the user node */
-    @keyframes pulse-ring {
-      0%   { box-shadow: 0 0 0 0 hsl(212 100% 67% / 0.4); }
-      70%  { box-shadow: 0 0 0 10px hsl(212 100% 67% / 0); }
-      100% { box-shadow: 0 0 0 0 hsl(212 100% 67% / 0); }
+    @media (max-width: 860px) {
+      .tier { grid-template-columns: 1fr; gap: 10px; }
+      .tier-name { text-align: left; }
     }
-    .pulse { animation: pulse-ring 2.5s ease-out infinite; }
   </style>
 </head>
 <body>
-  <div class="canvas">
-    <!-- Ambient glow blobs -->
-    <div class="ambient ambient-1"></div>
-    <div class="ambient ambient-2"></div>
-    <div class="ambient ambient-3"></div>
-
-    <!-- Title -->
-    <div class="title">
-      <h1><span>CodeKAVI</span> · System Architecture</h1>
+  <div class="sheet">
+    <div class="head">
+      <h1><b>CodeKAVI</b> · System Architecture</h1>
+      <p>FastAPI · Next.js · Redis L2 · Supabase L3 · Zilliz vectors · Groq + Gemini</p>
     </div>
 
-    <!-- ═══════════ NODES ═══════════ -->
+    <div class="diagram" id="diagram">
+      <svg class="edges" id="edges"></svg>
 
-    <!-- User / Browser -->
-    <div class="node pulse" id="n-user" style="
-      --accent-color: var(--cat-1);
-      --glow-color: hsl(212 100% 67% / 0.15);
-      top: 40px; left: 520px;
-    ">
-      <div class="node-icon" style="color: var(--cat-1);">👤</div>
-      <div class="node-label">User / Browser</div>
-      <div class="node-sub">Web Application</div>
+      <!-- ───── CLIENT ───── -->
+      <div class="tier">
+        <div class="tier-name">Client</div>
+        <div class="row lead">
+          <div class="node entry" id="n-user" style="--c: var(--cat-1);">
+            <div class="node-top"><span class="node-kind">Actor</span></div>
+            <div class="node-label">User / Browser</div>
+            <div class="node-sub">repo URL · walkthrough UI</div>
+          </div>
+          <div class="node" id="n-next" style="--c: var(--cat-6);">
+            <div class="node-top"><span class="node-kind">Edge</span></div>
+            <div class="node-label">Next.js Frontend</div>
+            <div class="node-sub">React · SSR · API proxy</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── SERVICE ───── -->
+      <div class="tier">
+        <div class="tier-name">Service</div>
+        <div class="row lead">
+          <div class="node" id="n-api" style="--c: var(--cat-2); min-width: 300px;">
+            <div class="node-top"><span class="node-kind">Core</span></div>
+            <div class="node-label">FastAPI Backend</div>
+            <div class="node-sub">clone → parse → classify → embed → stream (SSE)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── STATE ───── -->
+      <div class="tier">
+        <div class="tier-name">State</div>
+        <div class="row">
+          <div class="node store" id="n-supabase" style="--c: var(--cat-3);">
+            <div class="node-top"><span class="node-kind">Store</span></div>
+            <div class="node-label">Supabase</div>
+            <div class="node-sub">user DB · JWT · L3 cache</div>
+          </div>
+          <div class="node store" id="n-redis" style="--c: var(--cat-4);">
+            <div class="node-top"><span class="node-kind">Cache</span></div>
+            <div class="node-label">Redis</div>
+            <div class="node-sub">L2 TTL · rate limits</div>
+          </div>
+          <div class="node" id="n-disk" style="--c: var(--cat-7);">
+            <div class="node-top"><span class="node-kind">Ephemeral</span></div>
+            <div class="node-label">Local Disk / RAM</div>
+            <div class="node-sub">git clone · AST · dep graph</div>
+          </div>
+          <div class="node store" id="n-zilliz" style="--c: var(--cat-1);">
+            <div class="node-top"><span class="node-kind">Vector</span></div>
+            <div class="node-label">Zilliz / Milvus</div>
+            <div class="node-sub">chunk embeddings · RAG</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ───── INTELLIGENCE ───── -->
+      <div class="tier">
+        <div class="tier-name">Intelligence</div>
+        <div class="row lead">
+          <div class="node" id="n-groq" style="--c: var(--cat-5);">
+            <div class="node-top"><span class="node-kind">LLM</span></div>
+            <div class="node-label">Groq</div>
+            <div class="node-sub">Llama 3.3 · streamed completions</div>
+          </div>
+          <div class="node" id="n-gemini" style="--c: var(--cat-8);">
+            <div class="node-top"><span class="node-kind">LLM</span></div>
+            <div class="node-label">Gemini</div>
+            <div class="node-sub">embeddings · completions</div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Next.js Frontend -->
-    <div class="node" id="n-next" style="
-      --accent-color: var(--cat-6);
-      --glow-color: hsl(209 100% 74% / 0.12);
-      top: 180px; left: 500px;
-    ">
-      <div class="node-icon" style="color: var(--cat-6);">▲</div>
-      <div class="node-label">Next.js Frontend</div>
-      <div class="node-sub">React · SSR · Proxy</div>
+    <div class="pipeline">
+      <span class="cap">Pipeline</span>
+      <span class="step" style="--c: var(--cat-7);"><i>01</i><b>Clone &amp; Parse</b></span>
+      <span class="sep">→</span>
+      <span class="step" style="--c: var(--cat-7);"><i>02</i><b>AST &amp; Dep Graph</b></span>
+      <span class="sep">→</span>
+      <span class="step" style="--c: var(--cat-2);"><i>03</i><b>Role Classify</b> · 14 roles</span>
+      <span class="sep">→</span>
+      <span class="step" style="--c: var(--cat-8);"><i>04</i><b>Vector RAG</b> · Gemini → Zilliz</span>
+      <span class="sep">→</span>
+      <span class="step" style="--c: var(--cat-5);"><i>05</i><b>Stream Explain</b> · SSE</span>
     </div>
 
-    <!-- FastAPI Backend -->
-    <div class="node" id="n-fastapi" style="
-      --accent-color: var(--cat-2);
-      --glow-color: hsl(129 49% 49% / 0.12);
-      top: 360px; left: 480px;
-    ">
-      <div class="node-icon" style="color: var(--cat-2);">⚡</div>
-      <div class="node-label">FastAPI Backend</div>
-      <div class="node-sub">REST · SSE · Auth</div>
-    </div>
-
-    <!-- Supabase -->
-    <div class="node cylinder" id="n-supabase" style="
-      --accent-color: var(--cat-3);
-      --glow-color: hsl(266 100% 77% / 0.10);
-      top: 540px; left: 140px;
-    ">
-      <div class="node-icon" style="color: var(--cat-3);">🔐</div>
-      <div class="node-label">Supabase</div>
-      <div class="node-sub">JWT · User DB · L3 Cache</div>
-    </div>
-
-    <!-- Redis -->
-    <div class="node cylinder" id="n-redis" style="
-      --accent-color: var(--cat-4);
-      --glow-color: hsl(26 85% 59% / 0.10);
-      top: 540px; left: 380px;
-    ">
-      <div class="node-icon" style="color: var(--cat-4);">🗄</div>
-      <div class="node-label">Redis</div>
-      <div class="node-sub">L2 TTL Cache</div>
-    </div>
-
-    <!-- Local Disk / RAM -->
-    <div class="node" id="n-disk" style="
-      --accent-color: var(--cat-7);
-      --glow-color: hsl(126 57% 58% / 0.10);
-      top: 540px; left: 580px;
-    ">
-      <div class="node-icon" style="color: var(--cat-7);">💾</div>
-      <div class="node-label">Local Disk / RAM</div>
-      <div class="node-sub">Git Clone · AST Parse</div>
-    </div>
-
-    <!-- Groq Provider -->
-    <div class="node" id="n-groq" style="
-      --accent-color: var(--cat-5);
-      --glow-color: hsl(328 89% 72% / 0.10);
-      top: 540px; left: 780px;
-    ">
-      <div class="node-icon" style="color: var(--cat-5);">🧠</div>
-      <div class="node-label">Groq Provider</div>
-      <div class="node-sub">Llama 3.3 · Completions</div>
-    </div>
-
-    <!-- Gemini Provider -->
-    <div class="node" id="n-gemini" style="
-      --accent-color: var(--cat-8);
-      --glow-color: hsl(267 100% 83% / 0.10);
-      top: 540px; left: 980px;
-    ">
-      <div class="node-icon" style="color: var(--cat-8);">✦</div>
-      <div class="node-label">Gemini Provider</div>
-      <div class="node-sub">Embeddings · LLM</div>
-    </div>
-
-    <!-- Zilliz / Milvus -->
-    <div class="node cylinder" id="n-zilliz" style="
-      --accent-color: var(--cat-1);
-      --glow-color: hsl(212 100% 67% / 0.10);
-      top: 360px; left: 960px;
-    ">
-      <div class="node-icon" style="color: var(--cat-1);">🔍</div>
-      <div class="node-label">Zilliz / Milvus</div>
-      <div class="node-sub">Vector Similarity Search</div>
-    </div>
-
-    <!-- ═══════════ SVG EDGES ═══════════ -->
-    <svg class="edges-layer" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
-      <defs>
-        <!-- Arrowhead markers per category -->
-        <marker id="arrow-cat1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(212,100%,67%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(129,49%,49%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(266,100%,77%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(26,85%,59%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(328,89%,72%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(209,100%,74%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(126,57%,58%)" stroke-width="1.2"/>
-        </marker>
-        <marker id="arrow-cat8" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(267,100%,83%)" stroke-width="1.2"/>
-        </marker>
-      </defs>
-
-      <!-- User → Next.js -->
-      <path class="edge-line" d="M580,82 C580,110 560,150 560,180" stroke="hsl(209,100%,74%)" marker-end="url(#arrow-cat6)"/>
-      <circle class="edge-particle" fill="hsl(209,100%,74%)">
-        <animateMotion dur="2s" repeatCount="indefinite" path="M580,82 C580,110 560,150 560,180"/>
-      </circle>
-
-      <!-- Next.js → FastAPI -->
-      <path class="edge-line" d="M560,224 C555,260 540,310 540,360" stroke="hsl(129,49%,49%)" marker-end="url(#arrow-cat2)"/>
-      <circle class="edge-particle" fill="hsl(129,49%,49%)">
-        <animateMotion dur="1.8s" repeatCount="indefinite" path="M560,224 C555,260 540,310 540,360"/>
-      </circle>
-
-      <!-- FastAPI → Supabase -->
-      <path class="edge-line" d="M480,404 C400,440 280,490 220,540" stroke="hsl(266,100%,77%)" marker-end="url(#arrow-cat3)"/>
-      <circle class="edge-particle" fill="hsl(266,100%,77%)">
-        <animateMotion dur="2.2s" repeatCount="indefinite" path="M480,404 C400,440 280,490 220,540"/>
-      </circle>
-
-      <!-- FastAPI → Redis -->
-      <path class="edge-line" d="M520,404 C500,450 460,500 440,540" stroke="hsl(26,85%,59%)" marker-end="url(#arrow-cat4)"/>
-      <circle class="edge-particle" fill="hsl(26,85%,59%)">
-        <animateMotion dur="1.6s" repeatCount="indefinite" path="M520,404 C500,450 460,500 440,540"/>
-      </circle>
-
-      <!-- FastAPI → Local Disk -->
-      <path class="edge-line" d="M560,404 C580,450 620,500 640,540" stroke="hsl(126,57%,58%)" marker-end="url(#arrow-cat7)"/>
-      <circle class="edge-particle" fill="hsl(126,57%,58%)">
-        <animateMotion dur="1.9s" repeatCount="indefinite" path="M560,404 C580,450 620,500 640,540"/>
-      </circle>
-
-      <!-- FastAPI → Groq -->
-      <path class="edge-line" d="M600,400 C680,430 760,480 840,540" stroke="hsl(328,89%,72%)" marker-end="url(#arrow-cat5)"/>
-      <circle class="edge-particle" fill="hsl(328,89%,72%)">
-        <animateMotion dur="2.4s" repeatCount="indefinite" path="M600,400 C680,430 760,480 840,540"/>
-      </circle>
-
-      <!-- FastAPI → Gemini -->
-      <path class="edge-line dashed" d="M620,390 C750,420 900,480 1040,540" stroke="hsl(267,100%,83%)" marker-end="url(#arrow-cat8)"/>
-      <circle class="edge-particle" fill="hsl(267,100%,83%)">
-        <animateMotion dur="2.8s" repeatCount="indefinite" path="M620,390 C750,420 900,480 1040,540"/>
-      </circle>
-
-      <!-- FastAPI → Zilliz -->
-      <path class="edge-line" d="M620,380 C750,370 880,365 960,380" stroke="hsl(212,100%,67%)" marker-end="url(#arrow-cat1)"/>
-      <circle class="edge-particle" fill="hsl(212,100%,67%)">
-        <animateMotion dur="2s" repeatCount="indefinite" path="M620,380 C750,370 880,365 960,380"/>
-      </circle>
-    </svg>
-
-    <!-- ═══════════ EDGE LABELS ═══════════ -->
-    <div class="edge-label" style="top: 125px; left: 582px; color: var(--cat-6);">Web App</div>
-    <div class="edge-label" style="top: 288px; left: 530px; color: var(--cat-2);">API / Proxy</div>
-    <div class="edge-label" style="top: 468px; left: 300px; color: var(--cat-3);">JWT · L3</div>
-    <div class="edge-label" style="top: 468px; left: 460px; color: var(--cat-4);">L2 TTL</div>
-    <div class="edge-label" style="top: 468px; left: 610px; color: var(--cat-7);">Clone · AST</div>
-    <div class="edge-label" style="top: 458px; left: 740px; color: var(--cat-5);">LLM · SSE</div>
-    <div class="edge-label" style="top: 440px; left: 900px; color: var(--cat-8);">Embed · LLM</div>
-    <div class="edge-label" style="top: 365px; left: 770px; color: var(--cat-1);">Vector Search</div>
-
-    <!-- ═══════════ LEGEND ═══════════ -->
     <div class="legend">
-      <div class="legend-item">
-        <div class="legend-dot" style="background: var(--cat-2);"></div>
-        Core Flow
-      </div>
-      <div class="legend-item">
-        <div class="legend-dot" style="background: var(--cat-3);"></div>
-        Data Store
-      </div>
-      <div class="legend-item">
-        <div class="legend-dot" style="background: var(--cat-5);"></div>
-        LLM Provider
-      </div>
-      <div class="legend-item">
-        <div class="legend-line dashed-legend"></div>
-        Async
-      </div>
+      <span class="legend-item" style="--c: var(--cat-2);"><span class="legend-dot"></span>Request path</span>
+      <span class="legend-item" style="--c: var(--cat-3);"><span class="legend-dot"></span>Persisted state</span>
+      <span class="legend-item" style="--c: var(--cat-5);"><span class="legend-dot"></span>Model provider</span>
+      <span class="legend-item"><span class="legend-dash"></span>Async / background</span>
     </div>
   </div>
+
+  <script>
+    /* Edges declared by node id — geometry is measured, never hardcoded.
+       `sx`/`tx` slide the anchor along the node's edge so the fan-out from
+       FastAPI doesn't collapse into one point. */
+    const EDGES = [
+      { from: 'n-user',   to: 'n-next',     color: 'cat-6', label: 'web app' },
+      { from: 'n-next',   to: 'n-api',      color: 'cat-2', label: 'REST · proxy' },
+      { from: 'n-api',    to: 'n-supabase', color: 'cat-3', label: 'JWT verify · L3', sx: 0.12 },
+      { from: 'n-api',    to: 'n-redis',    color: 'cat-4', label: 'L2 TTL',          sx: 0.37 },
+      { from: 'n-api',    to: 'n-disk',     color: 'cat-7', label: 'clone · AST',     sx: 0.63 },
+      { from: 'n-api',    to: 'n-zilliz',   color: 'cat-1', label: 'vector search',   sx: 0.88 },
+      { from: 'n-api',    to: 'n-groq',     color: 'cat-5', label: 'completions · SSE', sx: 0.30 },
+      { from: 'n-api',    to: 'n-gemini',   color: 'cat-8', label: 'embed · LLM',       sx: 0.70 },
+      { from: 'n-gemini', to: 'n-zilliz',   color: 'cat-8', label: 'upsert chunks', async: true, tx: 0.75 },
+    ];
+
+    const diagram = document.getElementById('diagram');
+    const svg = document.getElementById('edges');
+    const css = getComputedStyle(document.documentElement);
+    const stroke = (name) => `hsl(${css.getPropertyValue('--' + name).trim()})`;
+
+    const box = (id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      const o = diagram.getBoundingClientRect();
+      return { x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height };
+    };
+
+    // Pick the facing sides, then a point along each side.
+    function route(a, b, sx = 0.5, tx = 0.5) {
+      if (b.y >= a.y + a.h - 4)  return [{ x: a.x + a.w * sx, y: a.y + a.h }, { x: b.x + b.w * tx, y: b.y }, 'v'];
+      if (b.y + b.h <= a.y + 4)  return [{ x: a.x + a.w * sx, y: a.y }, { x: b.x + b.w * tx, y: b.y + b.h }, 'v'];
+      const right = b.x + b.w / 2 > a.x + a.w / 2;
+      return right
+        ? [{ x: a.x + a.w, y: a.y + a.h * sx }, { x: b.x, y: b.y + b.h * tx }, 'h']
+        : [{ x: a.x, y: a.y + a.h * sx }, { x: b.x + b.w, y: b.y + b.h * tx }, 'h'];
+    }
+
+    function draw() {
+      svg.innerHTML = '';
+      diagram.querySelectorAll('.edge-label').forEach((n) => n.remove());
+
+      const r = diagram.getBoundingClientRect();
+      svg.setAttribute('viewBox', `0 0 ${r.width} ${r.height}`);
+      svg.setAttribute('width', r.width);
+      svg.setAttribute('height', r.height);
+
+      const defs = document.createElementNS(svg.namespaceURI, 'defs');
+      svg.appendChild(defs);
+      const seen = new Set();
+
+      EDGES.forEach((e, i) => {
+        const [p, q, axis] = route(box(e.from), box(e.to), e.sx, e.tx);
+        const c = stroke(e.color);
+
+        // Arrowhead per color, minted once.
+        if (!seen.has(e.color)) {
+          seen.add(e.color);
+          const m = document.createElementNS(svg.namespaceURI, 'marker');
+          m.setAttribute('id', 'ah-' + e.color);
+          m.setAttribute('markerWidth', '8');
+          m.setAttribute('markerHeight', '6');
+          m.setAttribute('refX', '7');
+          m.setAttribute('refY', '3');
+          m.setAttribute('orient', 'auto');
+          m.innerHTML = `<path d="M0,0 L7,3 L0,6" fill="none" stroke="${c}" stroke-width="1.2" stroke-linejoin="round"/>`;
+          defs.appendChild(m);
+        }
+
+        const d = axis === 'v'
+          ? `M${p.x},${p.y} C${p.x},${p.y + (q.y - p.y) * 0.55} ${q.x},${q.y - (q.y - p.y) * 0.55} ${q.x},${q.y}`
+          : `M${p.x},${p.y} C${p.x + (q.x - p.x) * 0.55},${p.y} ${q.x - (q.x - p.x) * 0.55},${q.y} ${q.x},${q.y}`;
+
+        const path = document.createElementNS(svg.namespaceURI, 'path');
+        path.setAttribute('class', 'edge-line' + (e.async ? ' async' : ''));
+        path.setAttribute('d', d);
+        path.setAttribute('stroke', c);
+        path.setAttribute('marker-end', `url(#ah-${e.color})`);
+        svg.appendChild(path);
+
+        const dot = document.createElementNS(svg.namespaceURI, 'circle');
+        dot.setAttribute('class', 'edge-dot');
+        dot.setAttribute('fill', c);
+        dot.innerHTML = `<animateMotion dur="${(2 + (i % 4) * 0.35).toFixed(2)}s" repeatCount="indefinite" path="${d}"/>`;
+        svg.appendChild(dot);
+
+        if (e.label) {
+          const mid = path.getPointAtLength(path.getTotalLength() * 0.5);
+          const tag = document.createElement('div');
+          tag.className = 'edge-label';
+          tag.textContent = e.label;
+          tag.style.left = mid.x + 'px';
+          tag.style.top = mid.y + 'px';
+          tag.style.color = c;
+          diagram.appendChild(tag);
+        }
+      });
+    }
+
+    draw();
+    addEventListener('resize', draw);
+    document.fonts && document.fonts.ready.then(draw);
+  </script>
 </body>
 </html>

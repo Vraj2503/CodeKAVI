@@ -39,6 +39,36 @@ describe("runLaneLayout", () => {
     expect(laidEdges).toHaveLength(3);
   });
 
+  it("stacks lanes without overlap even when nothing crosses them", async () => {
+    // No cross-lane edges at all: the case that used to collapse every band
+    // onto one y and stack the tier labels on top of each other.
+    const { nodes: laid } = await runLaneLayout(nodes, []);
+    const lanes = laid.filter((n) => n.type === "lane");
+
+    lanes.slice(1).forEach((lane, i) => {
+      const above = lanes[i];
+      expect(lane.position.y).toBeGreaterThanOrEqual(
+        above.position.y + above.height!,
+      );
+    });
+  });
+
+  it("gives every lane the same width and centres its row", async () => {
+    const { nodes: laid } = await runLaneLayout(nodes, edges);
+    const lanes = laid.filter((n) => n.type === "lane");
+
+    expect(new Set(lanes.map((l) => l.width)).size).toBe(1);
+    expect(lanes.every((l) => l.position.x === 0)).toBe(true);
+
+    // The two-file services lane is the widest, so it sets the band width and
+    // the single-file lanes get indented to the middle of it.
+    const laneW = lanes[0].width!;
+    const routes = laid.find((n) => n.id === "main")!;
+    const services = laid.find((n) => n.id === "orch")!;
+    expect(routes.position.x).toBeGreaterThan(services.position.x);
+    expect(routes.position.x + routes.width! / 2).toBeCloseTo(laneW / 2, 0);
+  });
+
   it("routes each edge from the side facing its target", async () => {
     const { edges: laid } = await runLaneLayout(nodes, edges);
 
