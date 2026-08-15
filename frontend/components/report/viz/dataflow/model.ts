@@ -178,7 +178,7 @@ export function toRFEdges(edges: FlowEdge[]): RFEdge[] {
     target: e.target,
     sourceHandle: "out",
     targetHandle: "in",
-    animated: true,
+    animated: false, // custom animation handled in FlowEdge component
     type: "flow" as const,
     markerEnd: `url(#flow-arrow-${e.data_type ?? "fallback"}${e.direction === "response" ? "-dashed" : ""})`,
     data: {

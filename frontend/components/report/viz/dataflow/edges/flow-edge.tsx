@@ -1,11 +1,9 @@
 "use client";
-// dataflow/edges/flow-edge.tsx — custom edge with double-label + response indicator
+// dataflow/edges/flow-edge.tsx — custom edge with directional animation
 import { memo } from "react";
 import {
-  BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
-  Position,
   type EdgeProps,
 } from "@xyflow/react";
 import { edgeStyle, edgeKindLabel, isResponse } from "./edge-styles";
@@ -22,21 +20,6 @@ type FlowEdgeProps = EdgeProps & {
   };
 };
 
-function arrowPoints(x: number, y: number, targetPosition: Position | undefined): string {
-  const size = 8;
-  switch (targetPosition) {
-    case Position.Right:
-      return `${x},${y} ${x + size},${y - size / 2} ${x + size},${y + size / 2}`;
-    case Position.Top:
-      return `${x},${y} ${x - size / 2},${y + size} ${x + size / 2},${y + size}`;
-    case Position.Bottom:
-      return `${x},${y} ${x - size / 2},${y - size} ${x + size / 2},${y - size}`;
-    case Position.Left:
-    default:
-      return `${x},${y} ${x - size},${y - size / 2} ${x - size},${y + size / 2}`;
-  }
-}
-
 export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
   const {
     sourceX, sourceY, targetX, targetY,
@@ -47,6 +30,7 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
   const flow = data?.flow;
   const highlight = data?.highlight ?? "off";
 
+
   const [path, midX, midY] = getBezierPath({
     sourceX, sourceY, targetX, targetY,
     sourcePosition, targetPosition,
@@ -54,8 +38,7 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
   });
 
   if (!flow) {
-    // Minimal fallback — no label, just the path
-    return <BaseEdge id={props.id} path={path} markerEnd={markerEnd} />;
+    return <path id={props.id} className="react-flow__edge-path" d={path} markerEnd={markerEnd} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth={2} />;
   }
 
   const resp = isResponse(flow);
@@ -63,15 +46,45 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
   const kindLabel = edgeKindLabel(flow.data_type);
   const replayStep = data?.replayStep;
   const replayRun = data?.replayRun;
+  const isDimmed = highlight === "dim";
+
+  // Both edge types animate forward along their path (0→1).
+  // Response edges already have swapped source/target from the backend,
+  // so their path naturally goes in the return direction — no keyPoints
+  // reversal needed; the path direction itself handles it.
+  const motionDur = resp ? "2.5s" : "1.8s";
 
   return (
     <>
-      <BaseEdge
+      {/* Static base path (the visible line) */}
+      <path
         id={props.id}
-        path={path}
+        className="react-flow__edge-path"
+        d={path}
         markerEnd={markerEnd}
         style={style}
+        fill="none"
       />
+
+      {/* Animated travelling dot — direct path attribute for reliable direction control */}
+      {!isDimmed && (
+        <circle
+          r={4}
+          fill={style.stroke}
+          opacity={0.9}
+        >
+          <animateMotion
+            dur={motionDur}
+            repeatCount="indefinite"
+            path={path}
+            keyPoints="0;1"
+            keyTimes="0;1"
+            calcMode="linear"
+          />
+        </circle>
+      )}
+
+      {/* Replay overlay */}
       {replayRun != null && replayStep != null && (
         <path
           key={`replay-${replayRun}-${replayStep}`}
@@ -103,7 +116,7 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${midX}px,${midY}px)`,
               pointerEvents: "all",
-              opacity: highlight === "dim" ? 0.1 : 1,
+              opacity: isDimmed ? 0.1 : 1,
               transition: "opacity 200ms",
             }}
             className="flex flex-col items-center gap-0.5"

@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeKAVI Architecture — Theme Edition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ═══════════════════════════════════════════
+       DESIGN TOKENS — CodeKAVI Dark Theme
+       ═══════════════════════════════════════════ */
+    :root {
+      --bg:           hsl(0 0% 4%);
+      --bg-card:      hsl(0 0% 9%);
+      --fg:           hsl(0 0% 98%);
+      --fg-dim:       hsl(0 0% 65%);
+      --border:       hsl(0 0% 18%);
+      --border-sub:   hsl(0 0% 14%);
+
+      /* Categorical palette from viz tokens */
+      --cat-1: hsl(212 100% 67%);   /* blue   */
+      --cat-2: hsl(129  49% 49%);   /* green  */
+      --cat-3: hsl(266 100% 77%);   /* purple */
+      --cat-4: hsl(26   85% 59%);   /* orange */
+      --cat-5: hsl(328  89% 72%);   /* pink   */
+      --cat-6: hsl(209 100% 74%);   /* sky    */
+      --cat-7: hsl(126  57% 58%);   /* mint   */
+      --cat-8: hsl(267 100% 83%);   /* lilac  */
+
+      --font: "Geist Mono", ui-monospace, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      min-height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ═══════════════════════════════════════════
+       CANVAS & AMBIENT BACKGROUND
+       ═══════════════════════════════════════════ */
+    .canvas {
+      position: relative;
+      width: 1200px;
+      height: 800px;
+    }
+
+    .ambient {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.12;
+      pointer-events: none;
+    }
+    .ambient-1 { width: 500px; height: 500px; background: var(--cat-1); top: -80px; left: -100px; }
+    .ambient-2 { width: 400px; height: 400px; background: var(--cat-3); bottom: -60px; right: -80px; }
+    .ambient-3 { width: 300px; height: 300px; background: var(--cat-5); top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+    /* ═══════════════════════════════════════════
+       TITLE
+       ═══════════════════════════════════════════ */
+    .title {
+      position: absolute;
+      top: 24px;
+      left: 32px;
+      z-index: 20;
+    }
+    .title h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--fg-dim);
+    }
+    .title h1 span {
+      color: var(--cat-1);
+    }
+
+    /* ═══════════════════════════════════════════
+       SVG EDGES LAYER
+       ═══════════════════════════════════════════ */
+    .edges-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .edge-line {
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+    }
+
+    .edge-line.dashed {
+      stroke-dasharray: 6 4;
+    }
+
+    /* Animated particle along edge */
+    .edge-particle {
+      r: 3;
+      opacity: 0.9;
+    }
+
+    /* ═══════════════════════════════════════════
+       NODE CARDS — Glass Panels
+       ═══════════════════════════════════════════ */
+    .node {
+      position: absolute;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 16px;
+      border-radius: 10px;
+      background: hsl(0 0% 9% / 0.55);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1.5px solid var(--border);
+      min-width: 140px;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      cursor: default;
+    }
+
+    .node:hover {
+      border-color: var(--accent-color, var(--border));
+      box-shadow: 0 0 20px hsl(0 0% 100% / 0.04), 0 0 40px var(--glow-color, transparent);
+    }
+
+    .node-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--fg);
+      white-space: nowrap;
+    }
+
+    .node-sub {
+      font-size: 9px;
+      font-weight: 400;
+      color: var(--fg-dim);
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+    }
+
+    .node-icon {
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      border: 1.5px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    /* Accent stripe on left */
+    .node::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent-color, var(--border));
+      opacity: 0.8;
+    }
+
+    /* ═══════════════════════════════════════════
+       BADGE (data store / cylinder style)
+       ═══════════════════════════════════════════ */
+    .node.cylinder {
+      border-radius: 10px;
+      padding-top: 18px;
+    }
+    .node.cylinder::after {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: 10%;
+      right: 10%;
+      height: 10px;
+      border-radius: 0 0 50% 50%;
+      background: var(--accent-color, var(--border));
+      opacity: 0.35;
+    }
+
+    /* Edge labels */
+    .edge-label {
+      position: absolute;
+      z-index: 15;
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      color: var(--fg-dim);
+      background: hsl(0 0% 6% / 0.85);
+      padding: 2px 6px;
+      border-radius: 4px;
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* ═══════════════════════════════════════════
+       LEGEND
+       ═══════════════════════════════════════════ */
+    .legend {
+      position: absolute;
+      bottom: 20px;
+      right: 28px;
+      z-index: 20;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      color: var(--fg-dim);
+      letter-spacing: 0.04em;
+    }
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    .legend-line {
+      width: 20px;
+      height: 2px;
+      border-radius: 1px;
+    }
+    .legend-line.dashed-legend {
+      background: repeating-linear-gradient(
+        90deg,
+        var(--cat-4) 0 6px,
+        transparent 6px 10px
+      );
+    }
+
+    /* Pulse animation for the user node */
+    @keyframes pulse-ring {
+      0%   { box-shadow: 0 0 0 0 hsl(212 100% 67% / 0.4); }
+      70%  { box-shadow: 0 0 0 10px hsl(212 100% 67% / 0); }
+      100% { box-shadow: 0 0 0 0 hsl(212 100% 67% / 0); }
+    }
+    .pulse { animation: pulse-ring 2.5s ease-out infinite; }
+  </style>
+</head>
+<body>
+  <div class="canvas">
+    <!-- Ambient glow blobs -->
+    <div class="ambient ambient-1"></div>
+    <div class="ambient ambient-2"></div>
+    <div class="ambient ambient-3"></div>
+
+    <!-- Title -->
+    <div class="title">
+      <h1><span>CodeKAVI</span> · System Architecture</h1>
+    </div>
+
+    <!-- ═══════════ NODES ═══════════ -->
+
+    <!-- User / Browser -->
+    <div class="node pulse" id="n-user" style="
+      --accent-color: var(--cat-1);
+      --glow-color: hsl(212 100% 67% / 0.15);
+      top: 40px; left: 520px;
+    ">
+      <div class="node-icon" style="color: var(--cat-1);">👤</div>
+      <div class="node-label">User / Browser</div>
+      <div class="node-sub">Web Application</div>
+    </div>
+
+    <!-- Next.js Frontend -->
+    <div class="node" id="n-next" style="
+      --accent-color: var(--cat-6);
+      --glow-color: hsl(209 100% 74% / 0.12);
+      top: 180px; left: 500px;
+    ">
+      <div class="node-icon" style="color: var(--cat-6);">▲</div>
+      <div class="node-label">Next.js Frontend</div>
+      <div class="node-sub">React · SSR · Proxy</div>
+    </div>
+
+    <!-- FastAPI Backend -->
+    <div class="node" id="n-fastapi" style="
+      --accent-color: var(--cat-2);
+      --glow-color: hsl(129 49% 49% / 0.12);
+      top: 360px; left: 480px;
+    ">
+      <div class="node-icon" style="color: var(--cat-2);">⚡</div>
+      <div class="node-label">FastAPI Backend</div>
+      <div class="node-sub">REST · SSE · Auth</div>
+    </div>
+
+    <!-- Supabase -->
+    <div class="node cylinder" id="n-supabase" style="
+      --accent-color: var(--cat-3);
+      --glow-color: hsl(266 100% 77% / 0.10);
+      top: 540px; left: 140px;
+    ">
+      <div class="node-icon" style="color: var(--cat-3);">🔐</div>
+      <div class="node-label">Supabase</div>
+      <div class="node-sub">JWT · User DB · L3 Cache</div>
+    </div>
+
+    <!-- Redis -->
+    <div class="node cylinder" id="n-redis" style="
+      --accent-color: var(--cat-4);
+      --glow-color: hsl(26 85% 59% / 0.10);
+      top: 540px; left: 380px;
+    ">
+      <div class="node-icon" style="color: var(--cat-4);">🗄</div>
+      <div class="node-label">Redis</div>
+      <div class="node-sub">L2 TTL Cache</div>
+    </div>
+
+    <!-- Local Disk / RAM -->
+    <div class="node" id="n-disk" style="
+      --accent-color: var(--cat-7);
+      --glow-color: hsl(126 57% 58% / 0.10);
+      top: 540px; left: 580px;
+    ">
+      <div class="node-icon" style="color: var(--cat-7);">💾</div>
+      <div class="node-label">Local Disk / RAM</div>
+      <div class="node-sub">Git Clone · AST Parse</div>
+    </div>
+
+    <!-- Groq Provider -->
+    <div class="node" id="n-groq" style="
+      --accent-color: var(--cat-5);
+      --glow-color: hsl(328 89% 72% / 0.10);
+      top: 540px; left: 780px;
+    ">
+      <div class="node-icon" style="color: var(--cat-5);">🧠</div>
+      <div class="node-label">Groq Provider</div>
+      <div class="node-sub">Llama 3.3 · Completions</div>
+    </div>
+
+    <!-- Gemini Provider -->
+    <div class="node" id="n-gemini" style="
+      --accent-color: var(--cat-8);
+      --glow-color: hsl(267 100% 83% / 0.10);
+      top: 540px; left: 980px;
+    ">
+      <div class="node-icon" style="color: var(--cat-8);">✦</div>
+      <div class="node-label">Gemini Provider</div>
+      <div class="node-sub">Embeddings · LLM</div>
+    </div>
+
+    <!-- Zilliz / Milvus -->
+    <div class="node cylinder" id="n-zilliz" style="
+      --accent-color: var(--cat-1);
+      --glow-color: hsl(212 100% 67% / 0.10);
+      top: 360px; left: 960px;
+    ">
+      <div class="node-icon" style="color: var(--cat-1);">🔍</div>
+      <div class="node-label">Zilliz / Milvus</div>
+      <div class="node-sub">Vector Similarity Search</div>
+    </div>
+
+    <!-- ═══════════ SVG EDGES ═══════════ -->
+    <svg class="edges-layer" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <!-- Arrowhead markers per category -->
+        <marker id="arrow-cat1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(212,100%,67%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(129,49%,49%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(266,100%,77%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(26,85%,59%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(328,89%,72%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(209,100%,74%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(126,57%,58%)" stroke-width="1.2"/>
+        </marker>
+        <marker id="arrow-cat8" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6" fill="none" stroke="hsl(267,100%,83%)" stroke-width="1.2"/>
+        </marker>
+      </defs>
+
+      <!-- User → Next.js -->
+      <path class="edge-line" d="M580,82 C580,110 560,150 560,180" stroke="hsl(209,100%,74%)" marker-end="url(#arrow-cat6)"/>
+      <circle class="edge-particle" fill="hsl(209,100%,74%)">
+        <animateMotion dur="2s" repeatCount="indefinite" path="M580,82 C580,110 560,150 560,180" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- Next.js → FastAPI -->
+      <path class="edge-line" d="M560,224 C555,260 540,310 540,360" stroke="hsl(129,49%,49%)" marker-end="url(#arrow-cat2)"/>
+      <circle class="edge-particle" fill="hsl(129,49%,49%)">
+        <animateMotion dur="1.8s" repeatCount="indefinite" path="M560,224 C555,260 540,310 540,360" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Supabase -->
+      <path class="edge-line" d="M480,404 C400,440 280,490 220,540" stroke="hsl(266,100%,77%)" marker-end="url(#arrow-cat3)"/>
+      <circle class="edge-particle" fill="hsl(266,100%,77%)">
+        <animateMotion dur="2.2s" repeatCount="indefinite" path="M480,404 C400,440 280,490 220,540" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Redis -->
+      <path class="edge-line" d="M520,404 C500,450 460,500 440,540" stroke="hsl(26,85%,59%)" marker-end="url(#arrow-cat4)"/>
+      <circle class="edge-particle" fill="hsl(26,85%,59%)">
+        <animateMotion dur="1.6s" repeatCount="indefinite" path="M520,404 C500,450 460,500 440,540" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Local Disk -->
+      <path class="edge-line" d="M560,404 C580,450 620,500 640,540" stroke="hsl(126,57%,58%)" marker-end="url(#arrow-cat7)"/>
+      <circle class="edge-particle" fill="hsl(126,57%,58%)">
+        <animateMotion dur="1.9s" repeatCount="indefinite" path="M560,404 C580,450 620,500 640,540" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Groq -->
+      <path class="edge-line" d="M600,400 C680,430 760,480 840,540" stroke="hsl(328,89%,72%)" marker-end="url(#arrow-cat5)"/>
+      <circle class="edge-particle" fill="hsl(328,89%,72%)">
+        <animateMotion dur="2.4s" repeatCount="indefinite" path="M600,400 C680,430 760,480 840,540" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Gemini -->
+      <path class="edge-line dashed" d="M620,390 C750,420 900,480 1040,540" stroke="hsl(267,100%,83%)" marker-end="url(#arrow-cat8)"/>
+      <circle class="edge-particle" fill="hsl(267,100%,83%)">
+        <animateMotion dur="2.8s" repeatCount="indefinite" path="M620,390 C750,420 900,480 1040,540" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+
+      <!-- FastAPI → Zilliz -->
+      <path class="edge-line" d="M620,380 C750,370 880,365 960,380" stroke="hsl(212,100%,67%)" marker-end="url(#arrow-cat1)"/>
+      <circle class="edge-particle" fill="hsl(212,100%,67%)">
+        <animateMotion dur="2s" repeatCount="indefinite" path="M620,380 C750,370 880,365 960,380" keyPoints="0;1" keyTimes="0;1" calcMode="linear"/>
+      </circle>
+    </svg>
+
+    <!-- ═══════════ EDGE LABELS ═══════════ -->
+    <div class="edge-label" style="top: 125px; left: 582px; color: var(--cat-6);">Web App</div>
+    <div class="edge-label" style="top: 288px; left: 530px; color: var(--cat-2);">API / Proxy</div>
+    <div class="edge-label" style="top: 468px; left: 300px; color: var(--cat-3);">JWT · L3</div>
+    <div class="edge-label" style="top: 468px; left: 460px; color: var(--cat-4);">L2 TTL</div>
+    <div class="edge-label" style="top: 468px; left: 610px; color: var(--cat-7);">Clone · AST</div>
+    <div class="edge-label" style="top: 458px; left: 740px; color: var(--cat-5);">LLM · SSE</div>
+    <div class="edge-label" style="top: 440px; left: 900px; color: var(--cat-8);">Embed · LLM</div>
+    <div class="edge-label" style="top: 365px; left: 770px; color: var(--cat-1);">Vector Search</div>
+
+    <!-- ═══════════ LEGEND ═══════════ -->
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background: var(--cat-2);"></div>
+        Core Flow
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background: var(--cat-3);"></div>
+        Data Store
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background: var(--cat-5);"></div>
+        LLM Provider
+      </div>
+      <div class="legend-item">
+        <div class="legend-line dashed-legend"></div>
+        Async
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -49,10 +49,10 @@ export async function runLayout(
       layoutOptions: {
         "elk.algorithm": "layered",
         "elk.direction": "RIGHT",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "100",
-        "elk.spacing.nodeNode": "60",
-        "elk.spacing.edgeNode": "60",
-        "elk.spacing.edgeEdge": "25",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "120",
+        "elk.spacing.nodeNode": "80",
+        "elk.spacing.edgeNode": "80",
+        "elk.spacing.edgeEdge": "40",
         "elk.edgeRouting": "ORTHOGONAL",
         "elk.layered.cycleBreaking.strategy": "DEPTH_FIRST",
         "elk.layered.layering.strategy": "NETWORK_SIMPLEX",
@@ -77,7 +77,7 @@ export async function runLayout(
               layoutOptions: {
                 "elk.algorithm": "box",
                 "elk.aspectRatio": "0.1",
-                "elk.spacing.nodeNode": "24",
+                "elk.spacing.nodeNode": "60",
                 "elk.padding": "[top=40,left=32,bottom=24,right=32]",
               },
             }
