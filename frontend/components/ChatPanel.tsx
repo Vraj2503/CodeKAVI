@@ -9,11 +9,12 @@ import {
   type ComponentProps,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SendHorizontal, Sparkles, FileCode2 } from "lucide-react";
+import { SendHorizontal, FileCode2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "./ui/ScrollArea";
 import ThemeSwitch from "./ui/theme-switch";
+import { Button } from "./ui/button";
 import { CodeBlockWithFile } from "./CodeRefCard";
 import {
   chatWithRepo,
@@ -135,8 +136,22 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  /*
+   * Jump on the first paint, glide afterwards.
+   *
+   * This was unconditionally `behavior: "smooth"`, so loading a session
+   * with history animated a scroll through every message that had ever
+   * been sent before landing at the bottom. Restoring a conversation
+   * should look like it was always there; only messages that arrive
+   * while you are watching earn the animated scroll.
+   */
+  const hasScrolledOnce = useRef(false);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({
+      behavior: hasScrolledOnce.current ? "smooth" : "auto",
+      block: "end",
+    });
+    hasScrolledOnce.current = true;
   }, [messages]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -213,21 +228,19 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
     <div className="flex-1 flex overflow-hidden">
       {/* Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-border/30 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-primary/15 flex items-center justify-center glow-pulse">
-              <Sparkles className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-foreground">
-                Ask about {repoData.repo_name}
-              </h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Powered by RAG — answers grounded in source code
-              </p>
-            </div>
-          </div>
+        {/*
+          Header. The subtitle used to read "Powered by RAG — answers
+          grounded in source code": an implementation detail, permanently
+          occupying the second line of every chat. The retrieved-sources
+          panel demonstrates the same claim with evidence.
+        */}
+        <div className="flex flex-shrink-0 items-center justify-between border-b border-border bg-card/50 px-5 py-2.5">
+          <h2 className="min-w-0 truncate font-sans text-[13px] text-muted-foreground">
+            Asking{" "}
+            <span className="font-mono text-foreground">
+              {repoData.owner}/{repoData.repo_name}
+            </span>
+          </h2>
           <ThemeSwitch />
         </div>
 
@@ -244,39 +257,41 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
             ) : (
               <AnimatePresence initial={false}>
                 {messages.map((msg, i) => (
+                  /*
+                    Only the question gets a bubble. The answer is the
+                    document you came to read, so it runs as body copy at
+                    full width — bubbling both sides makes a long
+                    architectural explanation look like a text message.
+                  */
                   <motion.div
                     key={i}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.25 }}
+                    initial={{ opacity: 0, transform: "translateY(8px)" }}
+                    animate={{ opacity: 1, transform: "translateY(0px)" }}
+                    transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
                     className={cn(
                       "flex w-full min-w-0",
-                      msg.role === "user" ? "justify-end" : "justify-start"
+                      msg.role === "user" ? "justify-end" : "justify-start",
                     )}
                   >
-                    {/* Message Body */}
                     <div
                       className={cn(
-                        "text-[15px] leading-relaxed",
                         msg.role === "assistant"
                           ? [
-                              "w-full",
-                              "max-w-full overflow-x-auto",
-                              "text-foreground prose dark:prose-invert max-w-none break-words",
-                              // Paragraph spacing
-                              "prose-p:my-1",
-                              // Headings — force foreground color
+                              "w-full max-w-full break-words",
+                              // `.prose` supplies the serif face, size and
+                              // rhythm; the plugin supplies list/table
+                              // styling. No max-width here on purpose —
+                              // answers carry code blocks.
+                              "prose dark:prose-invert",
                               "prose-headings:text-foreground",
-                              // Inline code
-                              "prose-code:text-foreground prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:text-sm prose-code:font-medium prose-code:before:content-none prose-code:after:content-none prose-code:break-words",
-                              // Code blocks
-                              "prose-pre:my-2 prose-pre:bg-background prose-pre:border prose-pre:border-border/30 prose-pre:max-w-full prose-pre:overflow-x-auto",
-                              // Bold text
                               "prose-strong:text-foreground",
-                              // Links
-                              "prose-a:text-foreground prose-a:underline prose-a:underline-offset-2 prose-a:break-all",
+                              "prose-a:text-signal prose-a:underline prose-a:underline-offset-2 prose-a:break-all",
+                              "prose-pre:max-w-full prose-pre:overflow-x-auto",
                             ].join(" ")
-                          : "bg-muted/60 border border-border/40 rounded-2xl px-5 py-3.5 text-foreground shadow-sm max-w-[85%] break-words"
+                          : [
+                              "max-w-[80%] break-words border border-signal/35 bg-signal/[0.08] px-4 py-2.5",
+                              "font-sans text-[14px] leading-relaxed text-foreground",
+                            ].join(" "),
                       )}
                     >
                       {msg.role === "assistant" ? (
@@ -311,9 +326,22 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
           </div>
         </ScrollArea>
 
-        {/* Input */}
-        <div className="px-6 py-4 border-t border-border bg-background/50">
-          <form onSubmit={handleSubmit} className="relative">
+        {/* Composer */}
+        <div className="flex-shrink-0 border-t border-border bg-card/50 px-5 py-3">
+          {/*
+            The send button is anchored to the bottom of a flex row rather
+            than absolutely positioned against the textarea. With
+            auto-grow, `absolute bottom-3` drifted away from the last line
+            as the box expanded toward its 160px cap.
+          */}
+          <form
+            onSubmit={handleSubmit}
+            className={cn(
+              "flex items-end gap-2 border border-border bg-card p-2 pl-3.5",
+              "transition-[border-color] duration-150 ease-out",
+              "focus-within:border-signal",
+            )}
+          >
             <textarea
               ref={inputRef}
               value={input}
@@ -334,64 +362,85 @@ export function ChatPanel({ repoData, sessionId }: ChatPanelProps) {
                 }
               }}
               placeholder="Ask about this codebase…"
+              aria-label="Ask about this codebase"
               disabled={isLoading}
               rows={1}
               className={cn(
-                "w-full pl-4 pr-12 py-3 bg-card border border-border rounded-xl",
-                "text-sm text-foreground placeholder:text-muted-foreground",
-                "focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20",
-                "resize-none overflow-hidden",
-                "transition-colors duration-200"
+                "min-w-0 flex-1 resize-none overflow-hidden bg-transparent py-1.5",
+                "font-sans text-[14px] leading-relaxed text-foreground",
+                "placeholder:text-muted-foreground/60",
+                "outline-none focus-visible:outline-none",
               )}
             />
-            <button
+            <Button
               type="submit"
+              size="icon-sm"
               disabled={!input.trim() || isLoading}
-              className={cn(
-                "absolute right-2 bottom-3",
-                "w-8 h-8 rounded-lg flex items-center justify-center",
-                "bg-primary text-primary-foreground",
-                "hover:bg-primary/90",
-                "disabled:opacity-30 disabled:cursor-not-allowed",
-                "transition-all duration-200"
-              )}
+              aria-label="Send message"
+              className="mb-0.5"
             >
-              <SendHorizontal className="w-4 h-4" />
-            </button>
+              <SendHorizontal />
+            </Button>
           </form>
+          <p className="mt-2 px-1 font-sans text-[10.5px] text-muted-foreground/60">
+            <kbd className="font-mono">Enter</kbd> to send ·{" "}
+            <kbd className="font-mono">Shift</kbd>+
+            <kbd className="font-mono">Enter</kbd> for a new line
+          </p>
         </div>
       </div>
 
-      {/* Sources Panel */}
-      <div className="w-72 border-l border-border/30 bg-card/30 flex flex-col flex-shrink-0 hidden lg:flex">
-        <div className="px-4 py-4 border-b border-border/30 flex-shrink-0">
-          <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
-            <FileCode2 className="w-4 h-4 text-primary" />
-            Retrieved Sources
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Citations for the latest answer
-          </p>
+      {/* Retrieved sources — the evidence for the answer on the left. */}
+      <div className="hidden w-64 flex-shrink-0 flex-col border-l border-border bg-sidebar lg:flex">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+          <FileCode2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <h3 className="eyebrow">Sources</h3>
+          {latestSources.length > 0 && (
+            <span className="tabular ml-auto text-[11px] text-muted-foreground">
+              {latestSources.length}
+            </span>
+          )}
         </div>
         <ScrollArea className="flex-1">
-          <div className="px-4 py-3 space-y-2">
+          <div className="p-2">
             {latestSources.length > 0 ? (
-              latestSources.map((src, i) => (
-                <motion.div
-                  key={`${src.file_path}-${i}`}
-                  initial={{ opacity: 0, x: 10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="bg-card/50 backdrop-blur-md border border-border/40 hover:border-border/80 transition-colors rounded-xl p-3 shadow-sm"
-                >
-                  <p className="text-xs font-mono text-primary break-all leading-relaxed">
-                    {src.file_path}
-                  </p>
-                </motion.div>
-              ))
+              latestSources.map((src, i) => {
+                // Split so the filename reads at full contrast and the
+                // directory recedes — a column of full paths in one weight
+                // is unscannable once they share a prefix.
+                const parts = src.file_path.split("/");
+                const name = parts.pop();
+                const dir = parts.join("/");
+                return (
+                  <motion.div
+                    key={`${src.file_path}-${i}`}
+                    initial={{ opacity: 0, transform: "translateX(6px)" }}
+                    animate={{ opacity: 1, transform: "translateX(0px)" }}
+                    transition={{
+                      duration: 0.2,
+                      ease: [0.23, 1, 0.32, 1],
+                      delay: Math.min(i * 0.035, 0.28),
+                    }}
+                    className={cn(
+                      "border-l-2 border-transparent px-2.5 py-2 transition-colors duration-100",
+                      "[@media(hover:hover)]:hover:border-signal [@media(hover:hover)]:hover:bg-signal/[0.06]",
+                    )}
+                    title={src.file_path}
+                  >
+                    {dir && (
+                      <p className="truncate font-mono text-[10.5px] leading-tight text-muted-foreground/65">
+                        {dir}/
+                      </p>
+                    )}
+                    <p className="break-all font-mono text-[11.5px] leading-snug text-foreground">
+                      {name}
+                    </p>
+                  </motion.div>
+                );
+              })
             ) : (
-              <p className="text-[11px] text-muted-foreground italic">
-                No sources retrieved yet. Ask a question to see citations.
+              <p className="px-2.5 py-3 font-sans text-[11.5px] leading-relaxed text-muted-foreground/70">
+                Citations for each answer appear here.
               </p>
             )}
           </div>

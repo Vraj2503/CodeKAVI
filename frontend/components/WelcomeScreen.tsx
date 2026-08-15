@@ -1,28 +1,26 @@
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  GitBranch,
   Loader2,
-  Search,
-  Plus,
+  ArrowRight,
   MessageSquare,
-  Clock,
-  Code2,
-  X,
-  Sparkles,
   LogOut,
   Trash2,
+  Terminal,
+  Layers,
+  Database,
+  Activity,
 } from "lucide-react";
-import { AnimatedInput } from "./ui/AnimatedInput";
-import SpotlightBackground from "./ui/spotlight-background";
-import { HeroShutterText } from "./ui/HeroShutterText";
-import { Button } from "./ui/NeonButton";
+import { Button } from "./ui/button";
+import { Kbd } from "./ui/Kbd";
 import ThemeSwitch from "./ui/theme-switch";
+import { StatusBar } from "./StatusBar";
 import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
+import { normalizeRepoUrl } from "@/lib/repoUrl";
 import { type AnalyzeResponse } from "@/lib/api";
 import {
   getSessions,
@@ -41,7 +39,6 @@ export function WelcomeScreen() {
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
-  const [showNewChat, setShowNewChat] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
   const [progressUrl, setProgressUrl] = useState("");
 
@@ -66,9 +63,8 @@ export function WelcomeScreen() {
     if (!url.trim() || isAnalyzing) return;
 
     // Show the full-screen progress component instead of navigating immediately
-    setProgressUrl(url.trim());
+    setProgressUrl(normalizeRepoUrl(url));
     setShowProgress(true);
-    setShowNewChat(false);
     setIsAnalyzing(true);
   };
 
@@ -116,16 +112,15 @@ export function WelcomeScreen() {
   const timeAgo = (dateStr: string) => {
     const diff = now - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m`;
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
+    if (hours < 24) return `${hours}h`;
     const days = Math.floor(hours / 24);
-    if (days < 30) return `${days}d ago`;
+    if (days < 30) return `${days}d`;
     return new Date(dateStr).toLocaleDateString();
   };
 
-  // Top languages as a short string
   const topLangs = (languages: Record<string, number>) => {
     const sorted = Object.entries(languages)
       .sort(([, a], [, b]) => b - a)
@@ -133,11 +128,21 @@ export function WelcomeScreen() {
     return sorted.map(([lang]) => lang).join(" · ");
   };
 
+  // Aggregate readouts across every indexed repository.
+  const totals = sessions.reduce(
+    (acc, s) => {
+      acc.messages += s.message_count || 0;
+      Object.keys(s.languages || {}).forEach((l) => acc.langs.add(l));
+      return acc;
+    },
+    { messages: 0, langs: new Set<string>() },
+  );
+
   // Show loading spinner while checking auth
   if (authLoading || !user) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-background">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-signal/25 border-t-signal [animation-duration:0.6s]" />
       </div>
     );
   }
@@ -179,261 +184,331 @@ export function WelcomeScreen() {
         )}
       </AnimatePresence>
 
-      <SpotlightBackground>
-        {/* Top bar — user info + theme toggle */}
-        <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
-          {user.user_metadata?.avatar_url && (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* Full-bleed app shell: header / scrolling console / status line. */}
+      <div className="flex h-dvh w-full flex-col overflow-hidden">
+        {/* ── Header rail ──────────────────────────────────────────── */}
+        <header className="flex h-12 flex-shrink-0 items-center gap-3 border-b border-border bg-card/70 px-4 backdrop-blur-xl">
+          <Terminal className="h-4 w-4 text-signal" />
+          <span className="font-display text-[15px] text-foreground">
+            CODEKAVI
+          </span>
+          <span
+            className="font-mono text-[11px] text-signal/70"
+            aria-hidden="true"
+          >
+            कवि
+          </span>
+
+          <span className="ml-3 hidden font-mono text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground/60 sm:inline">
+            codebase intelligence
+          </span>
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className="hidden font-mono text-[11px] text-muted-foreground md:inline">
+              {user.email}
+            </span>
+            <ThemeSwitch />
+            {user.user_metadata?.avatar_url && (
+              // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={user.user_metadata.avatar_url}
-                alt={user.user_metadata.full_name || "Avatar"}
-                className="w-8 h-8 rounded-full border border-border/50"
+                alt={user.user_metadata.full_name || "Your avatar"}
+                className="h-6 w-6 border border-border"
                 referrerPolicy="no-referrer"
               />
-            </>
-          )}
-          <button
-            onClick={handleSignOut}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
-            title="Sign out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-          <ThemeSwitch />
-        </div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
-          className="relative z-10 w-full max-w-4xl px-6 flex flex-col items-center"
-        >
-          {/* Title */}
-          <HeroShutterText
-            text="CodeKavi"
-            className="text-4xl md:text-5xl lg:text-6xl text-foreground mb-4 tracking-tight text-center"
-          />
-
-          <p className="text-center text-base md:text-lg text-muted-foreground mb-12 max-w-lg leading-relaxed font-light">
-            Analyze GitHub repositories and chat with your codebase. Answers are
-            grounded in actual source code.
-          </p>
-
-          {/* Grid: "+ New chat" card + session cards */}
-          <div className="w-full">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-              Recent Chats
-            </h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* "+ Create new chat" card */}
-              <motion.button
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                onClick={() => setShowNewChat(true)}
-                className={cn(
-                  "text-left rounded-2xl p-5 h-40",
-                  "border-2 border-dashed border-border/50",
-                  "hover:border-primary/50 hover:bg-card/20",
-                  "transition-all duration-300 group cursor-pointer",
-                  "flex flex-col items-center justify-center gap-3",
-                )}
-              >
-                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all duration-300">
-                  <Plus className="w-6 h-6 text-primary" />
-                </div>
-                <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-                  Create new chat
-                </span>
-              </motion.button>
-
-              {/* Loading skeletons */}
-              {loadingSessions &&
-                [1, 2].map((i) => (
-                  <div
-                    key={i}
-                    className="h-40 rounded-2xl bg-card/20 border border-border/30 animate-pulse"
-                  />
-                ))}
-
-              {/* Session cards */}
-              <AnimatePresence>
-                {sessions.map((session, i) => (
-                  <motion.div
-                    role="button"
-                    tabIndex={0}
-                    key={session.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 + i * 0.05, duration: 0.3 }}
-                    onClick={() => handleResumeSession(session)}
-                    className={cn(
-                      "text-left rounded-2xl p-5 h-40",
-                      "bg-card/30 backdrop-blur-xl border border-border/40",
-                      "hover:border-border hover:bg-card/50",
-                      "transition-all duration-300 group cursor-pointer",
-                      "flex flex-col justify-between",
-                    )}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="min-w-0 pr-2">
-                        <p className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">
-                          {session.owner}/{session.repo_name}
-                        </p>
-                        {topLangs(session.languages) && (
-                          <p className="text-xs text-muted-foreground mt-1.5 truncate">
-                            {topLangs(session.languages)}
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        onClick={(e) => handleDeleteSession(session.id, e)}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-                        title="Delete chat"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {timeAgo(session.updated_at)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MessageSquare className="w-3 h-3" />
-                        {session.message_count || 0}
-                      </span>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
-
-          {/* Feature cards */}
-          <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-            {[
-              {
-                icon: MessageSquare,
-                title: "Chat with Code",
-                desc: "Ask questions, get grounded answers",
-              },
-              {
-                icon: Sparkles,
-                title: "AI Insights",
-                desc: "Understand architecture instantly",
-              },
-              {
-                icon: Code2,
-                title: "Source Citations",
-                desc: "Every answer links to real files",
-              },
-            ].map((feature, i) => (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 + i * 0.1, duration: 0.5 }}
-                key={feature.title}
-                className="bg-card/30 backdrop-blur-xl border border-border/40 hover:border-border hover:bg-card/50 transition-all duration-300 rounded-2xl p-5 text-center group"
-              >
-                <div className="w-10 h-10 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
-                  <feature.icon className="w-5 h-5 text-primary" />
-                </div>
-                <p className="text-sm font-semibold text-foreground mb-1">
-                  {feature.title}
-                </p>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {feature.desc}
-                </p>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* ── "New Chat" Modal ── */}
-        <AnimatePresence>
-          {showNewChat && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-              onClick={() => !isAnalyzing && setShowNewChat(false)}
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleSignOut}
+              title="Sign out"
+              aria-label="Sign out"
             >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                transition={{ duration: 0.25, ease: "easeOut" }}
-                className="bg-card border border-border/60 rounded-2xl shadow-2xl p-8 w-full max-w-md mx-4"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Modal Header */}
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
-                      <Code2 className="w-5 h-5 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-foreground">
-                        New Chat
-                      </h3>
-                      <p className="text-xs text-muted-foreground">
-                        Add a GitHub repository to analyze
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => !isAnalyzing && setShowNewChat(false)}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+              <LogOut />
+            </Button>
+          </div>
+        </header>
+
+        {/* ── Console ──────────────────────────────────────────────── */}
+        <main className="grid-field flex-1 overflow-y-auto">
+          <div className="relative z-10 mx-auto w-full max-w-[1180px] px-5 py-10">
+            {/* Masthead — asymmetric. The statement sits left across two
+                thirds; the readouts stack right. */}
+            <section className="mb-10 grid gap-8 lg:grid-cols-[1.55fr_1fr]">
+              <div>
+                <div className="eyebrow mb-4 flex items-center gap-2">
+                  <span className="h-1.5 w-1.5 bg-signal" />
+                  console
                 </div>
 
-                {/* Modal Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="relative group">
-                    <GitBranch className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors z-10" />
-                    <AnimatedInput
-                      type="text"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      placeholder="https://github.com/user/repo"
-                      className="w-full pl-12 pr-4 py-4 text-base bg-background/50 border-border/50 text-foreground rounded-xl"
-                      autoFocus
-                    />
+                <h1 className="font-display text-[clamp(2rem,5.2vw,3.4rem)] text-foreground">
+                  READ
+                  <br />
+                  THE MACHINE
+                </h1>
+
+                <p className="mt-5 max-w-md font-sans text-[14px] leading-relaxed text-muted-foreground">
+                  Point CodeKavi at a repository. It clones, parses the
+                  dependency graph, classifies every file by role and indexes
+                  the source for retrieval — then answers in plain language,
+                  citing the file each claim came from.
+                </p>
+              </div>
+
+              {/* Readout stack */}
+              <div className="grid grid-cols-3 gap-px border border-border bg-border lg:self-start">
+                <Readout
+                  icon={<Layers />}
+                  label="repos"
+                  value={loadingSessions ? "—" : sessions.length}
+                  i={0}
+                />
+                <Readout
+                  icon={<MessageSquare />}
+                  label="queries"
+                  value={loadingSessions ? "—" : totals.messages}
+                  i={1}
+                />
+                <Readout
+                  icon={<Database />}
+                  label="langs"
+                  value={loadingSessions ? "—" : totals.langs.size}
+                  i={2}
+                />
+              </div>
+            </section>
+
+            {/* ── Intake ──────────────────────────────────────────────
+                The repo field used to live behind a "+ New chat" card that
+                opened a modal — two clicks and a layer of chrome in front
+                of the one thing this page exists to do. */}
+            <section className="relative mb-12 border border-border bg-card/70 backdrop-blur-xl">
+              <span className="reg-mark reg-tl" />
+              <span className="reg-mark reg-tr" />
+              <span className="reg-mark reg-bl" />
+              <span className="reg-mark reg-br" />
+
+              <div className="flex items-center justify-between border-b border-border px-4 py-2">
+                <span className="eyebrow">intake</span>
+                <span className="font-mono text-[10.5px] text-muted-foreground/60">
+                  github · gitlab · bitbucket
+                </span>
+              </div>
+
+              <form
+                onSubmit={handleSubmit}
+                className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center"
+              >
+                <span
+                  className="hidden select-none font-mono text-[13px] text-signal sm:inline"
+                  aria-hidden="true"
+                >
+                  &gt;
+                </span>
+                <input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="github.com/owner/repo"
+                  aria-label="Repository URL"
+                  autoFocus
+                  className={cn(
+                    "min-w-0 flex-1 bg-transparent font-mono text-[15px] text-foreground",
+                    "placeholder:text-muted-foreground/40",
+                    "outline-none focus-visible:outline-none",
+                  )}
+                />
+                <Button
+                  type="submit"
+                  disabled={!url.trim() || isAnalyzing}
+                  className="shrink-0"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      ANALYZING
+                    </>
+                  ) : (
+                    <>
+                      ANALYZE
+                      <ArrowRight />
+                    </>
+                  )}
+                </Button>
+              </form>
+            </section>
+
+            {/* ── Index ───────────────────────────────────────────── */}
+            <section className="pb-6">
+              <div className="mb-3 flex items-center gap-3">
+                <h2 className="eyebrow">index</h2>
+                <hr className="rule-fade flex-1" />
+                <span className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted-foreground/70">
+                  <Activity className="h-3 w-3" />
+                  {loadingSessions ? "scanning…" : `${sessions.length} indexed`}
+                </span>
+              </div>
+
+              {loadingSessions ? (
+                <div className="border border-border">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className="flex h-12 animate-pulse items-center gap-4 border-b border-border px-3 last:border-b-0"
+                      style={{ animationDelay: `${i * 90}ms` }}
+                    >
+                      <div className="h-3 w-52 bg-muted" />
+                      <div className="ml-auto h-3 w-16 bg-muted/60" />
+                    </div>
+                  ))}
+                </div>
+              ) : sessions.length === 0 ? (
+                <div className="hatch border border-border px-4 py-10 text-center">
+                  <p className="font-mono text-[12.5px] text-muted-foreground">
+                    no repositories indexed
+                  </p>
+                  <p className="mt-1.5 font-sans text-[12px] text-muted-foreground/60">
+                    Analyze one above to populate the index.
+                  </p>
+                </div>
+              ) : (
+                /*
+                  A table, not a grid of cards. These rows are ordered by
+                  recency and the thing you scan for is the repo name, so
+                  they want to be one left-aligned column with the names
+                  stacked in the same place — and columns that line up.
+                */
+                <div className="border border-border">
+                  <div className="hidden items-center gap-4 border-b border-border bg-muted/40 px-3 py-1.5 sm:flex">
+                    <span className="eyebrow flex-1">repository</span>
+                    <span className="eyebrow w-32">stack</span>
+                    <span className="eyebrow w-14 text-right">msgs</span>
+                    <span className="eyebrow w-14 text-right">age</span>
+                    <span className="w-7" />
                   </div>
 
-                  <Button
-                    type="submit"
-                    disabled={!url.trim() || isAnalyzing}
-                    className="w-full h-12 rounded-xl text-sm font-semibold"
-                    variant="solid"
-                    neon={true}
-                  >
-                    {isAnalyzing ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Cloning & Analyzing…
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Search className="w-4 h-4" />
-                        Analyze Repository
-                      </span>
-                    )}
-                  </Button>
-                </form>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </SpotlightBackground>
+                  <AnimatePresence initial={false}>
+                    {sessions.map((session, i) => (
+                      <motion.div
+                        key={session.id}
+                        layout
+                        /* `transform` as a string rather than framer's `y`
+                           shorthand: the shorthand animates on the main
+                           thread via rAF and drops frames while the list is
+                           still fetching. The full string composites. */
+                        initial={{ opacity: 0, transform: "translateY(5px)" }}
+                        animate={{ opacity: 1, transform: "translateY(0px)" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{
+                          duration: 0.2,
+                          ease: [0.23, 1, 0.32, 1],
+                          delay: Math.min(i * 0.025, 0.2),
+                        }}
+                        className="overflow-hidden border-b border-border last:border-b-0"
+                      >
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => handleResumeSession(session)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleResumeSession(session);
+                            }
+                          }}
+                          className={cn(
+                            "group relative flex cursor-pointer items-center gap-4 px-3 py-2.5",
+                            "transition-colors duration-100",
+                            "[@media(hover:hover)]:hover:bg-signal/[0.07]",
+                          )}
+                        >
+                          {/* Selection marker. Grows via scaleY, not
+                              height — height would trigger layout on every
+                              frame of the hover. */}
+                          <span
+                            className={cn(
+                              "absolute left-0 top-0 h-full w-[2px] origin-center scale-y-0 bg-signal",
+                              "transition-transform duration-150 ease-out",
+                              "[@media(hover:hover)]:group-hover:scale-y-100",
+                            )}
+                            aria-hidden="true"
+                          />
+
+                          <p className="min-w-0 flex-1 truncate font-mono text-[13px] text-foreground">
+                            <span className="text-muted-foreground/55">
+                              {session.owner}/
+                            </span>
+                            {session.repo_name}
+                          </p>
+
+                          <span className="hidden w-32 truncate font-sans text-[11.5px] text-muted-foreground/75 sm:block">
+                            {topLangs(session.languages) || "—"}
+                          </span>
+                          <span className="tabular hidden w-14 text-right text-[11.5px] text-muted-foreground sm:block">
+                            {session.message_count || 0}
+                          </span>
+                          <span className="tabular hidden w-14 text-right text-[11.5px] text-muted-foreground/70 sm:block">
+                            {timeAgo(session.updated_at)}
+                          </span>
+
+                          <button
+                            onClick={(e) =>
+                              handleDeleteSession(session.id, e)
+                            }
+                            className={cn(
+                              "w-7 shrink-0 p-1.5 text-muted-foreground/50",
+                              "opacity-0 transition-all duration-100",
+                              "[@media(hover:hover)]:hover:text-crit",
+                              "focus-visible:opacity-100 group-hover:opacity-100",
+                            )}
+                            title={`Delete ${session.owner}/${session.repo_name}`}
+                            aria-label={`Delete ${session.owner}/${session.repo_name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+
+              <p className="mt-3 flex items-center gap-1.5 font-sans text-[11.5px] text-muted-foreground/60">
+                Press <Kbd>⌘</Kbd>
+                <Kbd>K</Kbd> to jump to any repository or view.
+              </p>
+            </section>
+          </div>
+        </main>
+
+        <StatusBar />
+      </div>
     </>
+  );
+}
+
+/** A gauge cell in the readout stack. */
+function Readout({
+  icon,
+  label,
+  value,
+  i,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string | number;
+  i: number;
+}) {
+  return (
+    <div
+      className="wipe-in bg-card px-3 py-3.5"
+      style={{ "--i": i } as CSSProperties}
+    >
+      <div className="mb-2 flex items-center gap-1.5 text-muted-foreground/60 [&_svg]:h-3 [&_svg]:w-3">
+        {icon}
+        <span className="eyebrow">{label}</span>
+      </div>
+      <p className="readout text-[26px] text-foreground">{value}</p>
+    </div>
   );
 }

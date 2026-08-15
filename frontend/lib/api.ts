@@ -503,6 +503,7 @@ function isStreamCompleteData(data: unknown): data is StreamCompleteData {
 export async function analyzeRepoStream(
   githubUrl: string,
   onProgress: (event: AnalysisProgressEvent) => void,
+  signal?: AbortSignal,
 ): Promise<AnalyzeResponse> {
   if (githubUrl === "mock://nn") {
     const { mockAnalyzeResponse } = await import("./mockData");
@@ -523,6 +524,15 @@ export async function analyzeRepoStream(
   }
 
   const authHeaders = await getAuthHeaders();
+  /*
+   * The `signal` is what makes an abandoned analysis actually stop.
+   *
+   * Without it, a caller that unmounts could only ignore the *results* —
+   * the POST stayed open and still counted against `/analyze/stream`'s
+   * 5-per-minute limit. React StrictMode runs every effect twice in
+   * development, so each click sent two requests and three clicks
+   * tripped a 429 that looked like it came from nowhere.
+   */
   const res = await fetch(`${API_BASE}/analyze/stream`, {
     method: "POST",
     headers: {
@@ -530,6 +540,7 @@ export async function analyzeRepoStream(
       ...authHeaders,
     },
     body: JSON.stringify({ github_url: githubUrl }),
+    signal,
   });
 
   if (!res.ok) {
