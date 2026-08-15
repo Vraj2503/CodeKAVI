@@ -41,6 +41,9 @@ node_modules/
 supabase_migrations/
 
 #cache
+.rune-fingerprints/
+# Pre-rebrand name. Kept so a stale local cache from before the Rune rename
+# does not show up as untracked and get swept into a commit.
 .codekavi-fingerprints/
 
 # Sprint planning / audit notes (local only)

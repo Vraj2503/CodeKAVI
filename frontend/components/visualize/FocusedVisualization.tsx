@@ -91,20 +91,33 @@ function EmptyViz({
       ? { type: "complexity", label: "Complexity Treemap" }
       : { type: "dependencies", label: "Dependency Graph" };
 
+  // Neural Network is listed for every repository, so this view is the only
+  // place an empty result can be explained. The generic line below would be a
+  // lie here: a repo can be large and richly structured and still declare no
+  // model at all. Name what the extractor reads instead, so "nothing here" is
+  // a fact about the repository rather than a suspected failure of the tool.
+  const isNN = type === "neural_network";
+
+  const heading = isNN
+    ? "No neural network found"
+    : unresolvedEdges
+      ? "Nothing connects, yet"
+      : `No ${label.toLowerCase()} to draw`;
+
+  const body = isNN
+    ? "Nothing in this repository declares a model architecture we can read. This view understands PyTorch (nn.Module, nn.Sequential), Keras, TensorFlow and Hugging Face transformers — scikit-learn and gradient-boosting pipelines aren't drawn yet."
+    : unresolvedEdges
+      ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
+      : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`;
+
   return (
     <div className="w-full h-full flex flex-col items-center justify-center p-10 text-center">
       <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
         <AlertCircle size={40} aria-hidden="true" />
       </div>
-      <h3 className="text-xl font-bold text-foreground mb-3">
-        {unresolvedEdges
-          ? "Nothing connects, yet"
-          : `No ${label.toLowerCase()} to draw`}
-      </h3>
+      <h3 className="text-xl font-bold text-foreground mb-3">{heading}</h3>
       <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-        {unresolvedEdges
-          ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
-          : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`}
+        {body}
       </p>
       <Link
         href={`?type=${suggestion.type}`}

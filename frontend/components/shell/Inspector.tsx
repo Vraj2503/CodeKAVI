@@ -78,7 +78,7 @@ export function Inspector({
         )}
       >
         {isVisualize ? (
-          <VizIndex repoId={repoId} repoData={repoData} />
+          <VizIndex repoId={repoId} />
         ) : (
           <RepoIndex repoData={repoData} isAnalyzing={isAnalyzing} />
         )}
@@ -194,21 +194,19 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 
 /* ── Visualization index ────────────────────────────────────── */
 
-function VizIndex({
-  repoId,
-  repoData,
-}: {
-  repoId: string;
-  repoData: AnalyzeResponse | null;
-}) {
+function VizIndex({ repoId }: { repoId: string }) {
   const searchParams = useSearchParams();
   const active = searchParams.get("type") || "dependencies";
 
-  const charts = VIZ_CONFIG.filter(
-    (viz) =>
-      viz.type !== "neural_network" ||
-      (repoData?.nn_models && repoData.nn_models.length > 0),
-  );
+  /*
+    Every chart is always listed, Neural Network included. Hiding it when
+    `nn_models` came back empty made the feature invisible to exactly the
+    people who needed to learn it exists, and an entry that appears for some
+    repos and not others reads as a bug rather than as a result. When there is
+    nothing to draw, the view itself says so and names which frameworks it can
+    read — same as every other chart here handles its own empty case.
+  */
+  const charts = VIZ_CONFIG;
 
   return (
     <ScrollArea className="min-h-0 flex-1">
