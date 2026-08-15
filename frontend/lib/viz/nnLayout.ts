@@ -385,9 +385,14 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
     cursor = cx + probe.maxX + ghostSpan + gap;
   });
 
-  // Vertical extents including ghosts, labels and skip arcs.
+  /*
+   * Origin only. The lower bounds are all the frame needs — the canvas
+   * HEIGHT is measured later from the placed nodes, so it accounts for
+   * ghosts, captions and drag nudges that these pre-offset probes do not.
+   * (A `maxY` computed here was left over from the earlier sizing pass and
+   * was no longer read by anything.)
+   */
   const minY = Math.min(...placed.map((p) => p.box.minY), 0);
-  const maxY = Math.max(...placed.map((p) => p.box.maxY), 0);
   const minX = Math.min(...placed.map((p) => p.box.minX), 0);
   const offsetY = padding.top - minY;
   // Normalised on X too now: a block dragged left of the origin used to be

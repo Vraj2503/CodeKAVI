@@ -52,7 +52,7 @@ export async function exportAsPng(
   const dataUrl = await toPng(container, {
     backgroundColor: '#060B18', // Match the CodeKAVI dark theme bg
     pixelRatio: 2, // High DPI
-    filter: filterUiElements as any,
+    filter: filterUiElements,
   });
   downloadDataUrl(dataUrl, filename);
 }
@@ -67,7 +67,7 @@ export async function exportAsSvg(
 ): Promise<void> {
   const dataUrl = await toSvg(container, {
     backgroundColor: '#060B18', // Match the CodeKAVI dark theme bg
-    filter: filterUiElements as any,
+    filter: filterUiElements,
   });
   downloadDataUrl(dataUrl, filename);
 }
