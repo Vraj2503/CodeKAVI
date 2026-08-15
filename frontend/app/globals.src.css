@@ -2,55 +2,88 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ══════════════════════════════════════════
-   DESIGN TOKENS (Premium CodeKavi Theme)
-   ══════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════
+   CODEKAVI — "THE READING ROOM"
+
+   kavi (कवि) — poet. The product turns a repository into something you
+   read, so the interface is built like a reading room rather than a
+   dashboard: warm paper, warm ink, lamplight for emphasis.
+
+   Three rules the whole system hangs off:
+
+     1. WARM NEUTRALS, NEVER PURE GREY. Every surface carries a little
+        hue (28–40°). Pure 0%-saturation greys are what made the old
+        dark theme feel switched-off.
+     2. ONE ACCENT, SPENT SPARINGLY. Amber marks exactly one thing per
+        view — the live thing, the selected thing, the thing to read
+        next. If two things are amber, neither reads as important.
+     3. TYPE CARRIES THE HIERARCHY. Serif = narrative, sans = chrome,
+        mono = code. Weight and face do the work that borders and
+        drop-shadows were doing before.
+   ══════════════════════════════════════════════════════════════════════ */
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 222.2 47.4% 11.2%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 47.4% 11.2%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 47.4% 11.2%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 47.4% 11.2%;
-    --radius: 0.75rem;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-    --sidebar: 0 0% 100%;
-    --sidebar-foreground: 222.2 47.4% 11.2%;
-    --sidebar-primary: 222.2 47.4% 11.2%;
-    --sidebar-primary-foreground: 210 40% 98%;
-    --sidebar-accent: 210 40% 96.1%;
-    --sidebar-accent-foreground: 222.2 47.4% 11.2%;
-    --sidebar-border: 214.3 31.8% 91.4%;
-    --sidebar-ring: 222.2 47.4% 11.2%;
-    --font-sans: "Geist Mono", monospace;
-    --viz-highlight: 221.2 83.2% 53.3%;
+    /* ── Paper ─────────────────────────────────────────────────────────
+       Light theme is a warm sheet, not white. #F9F6F0-ish. The slight
+       ochre in the background is what keeps the amber accent from
+       reading as an alien colour dropped on top of it. */
+    --background: 40 33% 97%;
+    --foreground: 28 16% 13%;
 
-    /* ── Visualization tokens ──────────────────────────────
+    --card: 40 40% 99%;
+    --card-foreground: 28 16% 13%;
+    --popover: 40 40% 99%;
+    --popover-foreground: 28 16% 13%;
+
+    /* Lamplight. Deep enough to hold 4.5:1 as text on paper. */
+    --primary: 24 82% 38%;
+    --primary-foreground: 40 40% 98%;
+
+    --secondary: 38 22% 93%;
+    --secondary-foreground: 28 16% 13%;
+    --muted: 38 22% 93%;
+    --muted-foreground: 32 8% 42%;
+    --accent: 38 26% 91%;
+    --accent-foreground: 28 16% 13%;
+
+    --destructive: 4 68% 44%;
+    --destructive-foreground: 40 40% 98%;
+
+    --border: 36 18% 87%;
+    --input: 36 18% 87%;
+    --ring: 24 82% 45%;
+
+    --radius: 0.625rem;
+    --shadow-hue: 28 40% 12%;
+
+    --sidebar: 40 36% 98%;
+    --sidebar-foreground: 28 16% 13%;
+    --sidebar-primary: 24 82% 38%;
+    --sidebar-primary-foreground: 40 40% 98%;
+    --sidebar-accent: 38 26% 91%;
+    --sidebar-accent-foreground: 28 16% 13%;
+    --sidebar-border: 36 18% 87%;
+    --sidebar-ring: 24 82% 45%;
+
+    --chart-1: 24 82% 45%;
+    --chart-2: 172 42% 34%;
+    --chart-3: 210 44% 40%;
+    --chart-4: 340 48% 48%;
+    --chart-5: 44 68% 44%;
+
+    --viz-highlight: 24 82% 45%;
+
+    /* ── Visualization tokens ──────────────────────────────────────────
        Every D3 chart reads these instead of hardcoding hex.
-       Light values are tuned to read on a near-white canvas. */
 
-    /* Categorical — node / module / depth colors. Slots 2+7 and
-       3+8 are intentionally near-duplicates: they mirror the
-       original MOD_PALETTE so module coloring is unchanged. */
+       The CATEGORICAL ramp is deliberately left on its original hues.
+       It is a functional palette — its job is to make eight modules
+       tellable apart, and it was already contrast-tuned per slot. The
+       accent change is an identity change, not a data-encoding change,
+       so recolouring it would cost legibility and buy nothing. Only the
+       SURFACE tokens move, so tooltips and gridlines sit on the new
+       paper instead of the old cold grey. */
     --viz-cat-1: 212 88% 45%;
     --viz-cat-2: 129 54% 30%;
     --viz-cat-3: 266 60% 52%;
@@ -59,64 +92,68 @@
     --viz-cat-6: 209 84% 42%;
     --viz-cat-7: 126 50% 29%;
     --viz-cat-8: 267 52% 50%;
-
-    /* Text drawn ON a categorical fill. One value per theme: light-theme
-       cat colors are all dark enough for white, dark-theme ones are all
-       light enough for near-black. Keeps badge labels legible without
-       per-slot contrast math. */
     --viz-cat-ink: 0 0% 100%;
 
     /* Sequential — treemap complexity ramp (cold → hot) */
-    --viz-seq-from: 213 40% 91%;
-    --viz-seq-to: 14 86% 47%;
+    --viz-seq-from: 38 24% 90%;
+    --viz-seq-to: 14 84% 45%;
 
     /* Chart surfaces — tooltips, panels, gridlines, labels */
-    --viz-surface: 0 0% 100%;
-    --viz-ink: 222 47% 11%;
-    --viz-ink-dim: 215 16% 47%;
-    --viz-edge: 214 32% 91%;
+    --viz-surface: 40 40% 99%;
+    --viz-ink: 28 16% 13%;
+    --viz-ink-dim: 32 8% 42%;
+    --viz-edge: 36 18% 87%;
   }
 
   .dark {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 11%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 85%;
-    --primary-foreground: 0 0% 4%;
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 65%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 60% 50%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 0 0% 65%;
-    --chart-1: 0 0% 85%;
-    --chart-2: 0 0% 65%;
-    --chart-3: 0 0% 50%;
-    --chart-4: 0 0% 37%;
-    --chart-5: 0 0% 27%;
-    --sidebar: 0 0% 7%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 0 0% 85%;
-    --sidebar-primary-foreground: 0 0% 4%;
-    --sidebar-accent: 0 0% 15%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 18%;
-    --sidebar-ring: 0 0% 65%;
-    --viz-highlight: 217.2 91.2% 59.8%;
+    /* ── Ink ───────────────────────────────────────────────────────────
+       Warm charcoal, ~#141210. The 10% saturation is doing real work:
+       at 0% this is the dead neutral the theme used to be. */
+    --background: 28 10% 7%;
+    --foreground: 40 20% 93%;
 
-    /* ── Visualization tokens (dark) ───────────────────────
-       These reproduce the previous hardcoded GitHub-dark hex
-       exactly, so dark mode is pixel-stable across this change:
-       cat-1..8 == the old MOD_PALETTE, seq == #161b22 → #f0883e,
-       surfaces == the old .viz-tooltip #21262d / #30363d / #e6edf3. */
+    --card: 30 9% 10%;
+    --card-foreground: 40 20% 93%;
+    --popover: 30 9% 12%;
+    --popover-foreground: 40 20% 93%;
+
+    --primary: 36 94% 60%;
+    --primary-foreground: 28 30% 8%;
+
+    --secondary: 30 8% 16%;
+    --secondary-foreground: 40 20% 93%;
+    --muted: 30 8% 16%;
+    --muted-foreground: 36 10% 62%;
+    --accent: 30 8% 18%;
+    --accent-foreground: 40 20% 93%;
+
+    --destructive: 4 72% 58%;
+    --destructive-foreground: 28 30% 8%;
+
+    --border: 32 8% 18%;
+    --input: 32 8% 18%;
+    --ring: 36 94% 60%;
+
+    --shadow-hue: 0 0% 0%;
+
+    --sidebar: 28 9% 9%;
+    --sidebar-foreground: 40 20% 93%;
+    --sidebar-primary: 36 94% 60%;
+    --sidebar-primary-foreground: 28 30% 8%;
+    --sidebar-accent: 30 8% 18%;
+    --sidebar-accent-foreground: 40 20% 93%;
+    --sidebar-border: 32 8% 18%;
+    --sidebar-ring: 36 94% 60%;
+
+    --chart-1: 36 94% 60%;
+    --chart-2: 172 52% 52%;
+    --chart-3: 208 76% 64%;
+    --chart-4: 340 68% 66%;
+    --chart-5: 46 82% 62%;
+
+    --viz-highlight: 36 94% 60%;
+
+    /* Categorical ramp unchanged — see the note in :root. */
     --viz-cat-1: 212 100% 67%;
     --viz-cat-2: 129 49% 49%;
     --viz-cat-3: 266 100% 77%;
@@ -126,17 +163,17 @@
     --viz-cat-7: 126 57% 58%;
     --viz-cat-8: 267 100% 83%;
 
-    /* Dark cat colors are bright pastels — white text on them fails 4.5:1
-       (this was the old `rgba(255,255,255,0.7)` badge bug). Near-black wins. */
-    --viz-cat-ink: 222 47% 11%;
+    /* Dark cat colors are bright pastels — white text on them fails 4.5:1.
+       Near-black wins. */
+    --viz-cat-ink: 28 30% 8%;
 
-    --viz-seq-from: 215 21% 11%;
-    --viz-seq-to: 26 85% 59%;
+    --viz-seq-from: 30 9% 12%;
+    --viz-seq-to: 30 88% 58%;
 
-    --viz-surface: 215 15% 15%;
-    --viz-ink: 210 32% 92%;
-    --viz-ink-dim: 212 9% 58%;
-    --viz-edge: 215 13% 22%;
+    --viz-surface: 30 9% 13%;
+    --viz-ink: 40 20% 93%;
+    --viz-ink-dim: 36 10% 62%;
+    --viz-edge: 32 8% 20%;
   }
 
   * {
@@ -146,36 +183,136 @@
   body {
     @apply antialiased bg-background text-foreground;
     overflow: hidden;
+    font-feature-settings: "cv05" 1;
   }
 
-  html {
-    font-family: var(--font-geist-mono), ui-monospace, monospace;
+  /*
+   * Focus: one ring, everywhere, in the accent. Radix and native controls
+   * both land here, so keyboard users get an identical affordance whether
+   * they are on a <button>, a tab, or a dropdown item.
+   */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 }
 
-/* ══════════════════════════════════════════
+/* ══════════════════════════════════════════════════════════════════════
    TYPOGRAPHY
-   ══════════════════════════════════════════ */
+
+   The report pages are long-form generated prose — paragraphs of
+   architecture explanation. That is reading, not scanning, so it is set
+   in the serif at a measure that tops out near 68 characters. Everything
+   structural stays in the sans.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.font-display {
+  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  font-optical-sizing: auto;
+  letter-spacing: -0.018em;
+  font-weight: 500;
+}
 
 .prose {
-  font-size: 15px;
-  line-height: 1.7;
+  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  font-size: 1.0625rem;
+  line-height: 1.72;
+  color: hsl(var(--foreground) / 0.88);
+}
+
+/*
+ * The reading measure is opt-in, NOT part of `.prose`.
+ *
+ * These rules sit after `@tailwind utilities`, so a `max-width` declared
+ * on `.prose` would beat `max-w-none` on identical specificity by source
+ * order alone — the utility would look applied and do nothing. Keeping
+ * the measure in its own class means callers who want a wide container
+ * (chat answers containing code blocks) simply don't add it.
+ */
+.measure {
+  max-width: 68ch;
 }
 
 .prose h1,
 .prose h2,
-.prose h3 {
+.prose h3,
+.prose h4 {
+  font-family: var(--font-serif), ui-serif, Georgia, serif;
+  font-optical-sizing: auto;
   font-weight: 600;
   letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
 }
 
-/* ══════════════════════════════════════════
+.prose h2 {
+  margin-top: 2em;
+  margin-bottom: 0.6em;
+  font-size: 1.4em;
+}
+
+.prose h3 {
+  margin-top: 1.6em;
+  margin-bottom: 0.5em;
+  font-size: 1.15em;
+}
+
+.prose p + p {
+  margin-top: 1.05em;
+}
+
+.prose strong {
+  font-weight: 650;
+  color: hsl(var(--foreground));
+}
+
+/* Inline code inside prose is an identifier, not a code block — it gets
+   the mono face and a tint, but no border, so it doesn't chop the line. */
+.prose :not(pre) > code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.855em;
+  padding: 0.12em 0.36em;
+  border-radius: 4px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.prose pre {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  background: hsl(var(--muted) / 0.6);
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+
+/* A repo path, a symbol, a count. Tabular figures so columns of numbers
+   don't jitter as they stream in. */
+.tabular {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Small caps section label — replaces the repeated
+   `text-xs font-semibold uppercase tracking-wider text-muted-foreground`. */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ══════════════════════════════════════════════════════════════════════
    SCROLLBAR
-   ══════════════════════════════════════════ */
+   ══════════════════════════════════════════════════════════════════════ */
 
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -183,83 +320,275 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--border));
-  border-radius: 4px;
+  background: hsl(var(--foreground) / 0.14);
+  border-radius: 999px;
+  /* Inset via a transparent border so the bar reads as a slim 4px line
+     but keeps a comfortable 10px grab target. */
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
+  background: hsl(var(--foreground) / 0.28);
+  background-clip: content-box;
 }
 
-/* ══════════════════════════════════════════
-   GLASS & PANEL EFFECTS
-   ══════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════════
+   SURFACES
 
-.glass-panel {
-  background: hsl(var(--card) / 0.4);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+   Two panel treatments, not five. `.panel` is the default resting
+   surface; `.panel-raised` is for things that float over content
+   (modals, popovers, the sidebar when it overlays on narrow screens).
+   ══════════════════════════════════════════════════════════════════════ */
+
+.panel {
+  background: hsl(var(--card) / 0.72);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
   border: 1px solid hsl(var(--border));
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+.panel-raised {
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  box-shadow:
+    0 4px 8px hsl(var(--shadow-hue) / 0.08),
+    0 24px 48px -12px hsl(var(--shadow-hue) / 0.18);
+}
+
+/* Legacy aliases — ArchitectureGraph still references these. */
+.glass-panel {
+  background: hsl(var(--card) / 0.72);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 2px 4px hsl(var(--shadow-hue) / 0.06);
 }
 
 .glass-panel-heavy {
-  background: hsl(var(--card) / 0.6);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
+  background: hsl(var(--card) / 0.88);
+  backdrop-filter: blur(32px) saturate(1.4);
+  -webkit-backdrop-filter: blur(32px) saturate(1.4);
   border: 1px solid hsl(var(--border));
 }
 
-/* ══════════════════════════════════════════
-   TYPING DOTS
-   ══════════════════════════════════════════ */
+/* Hairline that fades at both ends — used to separate stacked panels
+   without drawing a hard box around everything. */
+.rule-fade {
+  height: 1px;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    hsl(var(--border)) 12%,
+    hsl(var(--border)) 88%,
+    transparent
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   MOTION
+
+   House curve is `cubic-bezier(0.32, 0.72, 0, 1)` — fast out of the
+   gate, long soft settle. Durations stay 120–260ms; the old screens
+   used 800ms page-load fades with 300ms delays, which meant the first
+   thing the product did was make you wait.
+   ══════════════════════════════════════════════════════════════════════ */
 
 @keyframes typing-dot {
   0%,
   60%,
   100% {
     transform: translateY(0);
+    opacity: 0.45;
   }
 
   30% {
-    transform: translateY(-4px);
+    transform: translateY(-3px);
+    opacity: 1;
   }
 }
 
 .typing-dot:nth-child(1) {
-  animation: typing-dot 1.4s ease-in-out infinite;
+  animation: typing-dot 1.3s ease-in-out infinite;
 }
 
 .typing-dot:nth-child(2) {
-  animation: typing-dot 1.4s ease-in-out 0.2s infinite;
+  animation: typing-dot 1.3s ease-in-out 0.16s infinite;
 }
 
 .typing-dot:nth-child(3) {
-  animation: typing-dot 1.4s ease-in-out 0.4s infinite;
+  animation: typing-dot 1.3s ease-in-out 0.32s infinite;
 }
 
-/* ══════════════════════════════════════════
-   GLOW PULSE
-   ══════════════════════════════════════════ */
-
-@keyframes glow-pulse {
+/*
+ * `.glow-pulse` used to throb a box-shadow forever on the logo — motion
+ * with nothing to say, running on every frame of every page. It now
+ * marks genuinely live state (a stream that is still arriving), which is
+ * the only thing that earns a permanent animation.
+ */
+@keyframes live-pulse {
   0%,
   100% {
-    box-shadow: 0 0 8px hsl(var(--primary) / 0.3);
+    opacity: 1;
+    transform: scale(1);
   }
 
   50% {
-    box-shadow: 0 0 16px hsl(var(--primary) / 0.5);
+    opacity: 0.45;
+    transform: scale(0.86);
   }
 }
 
-.glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
+.glow-pulse,
+.live-dot {
+  animation: live-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* ══════════════════════════════════════════
-   SPOTLIGHT ANIMATION
-   ══════════════════════════════════════════ */
+/* Staggered arrival for lists and grids. Set `--i` per child; the cap
+   keeps a 60-item list from taking three seconds to finish landing. */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise-in {
+  animation: rise-in 0.34s cubic-bezier(0.32, 0.72, 0, 1) backwards;
+  animation-delay: calc(min(var(--i, 0) * 34ms, 340ms));
+}
+
+/*
+ * Reduced motion means *less* motion, not none. The usual
+ * `* { animation-duration: 0.01ms }` sledgehammer also kills the opacity
+ * and colour transitions that tell you a thing changed — which leaves
+ * the interface harder to follow, not gentler.
+ *
+ * So: kill movement, keep fades. Position and scale are what trigger
+ * vestibular symptoms; a 150ms crossfade does not.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .rise-in,
+  .spotlight {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .glow-pulse,
+  .live-dot,
+  .typing-dot {
+    /* Still needs to read as "live" — pulse opacity only, no scale. */
+    animation: reduced-pulse 2s ease-in-out infinite !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    /* Movement off; colour/opacity transitions survive because they are
+       re-declared at a short duration rather than zeroed. */
+    transition-property: opacity, color, background-color, border-color,
+      box-shadow, fill, stroke !important;
+    transition-duration: 140ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes reduced-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   OVERLAYS — tooltips, dropdowns, popovers
+
+   These were relying on `animate-in fade-in-0 zoom-in-95` from
+   `tailwindcss-animate`, which is not among this project's Tailwind
+   plugins and is not imported anywhere — the classes were inert and the
+   overlays simply appeared. Written here as real CSS.
+
+   Two details:
+     · Origin. Radix hands us `--radix-*-content-transform-origin`, which
+       points at the trigger. Scaling from `center` makes a tooltip look
+       like it materialised beside its button rather than out of it.
+     · Never from `scale(0)`. Nothing in the world appears from nothing;
+       0.96 keeps the shape present for the whole entrance.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.overlay-pop {
+  transform-origin: var(--radix-tooltip-content-transform-origin, center);
+  animation: overlay-in 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.overlay-pop[data-state="closed"] {
+  /* Exit is faster than entry — the user has already moved on. */
+  animation: overlay-out 100ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+.overlay-pop-menu {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin, center);
+  animation: overlay-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.overlay-pop-menu[data-state="closed"] {
+  animation: overlay-out 110ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+/*
+ * Radix sets `data-instant` on nothing by itself, but the Provider's
+ * `skipDelayDuration` means the 2nd..nth tooltip in a group opens with no
+ * delay. Matching that, they should also open with no *animation* — the
+ * toolbar then feels instant instead of replaying a 140ms entrance for
+ * every icon the cursor crosses.
+ */
+.overlay-pop[data-instant] {
+  animation-duration: 0ms;
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes overlay-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   LAMPLIGHT — the login / welcome backdrop
+
+   Was three flat grey rings. Now it is a warm pool of light falling on
+   the page from above, plus a faint paper grain. The grain is a single
+   inline SVG turbulence — no network request, no image asset — and it
+   is what stops the large empty areas from looking like flat vector.
+   ══════════════════════════════════════════════════════════════════════ */
 
 .spotlight-container {
   position: relative;
@@ -270,103 +599,151 @@
   background-color: hsl(var(--background));
 }
 
+.spotlight-container::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.28;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+}
+
+.dark .spotlight-container::after {
+  opacity: 0.16;
+}
+
 .spotlight-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
 }
 
 .spotlight {
   position: absolute;
-  width: min(90vh, 700px);
-  height: min(90vh, 700px);
   border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  background: radial-gradient(circle, rgba(0, 0, 0, 0.04) 0%, transparent 70%);
+  filter: blur(12px);
+  will-change: transform;
 }
 
-.dark .spotlight {
-  border-color: rgba(255, 255, 255, 0.06);
+/*
+ * Drift, not orbit. The previous version rotated and translated three
+ * blobs by up to 20% on 12–18s loops, which reads as a lava lamp behind
+ * a login form. These move a few percent over a minute — enough that the
+ * light is never quite static, not enough to notice it moving.
+ */
+@keyframes drift-a {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(2.5%, -3%, 0) scale(1.06);
+  }
+}
+
+@keyframes drift-b {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(-3%, 2.5%, 0) scale(1.05);
+  }
+}
+
+/* Main pool, thrown from above-centre. */
+.spotlight-mid {
+  top: -30%;
+  left: 50%;
+  width: min(120vh, 1100px);
+  height: min(120vh, 1100px);
+  margin-left: calc(-0.5 * min(120vh, 1100px));
+  background: radial-gradient(
+    circle at 50% 40%,
+    hsl(var(--primary) / 0.13) 0%,
+    hsl(var(--primary) / 0.05) 34%,
+    transparent 66%
+  );
+  animation: drift-a 54s ease-in-out infinite;
+}
+
+/* Two cooler side washes give the pool an edge to fall off. */
+.spotlight-left {
+  top: 12%;
+  left: -14%;
+  width: min(80vh, 620px);
+  height: min(80vh, 620px);
   background: radial-gradient(
     circle,
-    rgba(255, 255, 255, 0.025) 0%,
-    transparent 70%
+    hsl(var(--foreground) / 0.045) 0%,
+    transparent 68%
   );
-}
-
-.spotlight-left {
-  top: 50%;
-  left: 50%;
-  margin-top: calc(-0.5 * min(90vh, 700px));
-  margin-left: calc(-0.75 * min(90vh, 700px));
-}
-
-.spotlight-mid {
-  top: 50%;
-  left: 50%;
-  width: min(100vh, 800px);
-  height: min(100vh, 800px);
-  margin-top: calc(-0.5 * min(100vh, 800px));
-  margin-left: calc(-0.5 * min(100vh, 800px));
+  animation: drift-b 68s ease-in-out infinite;
 }
 
 .spotlight-right {
-  top: 50%;
-  left: 50%;
-  margin-top: calc(-0.5 * min(90vh, 700px));
-  margin-left: calc(-0.25 * min(90vh, 700px));
+  bottom: -18%;
+  right: -12%;
+  width: min(85vh, 680px);
+  height: min(85vh, 680px);
+  background: radial-gradient(
+    circle,
+    hsl(var(--primary) / 0.075) 0%,
+    transparent 68%
+  );
+  animation: drift-a 61s ease-in-out -20s infinite;
+}
+
+.dark .spotlight-mid {
+  background: radial-gradient(
+    circle at 50% 40%,
+    hsl(var(--primary) / 0.16) 0%,
+    hsl(var(--primary) / 0.055) 34%,
+    transparent 66%
+  );
+}
+
+.dark .spotlight-left {
+  background: radial-gradient(
+    circle,
+    hsl(210 60% 60% / 0.06) 0%,
+    transparent 68%
+  );
 }
 
 .spotlight-content {
   position: relative;
   z-index: 10;
-  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding-top: 8vh;
-  padding-bottom: 4rem;
+  padding-top: 9vh;
+  padding-bottom: 5rem;
 }
 
-/* ══════════════════════════════════════════
-   REPORT VIEW — Shimmer & Visualization
-   ══════════════════════════════════════════ */
-
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-
-  100% {
-    background-position: 200% 0;
-  }
-}
-
-.skeleton-shimmer {
-  background: linear-gradient(90deg, #21262d 25%, #30363d 50%, #21262d 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: 6px;
-}
+/* ══════════════════════════════════════════════════════════════════════
+   VISUALIZATION SURFACES
+   ══════════════════════════════════════════════════════════════════════ */
 
 .viz-box {
   background: hsl(var(--card));
-  border-radius: 12px;
+  border-radius: var(--radius);
   border: 1px solid hsl(var(--border));
   padding: 24px;
   min-height: 300px;
 }
 
-/* Phase 3B — Visualization styles */
 .viz-node {
   cursor: pointer;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.18s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .viz-node:hover {
@@ -382,27 +759,31 @@
   pointer-events: none;
   background: hsl(var(--viz-surface));
   border: 1px solid hsl(var(--viz-edge));
-  border-radius: 6px;
-  padding: 6px 10px;
-  font-size: 12px;
+  border-radius: calc(var(--radius) - 2px);
+  padding: 7px 11px;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 11.5px;
   color: hsl(var(--viz-ink));
   z-index: 100;
   white-space: nowrap;
-  box-shadow: 0 4px 16px hsl(0 0% 0% / 0.14);
+  box-shadow:
+    0 2px 4px hsl(var(--shadow-hue) / 0.08),
+    0 12px 28px -8px hsl(var(--shadow-hue) / 0.22);
 }
 
 /*
  * T12: a chart node that has keyboard focus has to show it.
  *
- * These are SVG <g> elements, so Tailwind's ring utilities (box-shadow based)
- * do nothing — SVG has no box-shadow. `outline` is the one focus affordance
- * SVG honours, and it follows the element's rendered geometry rather than a
- * bounding box, which is what makes it land correctly on rotated or
- * non-rectangular nodes.
+ * These are SVG <g> elements, so Tailwind's ring utilities (box-shadow
+ * based) do nothing — SVG has no box-shadow. `outline` is the one focus
+ * affordance SVG honours, and it follows the element's rendered geometry
+ * rather than a bounding box, which is what makes it land correctly on
+ * rotated or non-rectangular nodes.
  */
 .viz-node:focus {
   outline: none;
 }
+
 .viz-node:focus-visible {
   outline: 2px solid hsl(var(--viz-highlight));
   outline-offset: 3px;

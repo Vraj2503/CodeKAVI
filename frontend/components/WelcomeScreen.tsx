@@ -4,25 +4,19 @@ import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  GitBranch,
   Loader2,
-  Search,
-  Plus,
+  ArrowRight,
   MessageSquare,
   Clock,
-  Code2,
-  X,
-  Sparkles,
   LogOut,
   Trash2,
 } from "lucide-react";
-import { AnimatedInput } from "./ui/AnimatedInput";
 import SpotlightBackground from "./ui/spotlight-background";
-import { HeroShutterText } from "./ui/HeroShutterText";
-import { Button } from "./ui/NeonButton";
+import { Button } from "./ui/button";
 import ThemeSwitch from "./ui/theme-switch";
 import { AnalysisProgress } from "./AnalysisProgress";
 import { cn } from "@/lib/utils";
+import { normalizeRepoUrl } from "@/lib/repoUrl";
 import { type AnalyzeResponse } from "@/lib/api";
 import {
   getSessions,
@@ -41,7 +35,6 @@ export function WelcomeScreen() {
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(true);
-  const [showNewChat, setShowNewChat] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
   const [progressUrl, setProgressUrl] = useState("");
 
@@ -66,9 +59,8 @@ export function WelcomeScreen() {
     if (!url.trim() || isAnalyzing) return;
 
     // Show the full-screen progress component instead of navigating immediately
-    setProgressUrl(url.trim());
+    setProgressUrl(normalizeRepoUrl(url));
     setShowProgress(true);
-    setShowNewChat(false);
     setIsAnalyzing(true);
   };
 
@@ -136,8 +128,8 @@ export function WelcomeScreen() {
   // Show loading spinner while checking auth
   if (authLoading || !user) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-background">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary [animation-duration:0.6s]" />
       </div>
     );
   }
@@ -180,259 +172,272 @@ export function WelcomeScreen() {
       </AnimatePresence>
 
       <SpotlightBackground>
-        {/* Top bar — user info + theme toggle */}
-        <div className="fixed top-6 right-6 z-50 flex items-center gap-3">
-          {user.user_metadata?.avatar_url && (
-            <>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={user.user_metadata.avatar_url}
-                alt={user.user_metadata.full_name || "Avatar"}
-                className="w-8 h-8 rounded-full border border-border/50"
-                referrerPolicy="no-referrer"
-              />
-            </>
-          )}
-          <button
-            onClick={handleSignOut}
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
-            title="Sign out"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-          <ThemeSwitch />
-        </div>
+        <div className="mx-auto w-full max-w-3xl px-6">
+          {/* ── Masthead ─────────────────────────────────────────────
+              Left-aligned, like the top of a page rather than the
+              centre of a landing page. The account controls sit on the
+              same baseline instead of floating in a fixed corner. */}
+          <header className="mb-16 flex items-baseline justify-between gap-4">
+            <div className="flex items-baseline gap-2.5">
+              <span className="font-display text-[21px] leading-none text-foreground">
+                CodeKavi
+              </span>
+              <span
+                className="font-display text-sm leading-none text-muted-foreground/70"
+                aria-hidden="true"
+              >
+                कवि
+              </span>
+            </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 40 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut", delay: 0.3 }}
-          className="relative z-10 w-full max-w-4xl px-6 flex flex-col items-center"
-        >
-          {/* Title */}
-          <HeroShutterText
-            text="CodeKavi"
-            className="text-4xl md:text-5xl lg:text-6xl text-foreground mb-4 tracking-tight text-center"
-          />
+            <div className="flex items-center gap-1.5 self-center">
+              <ThemeSwitch />
+              {user.user_metadata?.avatar_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={user.user_metadata.avatar_url}
+                  alt={user.user_metadata.full_name || "Your avatar"}
+                  className="ml-1.5 h-7 w-7 rounded-full ring-1 ring-border"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleSignOut}
+                title="Sign out"
+                aria-label="Sign out"
+              >
+                <LogOut />
+              </Button>
+            </div>
+          </header>
 
-          <p className="text-center text-base md:text-lg text-muted-foreground mb-12 max-w-lg leading-relaxed font-light">
-            Analyze GitHub repositories and chat with your codebase. Answers are
-            grounded in actual source code.
-          </p>
+          {/* ── The ask ──────────────────────────────────────────────
+              The repo field used to live behind a "+ New chat" card
+              that opened a modal — two clicks and a layer of chrome in
+              front of the one thing this page exists to do. It is now
+              the first interactive element on the page. */}
+          <section className="mb-20">
+            <h1 className="font-display text-[2.6rem] leading-[1.08] tracking-[-0.025em] text-foreground sm:text-[3.4rem]">
+              Read any codebase
+              <br />
+              <span className="text-muted-foreground/55">
+                like it was written for you.
+              </span>
+            </h1>
 
-          {/* Grid: "+ New chat" card + session cards */}
-          <div className="w-full">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-              Recent Chats
-            </h2>
+            <p className="mt-5 max-w-md font-sans text-[15px] leading-relaxed text-muted-foreground">
+              Point CodeKavi at a GitHub repository. Every answer it gives
+              is grounded in the actual source, and cites the file it came
+              from.
+            </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* "+ Create new chat" card */}
-              <motion.button
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                onClick={() => setShowNewChat(true)}
+            <form onSubmit={handleSubmit} className="mt-9">
+              {/*
+                No fixed `github.com/` prefix in front of this field.
+                It made the typed value a bare `owner/repo`, which reaches
+                the backend with no hostname and comes back as
+                "Unsupported repository host" — and it hid the fact that
+                GitLab and Bitbucket are supported too. `normalizeRepoUrl`
+                now accepts every reasonable form instead.
+              */}
+              <div
                 className={cn(
-                  "text-left rounded-2xl p-5 h-40",
-                  "border-2 border-dashed border-border/50",
-                  "hover:border-primary/50 hover:bg-card/20",
-                  "transition-all duration-300 group cursor-pointer",
-                  "flex flex-col items-center justify-center gap-3",
+                  "group flex items-center gap-2 rounded-xl border border-border bg-card/60 p-1.5 pl-4",
+                  "shadow-raise backdrop-blur-xl",
+                  "transition-[border-color,box-shadow] duration-200 ease-swift",
+                  "focus-within:border-primary/50 focus-within:shadow-lift",
                 )}
               >
-                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 group-hover:scale-110 transition-all duration-300">
-                  <Plus className="w-6 h-6 text-primary" />
-                </div>
-                <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">
-                  Create new chat
-                </span>
-              </motion.button>
+                <input
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="github.com/owner/repo"
+                  aria-label="Repository URL"
+                  autoFocus
+                  className={cn(
+                    "min-w-0 flex-1 bg-transparent font-mono text-sm text-foreground",
+                    "placeholder:text-muted-foreground/45",
+                    "outline-none focus-visible:outline-none",
+                  )}
+                />
+                <Button
+                  type="submit"
+                  disabled={!url.trim() || isAnalyzing}
+                  className="shrink-0"
+                >
+                  {isAnalyzing ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      Analyzing
+                    </>
+                  ) : (
+                    <>
+                      Analyze
+                      <ArrowRight />
+                    </>
+                  )}
+                </Button>
+              </div>
+            </form>
+          </section>
 
-              {/* Loading skeletons */}
-              {loadingSessions &&
-                [1, 2].map((i) => (
+          {/*
+            The three "Chat with Code / AI Insights / Source Citations"
+            feature cards that used to sit here were marketing copy on a
+            page you can only reach by signing in. Whoever is reading it
+            has already bought the product; the space now goes to their
+            actual work.
+          */}
+
+          {/* ── Recent ───────────────────────────────────────────── */}
+          <section className="pb-8">
+            <div className="mb-5 flex items-center gap-4">
+              <h2 className="eyebrow">Recent</h2>
+              <hr className="rule-fade flex-1" />
+              {!loadingSessions && sessions.length > 0 && (
+                <span className="tabular text-[11px] text-muted-foreground/70">
+                  {sessions.length}
+                </span>
+              )}
+            </div>
+
+            {loadingSessions ? (
+              <div className="space-y-px">
+                {[0, 1, 2].map((i) => (
                   <div
                     key={i}
-                    className="h-40 rounded-2xl bg-card/20 border border-border/30 animate-pulse"
-                  />
-                ))}
-
-              {/* Session cards */}
-              <AnimatePresence>
-                {sessions.map((session, i) => (
-                  <motion.div
-                    role="button"
-                    tabIndex={0}
-                    key={session.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 + i * 0.05, duration: 0.3 }}
-                    onClick={() => handleResumeSession(session)}
-                    className={cn(
-                      "text-left rounded-2xl p-5 h-40",
-                      "bg-card/30 backdrop-blur-xl border border-border/40",
-                      "hover:border-border hover:bg-card/50",
-                      "transition-all duration-300 group cursor-pointer",
-                      "flex flex-col justify-between",
-                    )}
+                    className="flex h-[58px] animate-pulse items-center gap-4 px-1"
+                    style={{ animationDelay: `${i * 90}ms` }}
                   >
-                    <div className="flex justify-between items-start">
-                      <div className="min-w-0 pr-2">
-                        <p className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">
-                          {session.owner}/{session.repo_name}
-                        </p>
-                        {topLangs(session.languages) && (
-                          <p className="text-xs text-muted-foreground mt-1.5 truncate">
-                            {topLangs(session.languages)}
-                          </p>
+                    <div className="h-3.5 w-48 rounded bg-muted" />
+                    <div className="h-3 w-24 rounded bg-muted/60" />
+                  </div>
+                ))}
+              </div>
+            ) : sessions.length === 0 ? (
+              <p className="py-8 font-sans text-sm text-muted-foreground/70">
+                Nothing yet — analyze a repository above and it will show
+                up here.
+              </p>
+            ) : (
+              /*
+                A list, not a grid of 160px cards. These rows are ordered
+                by recency and the thing you scan for is the repo name,
+                so they want to be a single left-aligned column with the
+                names stacked in one place. The dividing hairlines do the
+                separating that eight rounded borders were doing before.
+              */
+              <ul className="-mx-3">
+                <AnimatePresence initial={false}>
+                  {sessions.map((session, i) => (
+                    <motion.li
+                      key={session.id}
+                      layout
+                      /*
+                       * `transform` as a string rather than framer's `y`
+                       * shorthand: the shorthand animates on the main
+                       * thread via rAF and drops frames while the session
+                       * list is still fetching. The full transform string
+                       * gets composited.
+                       *
+                       * Exit still animates height — that is a layout
+                       * property and normally forbidden, but collapsing
+                       * the gap is the whole point of a row removal, and
+                       * it only runs on one row at a time.
+                       */
+                      initial={{ opacity: 0, transform: "translateY(6px)" }}
+                      animate={{ opacity: 1, transform: "translateY(0px)" }}
+                      exit={{ opacity: 0, height: 0, marginTop: 0 }}
+                      transition={{
+                        duration: 0.24,
+                        ease: [0.23, 1, 0.32, 1],
+                        delay: Math.min(i * 0.03, 0.24),
+                      }}
+                    >
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleResumeSession(session)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            handleResumeSession(session);
+                          }
+                        }}
+                        className={cn(
+                          "group relative flex cursor-pointer items-center gap-4 rounded-lg px-3 py-3.5",
+                          "transition-colors duration-150 ease-swift",
+                          "hover:bg-accent/50",
                         )}
-                      </div>
-                      <button
-                        onClick={(e) => handleDeleteSession(session.id, e)}
-                        className="p-1.5 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0"
-                        title="Delete chat"
                       >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                        {/* Accent marker — appears only on the row you
+                            are pointing at, so exactly one thing on the
+                            page is amber at a time.
 
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {timeAgo(session.updated_at)}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <MessageSquare className="w-3 h-3" />
-                        {session.message_count || 0}
-                      </span>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
+                            Grows via scaleY, not height: height would
+                            trigger layout on every frame of the hover.
+                            Fixed 24px box, scaled from the centre. */}
+                        <span
+                          className={cn(
+                            "absolute left-0 top-1/2 h-6 w-[2px] -translate-y-1/2 rounded-full bg-primary",
+                            "origin-center scale-y-0 transition-transform duration-200 ease-out",
+                            "[@media(hover:hover)]:group-hover:scale-y-100",
+                          )}
+                          aria-hidden="true"
+                        />
 
-          {/* Feature cards */}
-          <div className="mt-14 grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
-            {[
-              {
-                icon: MessageSquare,
-                title: "Chat with Code",
-                desc: "Ask questions, get grounded answers",
-              },
-              {
-                icon: Sparkles,
-                title: "AI Insights",
-                desc: "Understand architecture instantly",
-              },
-              {
-                icon: Code2,
-                title: "Source Citations",
-                desc: "Every answer links to real files",
-              },
-            ].map((feature, i) => (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 + i * 0.1, duration: 0.5 }}
-                key={feature.title}
-                className="bg-card/30 backdrop-blur-xl border border-border/40 hover:border-border hover:bg-card/50 transition-all duration-300 rounded-2xl p-5 text-center group"
-              >
-                <div className="w-10 h-10 mx-auto bg-primary/10 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition-transform duration-300">
-                  <feature.icon className="w-5 h-5 text-primary" />
-                </div>
-                <p className="text-sm font-semibold text-foreground mb-1">
-                  {feature.title}
-                </p>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {feature.desc}
-                </p>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-mono text-[13.5px] text-foreground">
+                            <span className="text-muted-foreground/60">
+                              {session.owner}/
+                            </span>
+                            {session.repo_name}
+                          </p>
+                          {topLangs(session.languages) && (
+                            <p className="mt-1 truncate font-sans text-xs text-muted-foreground/75">
+                              {topLangs(session.languages)}
+                            </p>
+                          )}
+                        </div>
 
-        {/* ── "New Chat" Modal ── */}
-        <AnimatePresence>
-          {showNewChat && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm"
-              onClick={() => !isAnalyzing && setShowNewChat(false)}
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                transition={{ duration: 0.25, ease: "easeOut" }}
-                className="bg-card border border-border/60 rounded-2xl shadow-2xl p-8 w-full max-w-md mx-4"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Modal Header */}
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
-                      <Code2 className="w-5 h-5 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-bold text-foreground">
-                        New Chat
-                      </h3>
-                      <p className="text-xs text-muted-foreground">
-                        Add a GitHub repository to analyze
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => !isAnalyzing && setShowNewChat(false)}
-                    className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+                        <div className="hidden shrink-0 items-center gap-4 font-sans text-xs text-muted-foreground/70 sm:flex">
+                          <span className="flex items-center gap-1.5">
+                            <MessageSquare className="h-3 w-3" />
+                            <span className="tabular">
+                              {session.message_count || 0}
+                            </span>
+                          </span>
+                          <span className="flex w-16 items-center gap-1.5">
+                            <Clock className="h-3 w-3" />
+                            {timeAgo(session.updated_at)}
+                          </span>
+                        </div>
 
-                {/* Modal Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="relative group">
-                    <GitBranch className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground group-focus-within:text-primary transition-colors z-10" />
-                    <AnimatedInput
-                      type="text"
-                      value={url}
-                      onChange={(e) => setUrl(e.target.value)}
-                      placeholder="https://github.com/user/repo"
-                      className="w-full pl-12 pr-4 py-4 text-base bg-background/50 border-border/50 text-foreground rounded-xl"
-                      autoFocus
-                    />
-                  </div>
-
-                  <Button
-                    type="submit"
-                    disabled={!url.trim() || isAnalyzing}
-                    className="w-full h-12 rounded-xl text-sm font-semibold"
-                    variant="solid"
-                    neon={true}
-                  >
-                    {isAnalyzing ? (
-                      <span className="flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Cloning & Analyzing…
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-2">
-                        <Search className="w-4 h-4" />
-                        Analyze Repository
-                      </span>
-                    )}
-                  </Button>
-                </form>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                        <button
+                          onClick={(e) => handleDeleteSession(session.id, e)}
+                          className={cn(
+                            "shrink-0 rounded-md p-1.5 text-muted-foreground/60",
+                            "opacity-0 transition-all duration-150",
+                            "hover:bg-destructive/10 hover:text-destructive",
+                            "focus-visible:opacity-100 group-hover:opacity-100",
+                          )}
+                          title={`Delete ${session.owner}/${session.repo_name}`}
+                          aria-label={`Delete ${session.owner}/${session.repo_name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <hr className="rule-fade mx-3 opacity-60" />
+                    </motion.li>
+                  ))}
+                </AnimatePresence>
+              </ul>
+            )}
+          </section>
+        </div>
       </SpotlightBackground>
     </>
   );
