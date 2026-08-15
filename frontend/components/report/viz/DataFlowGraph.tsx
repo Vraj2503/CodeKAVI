@@ -31,12 +31,13 @@ import {
   type NodeMouseHandler,
   applyNodeChanges,
   applyEdgeChanges,
+  Panel,
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
 import "./dataflow-overrides.css";
 
-import { Menu } from "lucide-react";
+import { Menu, Map } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 import { catVar } from "@/lib/viz/tokens";
@@ -134,6 +135,7 @@ function DataFlowGraphInner({
   const [replayRun, setReplayRun] = useState(0);
   const replayTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isToolbarExpanded, setIsToolbarExpanded] = useState(false);
+  const [isMinimapOpen, setIsMinimapOpen] = useState(true);
   const layoutRunning = useRef(false);
 
   // ── Convert props → RF shapes ──────────────────────────────────────────────
@@ -375,16 +377,33 @@ function DataFlowGraphInner({
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
           <FlowMarkerDefs />
-          <MiniMap
-            pannable
-            zoomable
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            nodeColor={(n: any) =>
-              minimapNodeColor(n?.data?.flow?.kind ?? "action")
-            }
-            maskColor="hsl(var(--background) / 0.85)"
-            nodeStrokeWidth={2}
-          />
+          {isMinimapOpen && (
+            <MiniMap
+              position="bottom-left"
+              pannable
+              zoomable
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              nodeColor={(n: any) =>
+                minimapNodeColor(n?.data?.flow?.kind ?? "action")
+              }
+              maskColor="hsl(var(--background) / 0.85)"
+              nodeStrokeWidth={2}
+            />
+          )}
+          <Panel position="bottom-left" className="export-hide">
+            <button
+              onClick={() => setIsMinimapOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card/90 shadow text-muted-foreground transition-colors hover:bg-accent hover:text-foreground backdrop-blur-sm"
+              title={isMinimapOpen ? "Hide minimap" : "Show minimap"}
+              style={{
+                /* React Flow panels have margin by default. Pushing it slightly allows it to sit cleanly below/next to the minimap */
+                marginLeft: isMinimapOpen ? "4px" : "0", 
+                marginBottom: isMinimapOpen ? "4px" : "0"
+              }}
+            >
+              <Map size={14} />
+            </button>
+          </Panel>
         </ReactFlow>
 
         {/* Detail panel — absolutely positioned inside the canvas */}

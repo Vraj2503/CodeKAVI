@@ -71,15 +71,19 @@ export const FlowEdge = memo(function FlowEdge(props: FlowEdgeProps) {
         <circle
           r={4}
           fill={style.stroke}
-          opacity={0.9}
+          opacity={0}
         >
           <animateMotion
             dur={motionDur}
             repeatCount="indefinite"
             path={path}
-            keyPoints="0;1"
-            keyTimes="0;1"
-            calcMode="linear"
+          />
+          <animate
+            attributeName="opacity"
+            values="0; 0.9; 0.9; 0"
+            keyTimes="0; 0.1; 0.9; 1"
+            dur={motionDur}
+            repeatCount="indefinite"
           />
         </circle>
       )}

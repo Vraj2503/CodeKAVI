@@ -503,7 +503,7 @@ function DiagnosticsBanner({ diagnostics }: { diagnostics: any }) {
   if (!incomplete) return null;
   const pct = Math.round((resolution_rate ?? 1) * 100);
   return (
-    <div className="absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
+    <div className="export-hide absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
       {pct}% of imports resolved.
       {unsupported_languages?.length > 0 &&
         ` Unsupported languages detected: ${unsupported_languages.join(", ")}.`}

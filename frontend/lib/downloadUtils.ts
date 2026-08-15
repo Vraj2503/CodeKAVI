@@ -1,49 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
-/**
- * downloadUtils.ts — Export visualization graphs as PNG, SVG, or JSON.
- *
- * All functions are pure browser utilities — no React dependencies.
- */
-
-/**
- * Find the first <svg> element inside a container element.
- */
-function findSvg(container: HTMLElement): SVGSVGElement | null {
-  return container.querySelector("svg");
-}
-
-/**
- * Clone an SVG element and inline all computed styles so the exported
- * file looks identical to what the user sees on screen.
- */
-function cloneAndStyleSvg(svg: SVGSVGElement): SVGSVGElement {
-  const clone = svg.cloneNode(true) as SVGSVGElement;
-
-  // Ensure the clone has explicit width/height (some browsers need this)
-  const bbox = svg.getBoundingClientRect();
-  clone.setAttribute("width", String(bbox.width));
-  clone.setAttribute("height", String(bbox.height));
-  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-
-  // Add a dark background so it looks right outside the app
-  const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-  bg.setAttribute("width", "100%");
-  bg.setAttribute("height", "100%");
-  bg.setAttribute("fill", "#0d1117");
-  clone.insertBefore(bg, clone.firstChild);
-
-  return clone;
-}
-
-/**
- * Serialize an SVG element to a data URL.
- */
-function svgToDataUrl(svg: SVGSVGElement): string {
-  const serializer = new XMLSerializer();
-  const svgString = serializer.serializeToString(svg);
-  const encoded = encodeURIComponent(svgString);
-  return `data:image/svg+xml;charset=utf-8,${encoded}`;
-}
+import { toPng, toSvg } from 'html-to-image';
 
 /**
  * Trigger a browser download for a given blob.
@@ -73,74 +28,48 @@ function downloadDataUrl(dataUrl: string, filename: string): void {
 
 // ── Public API ──
 
+const FILTER_CLASSES = ['react-flow__minimap', 'react-flow__controls', 'react-flow__panel', 'export-hide'];
+
+function filterUiElements(node: HTMLElement): boolean {
+  if (node?.classList) {
+    for (const cls of FILTER_CLASSES) {
+      if (node.classList.contains(cls)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 /**
- * Export the SVG inside `container` as a PNG image.
+ * Export the visual content inside `container` as a PNG image.
  */
 export async function exportAsPng(
   container: HTMLElement,
   filename = "visualization.png"
 ): Promise<void> {
-  const svg = findSvg(container);
-  if (!svg) throw new Error("No SVG element found in container");
-
-  const clone = cloneAndStyleSvg(svg);
-  const svgString = new XMLSerializer().serializeToString(clone);
-  const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
-
-  const bbox = svg.getBoundingClientRect();
-  const scale = 2; // 2x for retina
-
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = bbox.width * scale;
-      canvas.height = bbox.height * scale;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Failed to create canvas context"));
-        return;
-      }
-      ctx.scale(scale, scale);
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
-
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error("Failed to create PNG blob"));
-            return;
-          }
-          downloadBlob(blob, filename);
-          resolve();
-        },
-        "image/png",
-        1.0
-      );
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Failed to load SVG as image"));
-    };
-    img.src = url;
+  // Use a dark background to blend nicely, maintaining WySiWyg from screen
+  const dataUrl = await toPng(container, {
+    backgroundColor: '#060B18', // Match the CodeKAVI dark theme bg
+    pixelRatio: 2, // High DPI
+    filter: filterUiElements as any,
   });
+  downloadDataUrl(dataUrl, filename);
 }
 
 /**
- * Export the SVG inside `container` as an SVG file.
+ * Export the visual content inside `container` as an SVG file.
+ * We use a foreignObject wrapper through html-to-image to preserve HTML nodes and SVG edge animations!
  */
-export function exportAsSvg(
+export async function exportAsSvg(
   container: HTMLElement,
   filename = "visualization.svg"
-): void {
-  const svg = findSvg(container);
-  if (!svg) throw new Error("No SVG element found in container");
-
-  const clone = cloneAndStyleSvg(svg);
-  const svgString = new XMLSerializer().serializeToString(clone);
-  const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
-  downloadBlob(blob, filename);
+): Promise<void> {
+  const dataUrl = await toSvg(container, {
+    backgroundColor: '#060B18', // Match the CodeKAVI dark theme bg
+    filter: filterUiElements as any,
+  });
+  downloadDataUrl(dataUrl, filename);
 }
 
 /**

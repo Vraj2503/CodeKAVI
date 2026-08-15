@@ -126,7 +126,7 @@ const ZOOM_BTN = cn(
 
 function ZoomCluster({ zoom }: { zoom: VizZoom }) {
   return (
-    <div className="absolute bottom-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border border-border bg-card/90 shadow-lg backdrop-blur-sm">
+    <div className="export-hide absolute bottom-3 right-3 z-10 flex flex-col overflow-hidden rounded-lg border border-border bg-card/90 shadow-lg backdrop-blur-sm">
       <button type="button" onClick={zoom.zoomIn} aria-label="Zoom in" className={ZOOM_BTN}>
         <span aria-hidden="true" className="text-base leading-none">+</span>
       </button>
@@ -350,13 +350,13 @@ export function VizShell({
         </p>
 
         {toolbarLeft && (
-          <div className="absolute left-3 top-3 z-10 flex items-center gap-2">{toolbarLeft}</div>
+          <div className="export-hide absolute left-3 top-3 z-10 flex items-center gap-2">{toolbarLeft}</div>
         )}
         {toolbarRight && (
-          <div className="absolute right-3 top-3 z-10 flex items-center gap-2">{toolbarRight}</div>
+          <div className="export-hide absolute right-3 top-3 z-10 flex items-center gap-2">{toolbarRight}</div>
         )}
         {insetLegend && (
-          <div className="absolute bottom-3 left-3 z-10">{insetLegend}</div>
+          <div className="export-hide absolute bottom-3 left-3 z-10">{insetLegend}</div>
         )}
 
         <ZoomCluster zoom={zoom} />
