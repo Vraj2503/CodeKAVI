@@ -300,3 +300,28 @@ export const SURFACES: Record<
     rule: "#B8C0C9",
   },
 };
+
+export type SurfaceId = keyof typeof SURFACES;
+
+/**
+ * The one place the "which ground does this figure sit on" decision lives.
+ *
+ * Precedence: an explicit user pick → the ground the style implies → the app
+ * theme. A style with no `surfaceId` (3D, glass, outline) has no opinion and
+ * follows the theme, so the figure stops mounting white inside a dark shell.
+ *
+ * An explicit pick is returned *unmerged*: `style.surface` is the style's
+ * tweak to its own implied ground, so spreading it over a hand-picked
+ * surface used to hand you Neon's `#07090C` when you asked for Paper.
+ */
+export function resolveSurface(
+  style: { surfaceId?: SurfaceId; surface?: Partial<Surface> },
+  pick: SurfaceId | null,
+  themeDefault: SurfaceId,
+): Surface {
+  if (pick) return SURFACES[pick];
+  return {
+    ...SURFACES[style.surfaceId ?? themeDefault],
+    ...(style.surface ?? {}),
+  };
+}
