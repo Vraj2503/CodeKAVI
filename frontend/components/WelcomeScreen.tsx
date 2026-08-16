@@ -70,7 +70,6 @@ export function WelcomeScreen() {
   const [showProgress, setShowProgress] = useState(false);
   const [progressUrl, setProgressUrl] = useState("");
 
-
   // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !user) {
@@ -215,17 +214,18 @@ export function WelcomeScreen() {
                 — its ink sits high in the box, so box-centring floated it
                 above the wordmark. Baselines are what the eye actually reads.
             */}
-            <Link href="/" className="flex items-center gap-2" aria-label="Rune home">
+            <Link
+              href="/"
+              className="flex items-center gap-2"
+              aria-label="Rune home"
+            >
               <Mark />
               <span className="text-[17px] font-semibold leading-none tracking-[-0.025em] text-foreground">
                 Rune
               </span>
             </Link>
 
-            <span
-              aria-hidden
-              className="hidden h-4 w-px bg-border sm:block"
-            />
+            <span aria-hidden className="hidden h-4 w-px bg-border sm:block" />
 
             <span className="eyebrow hidden leading-none sm:inline">
               codebase intelligence
@@ -267,8 +267,8 @@ export function WelcomeScreen() {
                 </span>
               </h1>
               <p className="mt-5 max-w-md text-[15px] leading-relaxed text-muted-foreground">
-                Point Rune at a GitHub URL. It clones, parses and indexes
-                the source, then answers questions with the files it read.
+                Point Rune at a GitHub URL. It clones, parses and indexes the
+                source, then answers questions with the files it read.
               </p>
 
               <Pipeline />
@@ -291,10 +291,7 @@ export function WelcomeScreen() {
           </section>
 
           {/* ── The one input ── */}
-          <section
-            className="animate-rise"
-            style={{ animationDelay: "60ms" }}
-          >
+          <section className="animate-rise" style={{ animationDelay: "60ms" }}>
             <form onSubmit={handleSubmit}>
               <label htmlFor="repo-url" className="sr-only">
                 GitHub repository URL
@@ -360,7 +357,7 @@ export function WelcomeScreen() {
               ))}
             </div>
 
-<StudioPreview />
+            <StudioPreview />
           </section>
 
           {/* ── Recent ── */}
@@ -512,9 +509,9 @@ function StudioPreview() {
    *
    * Neon cannot simply be handed a white ground: emissive hued edges are the
    * entire idea of that style and they do not register without something
-   * dark to glow against. So light mode gets `publication` — flat solids and
-   * crisp keylines, the style that reads best on paper and at this size —
-   * and dark mode keeps neon.
+   * dark to glow against. So light mode gets `3d` — flat solids and crisp
+   * keylines, the style that reads best on paper and at this size — and dark
+   * mode keeps neon.
    *
    * `resolvedTheme` is undefined on the first client render, matching SSR,
    * so reading it directly is hydration-safe and simply corrects on the next
@@ -524,7 +521,7 @@ function StudioPreview() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
-  const style = styleById(isDark ? "neon" : "publication");
+  const style = styleById(isDark ? "neon" : "3d");
   const surface = {
     ...SURFACES[isDark ? "slide" : "paper"],
     ...(style.surface ?? {}),
@@ -574,8 +571,8 @@ function StudioPreview() {
           Try our neural network editor
         </p>
         <p className="mt-1 text-[13.5px] leading-relaxed text-muted-foreground">
-          Draw an architecture by hand and export it for a paper or a deck.
-          No repository needed.
+          Draw an architecture by hand and export it for a paper or a deck. No
+          repository needed.
         </p>
       </div>
 
@@ -645,9 +642,16 @@ function Pipeline() {
           as they swap or the whole page would jump every four seconds. */}
       <div className="relative h-[132px] overflow-hidden px-4">
         {/* 1 · clone — files stream in and are weighed */}
-        <div className="scene absolute inset-x-4 top-4 space-y-2.5" style={{ "--s": 0 } as React.CSSProperties}>
+        <div
+          className="scene absolute inset-x-4 top-4 space-y-2.5"
+          style={{ "--s": 0 } as React.CSSProperties}
+        >
           {FILES.map((x, i) => (
-            <div key={x.f} className="clone-row flex items-center gap-3" style={{ "--i": i } as React.CSSProperties}>
+            <div
+              key={x.f}
+              className="clone-row flex items-center gap-3"
+              style={{ "--i": i } as React.CSSProperties}
+            >
               <span className="w-[104px] shrink-0 truncate font-mono text-[11.5px] text-foreground">
                 {x.f}
               </span>
@@ -665,8 +669,15 @@ function Pipeline() {
         </div>
 
         {/* 2 · parse — the dependency graph assembling */}
-        <div className="scene absolute inset-4" style={{ "--s": 1 } as React.CSSProperties}>
-          <svg viewBox="0 0 320 104" className="h-full w-full" preserveAspectRatio="xMidYMid meet">
+        <div
+          className="scene absolute inset-4"
+          style={{ "--s": 1 } as React.CSSProperties}
+        >
+          <svg
+            viewBox="0 0 320 104"
+            className="h-full w-full"
+            preserveAspectRatio="xMidYMid meet"
+          >
             {EDGES.map((d, i) => (
               <g key={i}>
                 <path
@@ -684,13 +695,22 @@ function Pipeline() {
                 <circle
                   r="2.6"
                   className="edge-pulse"
-                  style={{ "--i": i, offsetPath: `path("${d}")` } as React.CSSProperties}
+                  style={
+                    {
+                      "--i": i,
+                      offsetPath: `path("${d}")`,
+                    } as React.CSSProperties
+                  }
                   fill="hsl(var(--signal))"
                 />
               </g>
             ))}
             {NODES.map(([cx, cy, label], i) => (
-              <g key={label as string} className="node-pop" style={{ "--i": i } as React.CSSProperties}>
+              <g
+                key={label as string}
+                className="node-pop"
+                style={{ "--i": i } as React.CSSProperties}
+              >
                 <circle
                   cx={cx as number}
                   cy={cy as number}
@@ -714,7 +734,10 @@ function Pipeline() {
         </div>
 
         {/* 3 · index — chunks resolving into a vector field */}
-        <div className="scene absolute inset-x-4 top-6" style={{ "--s": 2 } as React.CSSProperties}>
+        <div
+          className="scene absolute inset-x-4 top-6"
+          style={{ "--s": 2 } as React.CSSProperties}
+        >
           {/*
             FIXED cell size, not `1fr` + aspect-square. Fractional columns
             sized each cell to the pane — ~50px on a wide screen — so four
@@ -743,7 +766,10 @@ function Pipeline() {
         </div>
 
         {/* 4 · answer — a real grounded reply, typed, then cited */}
-        <div className="scene absolute inset-x-4 top-5" style={{ "--s": 3 } as React.CSSProperties}>
+        <div
+          className="scene absolute inset-x-4 top-5"
+          style={{ "--s": 3 } as React.CSSProperties}
+        >
           <p className="font-mono text-[11px] text-muted-foreground">
             <span className="text-signal">?</span> where are routes registered
           </p>
@@ -751,7 +777,9 @@ function Pipeline() {
               whole claim. Three grey placeholder bars said nothing. */}
           <p className="answer-type mt-2.5 whitespace-nowrap font-sans text-[13px] leading-relaxed text-foreground">
             Blueprints attach in{" "}
-            <span className="font-mono text-[12px]">app.register_blueprint</span>
+            <span className="font-mono text-[12px]">
+              app.register_blueprint
+            </span>
             <span className="answer-caret ml-0.5 inline-block h-[13px] w-[2px] translate-y-[2px] bg-signal" />
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">
@@ -771,8 +799,15 @@ function Pipeline() {
       <div className="flex items-center gap-1 border-t border-border px-4 py-2.5">
         {STAGES.map((stage, i) => (
           <span key={stage} className="flex items-center gap-1">
-            {i > 0 && <span className="mx-1 font-mono text-[10px] text-muted-foreground/40">→</span>}
-            <span className="stage-lit eyebrow leading-none" style={{ "--s": i } as React.CSSProperties}>
+            {i > 0 && (
+              <span className="mx-1 font-mono text-[10px] text-muted-foreground/40">
+                →
+              </span>
+            )}
+            <span
+              className="stage-lit eyebrow leading-none"
+              style={{ "--s": i } as React.CSSProperties}
+            >
               {stage}
             </span>
           </span>
