@@ -1,186 +1,94 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { cn } from "@/lib/utils"
+import { useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-import type { FileNode } from "../../lib/api"
+import type { FileNode } from "../../lib/api";
 
 interface FileTreeProps {
-  data: FileNode[]
-  className?: string
+  data: FileNode[];
+  className?: string;
 }
 
-interface FileItemProps {
-  node: FileNode
-  depth: number
-  isLast: boolean
-  parentPath: boolean[]
-}
+/**
+ * The repository tree.
+ *
+ * Two things changed from the old one. Folders no longer animate open — a tree
+ * is expanded and collapsed dozens of times in a session, and the old
+ * `max-height: children × 100px` guess both janked and clipped any folder with
+ * more than a screenful in it. And the per-extension glyph palette is gone:
+ * eleven colors that encoded nothing the filename didn't already say.
+ */
+function FileItem({ node, depth }: { node: FileNode; depth: number }) {
+  const [isOpen, setIsOpen] = useState(depth < 1);
 
-const getFileIcon = (extension?: string) => {
-  const iconMap: Record<string, { color: string; icon: string }> = {
-    tsx: { color: "text-[oklch(0.65_0.18_220)]", icon: "⚛" },
-    ts: { color: "text-[oklch(0.6_0.15_230)]", icon: "◆" },
-    jsx: { color: "text-[oklch(0.7_0.2_200)]", icon: "⚛" },
-    js: { color: "text-[oklch(0.8_0.18_90)]", icon: "◆" },
-    css: { color: "text-[oklch(0.65_0.2_280)]", icon: "◈" },
-    json: { color: "text-[oklch(0.75_0.15_85)]", icon: "{}" },
-    md: { color: "text-text-muted", icon: "◊" },
-    svg: { color: "text-[oklch(0.7_0.15_160)]", icon: "◐" },
-    png: { color: "text-[oklch(0.65_0.12_160)]", icon: "◑" },
-    default: { color: "text-text-muted", icon: "◇" },
-  }
-  return iconMap[extension || "default"] || iconMap.default
-}
-
-function FileItem({ node, depth, isLast, parentPath }: FileItemProps) {
-  const [isOpen, setIsOpen] = useState(true)
-  const [isHovered, setIsHovered] = useState(false)
-
-  const isFolder = node.type === "dir"
-  const hasChildren = isFolder && node.children && node.children.length > 0
-  // Basic extension extraction since it's not in the API
-  const extension = node.type === "file" ? node.name.split('.').pop() : undefined
-  const fileIcon = getFileIcon(extension)
+  const isFolder = node.type === "dir";
+  const children = isFolder ? (node.children ?? []) : [];
 
   return (
-    <div className="select-none">
+    <li>
       <div
+        role={isFolder ? "button" : undefined}
+        tabIndex={isFolder ? 0 : undefined}
+        onClick={() => isFolder && setIsOpen((open) => !open)}
+        onKeyDown={(e) => {
+          if (isFolder && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            setIsOpen((open) => !open);
+          }
+        }}
+        style={{ paddingLeft: `${depth * 12 + 6}px` }}
         className={cn(
-          "group relative flex items-center gap-2 py-1 px-2 rounded-md cursor-pointer",
-          "transition-all duration-200 ease-out",
-          isHovered && "bg-accent",
+          "group flex items-center gap-1.5 rounded py-[3px] pr-2",
+          "transition-colors duration-150 ease-out",
+          isFolder && "cursor-pointer hover:bg-accent/60",
         )}
-        onClick={() => isFolder && setIsOpen(!isOpen)}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
       >
-        {/* Tree lines */}
-        {depth > 0 && (
-          <div className="absolute left-0 top-0 bottom-0 flex" style={{ left: `${(depth - 1) * 16 + 16}px` }}>
-            <div className={cn("w-px transition-colors duration-200", isHovered ? "bg-accent/40" : "bg-border/50")} />
-          </div>
-        )}
-
-        {/* Folder/File indicator */}
-        <div
-          className={cn(
-            "flex items-center justify-center w-4 h-4 transition-transform duration-200 ease-out",
-            isFolder && isOpen && "rotate-90",
-          )}
-        >
+        <span className="grid h-3.5 w-3.5 flex-shrink-0 place-items-center">
           {isFolder ? (
-            <svg
-              width="6"
-              height="8"
-              viewBox="0 0 6 8"
-              fill="none"
-              className={cn("transition-colors duration-200", isHovered ? "text-accent" : "text-text-muted")}
-            >
-              <path
-                d="M1 1L5 4L1 7"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
+            <ChevronRight
+              size={12}
+              strokeWidth={2}
+              className={cn(
+                "text-muted-foreground transition-transform duration-150 ease-out",
+                isOpen && "rotate-90",
+              )}
+            />
           ) : (
-            <span className={cn("text-xs transition-opacity duration-200", fileIcon.color)}>{fileIcon.icon}</span>
+            <span className="h-[3px] w-[3px] rounded-full bg-muted-foreground/40" />
           )}
-        </div>
+        </span>
 
-        {/* Icon */}
-        <div
-          className={cn(
-            "flex items-center justify-center w-5 h-5 rounded transition-all duration-200",
-            isFolder
-              ? isHovered
-                ? "text-accent scale-110"
-                : "text-accent/80"
-              : isHovered
-                ? cn(fileIcon.color, "scale-110")
-                : cn(fileIcon.color, "opacity-70"),
-          )}
-        >
-          {isFolder ? (
-            <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor">
-              <path d="M1.5 1C0.671573 1 0 1.67157 0 2.5V11.5C0 12.3284 0.671573 13 1.5 13H14.5C15.3284 13 16 12.3284 16 11.5V4.5C16 3.67157 15.3284 3 14.5 3H8L6.5 1H1.5Z" />
-            </svg>
-          ) : (
-            <svg width="14" height="16" viewBox="0 0 14 16" fill="currentColor" opacity="0.8">
-              <path d="M1.5 0C0.671573 0 0 0.671573 0 1.5V14.5C0 15.3284 0.671573 16 1.5 16H12.5C13.3284 16 14 15.3284 14 14.5V4.5L9.5 0H1.5Z" />
-              <path d="M9 0V4.5H14" fill="currentColor" fillOpacity="0.5" />
-            </svg>
-          )}
-        </div>
-
-        {/* Name */}
         <span
           className={cn(
-            "font-mono text-sm transition-colors duration-200",
+            "truncate font-mono text-[12px]",
             isFolder
-              ? isHovered
-                ? "text-foreground"
-                : "text-foreground/90"
-              : isHovered
-                ? "text-foreground"
-                : "text-muted-foreground",
+              ? "text-foreground/90"
+              : "text-muted-foreground group-hover:text-foreground",
           )}
         >
           {node.name}
         </span>
-
-        {/* Hover indicator */}
-        <div
-          className={cn(
-            "absolute right-2 w-1.5 h-1.5 rounded-full bg-accent transition-all duration-200",
-            isHovered ? "opacity-100 scale-100" : "opacity-0 scale-0",
-          )}
-        />
       </div>
 
-      {/* Children with animated height */}
-      {hasChildren && (
-        <div
-          className={cn(
-            "overflow-hidden transition-all duration-300 ease-out",
-            isOpen ? "opacity-100" : "opacity-0 h-0",
-          )}
-          style={{
-            maxHeight: isOpen ? `${node.children!.length * 100}px` : "0px",
-          }}
-        >
-          {node.children!.map((child, index) => (
-            <FileItem
-              key={child.name}
-              node={child}
-              depth={depth + 1}
-              isLast={index === node.children!.length - 1}
-              parentPath={[...parentPath, !isLast]}
-            />
+      {isFolder && isOpen && children.length > 0 && (
+        <ul>
+          {children.map((child) => (
+            <FileItem key={child.name} node={child} depth={depth + 1} />
           ))}
-        </div>
+        </ul>
       )}
-    </div>
-  )
+    </li>
+  );
 }
 
 export function FileTree({ data, className }: FileTreeProps) {
   return (
-    <div
-      className={cn(
-        "bg-background/50 rounded-lg border border-border/50 p-3 font-mono",
-        className,
-      )}
-    >
-      {/* Tree */}
-      <div className="space-y-0.5">
-        {data.map((node, index) => (
-          <FileItem key={node.name} node={node} depth={0} isLast={index === data.length - 1} parentPath={[]} />
-        ))}
-      </div>
-    </div>
-  )
+    <ul className={cn("select-none", className)}>
+      {data.map((node) => (
+        <FileItem key={node.name} node={node} depth={0} />
+      ))}
+    </ul>
+  );
 }

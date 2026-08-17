@@ -79,8 +79,8 @@ export function RepoStatePanel() {
         title="Sign in to open this analysis"
         body={
           repoLabel
-            ? `This link points to the analysis of ${repoLabel} in a CodeKavi account. Sign in to open it.`
-            : "This link points to an analysis in a CodeKavi account. Sign in to open it."
+            ? `This link points to the analysis of ${repoLabel} in a Rune account. Sign in to open it.`
+            : "This link points to an analysis in a Rune account. Sign in to open it."
         }
         primary={
           <Link href={`/login?next=${next}`} className={PRIMARY_BUTTON}>
@@ -149,24 +149,24 @@ function ResolvingState({ reanalyzing }: { reanalyzing: boolean }) {
   }, []);
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-      <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="h-4 w-4 animate-spin rounded-full border-2 border-foreground/25 border-t-foreground" />
       {/* When the backend answers 202 we know exactly what the wait is for,
           so say it. A generic "loading" during a two-minute rebuild is what
           made this look like a hang. */}
-      <p className="text-sm">
+      <p className="text-[13px]">
         {reanalyzing
           ? "Rebuilding this analysis…"
           : "Loading repository data…"}
       </p>
       {reanalyzing ? (
-        <p className="max-w-xs text-center text-xs text-muted-foreground/70">
+        <p className="max-w-xs text-center text-[12px] text-muted-foreground/70">
           The cached analysis expired, so the server is re-reading the
           repository from source. This can take a minute on a large codebase.
         </p>
       ) : (
         slow && (
-          <p className="text-xs text-muted-foreground/70">
+          <p className="text-[12px] text-muted-foreground/70">
             Still working — this is taking longer than usual.
           </p>
         )
@@ -176,7 +176,7 @@ function ResolvingState({ reanalyzing }: { reanalyzing: boolean }) {
 }
 
 const PRIMARY_BUTTON =
-  "flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold bg-foreground text-background hover:bg-foreground/90 active:scale-[0.98] transition-all duration-200 shadow-lg";
+  "press inline-flex items-center gap-2 rounded-lg bg-foreground px-5 py-2.5 text-[13px] font-medium text-background shadow-pop transition-colors duration-150 ease-out hover:bg-foreground/88";
 
 function StatePanel({
   title,
@@ -188,14 +188,19 @@ function StatePanel({
   primary?: React.ReactNode;
 }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-20">
-      <h2 className="text-2xl font-bold text-foreground mb-2">{title}</h2>
-      <p className="text-muted-foreground max-w-md mb-6">{body}</p>
-      <div className="flex flex-wrap items-center justify-center gap-3">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-20 text-center">
+      <span className="eyebrow mb-4">Repository</span>
+      <h2 className="mb-2 max-w-md text-xl font-semibold tracking-[-0.02em] text-foreground">
+        {title}
+      </h2>
+      <p className="mb-7 max-w-md text-[14px] leading-relaxed text-muted-foreground">
+        {body}
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-2">
         {primary}
         <Link
           href="/"
-          className="flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-medium border border-border/60 text-foreground hover:bg-accent/50 transition-colors"
+          className="press inline-flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-[13px] font-medium text-foreground transition-colors duration-150 ease-out hover:bg-accent"
         >
           <ArrowLeft size={16} />
           Back to dashboard

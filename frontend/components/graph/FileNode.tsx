@@ -7,6 +7,9 @@ import type { RepoGraphFile } from "@/lib/api";
 
 export interface FileNodeData extends Record<string, unknown> {
   file: RepoGraphFile;
+  /** Set only when another file shares this basename — shown instead of the
+   * role so the boxes read as different files, not a repeated one. */
+  folder?: string;
 }
 
 export type FileNodeType = Node<FileNodeData, "file">;
@@ -16,7 +19,7 @@ function isGraphFlag(flag: string): flag is GraphFlag {
 }
 
 function FileNodeComponent({ data, selected }: NodeProps<FileNodeType>) {
-  const { file } = data;
+  const { file, folder } = data;
   const accent = layerColor(file.layer_id);
   // Backend importance_score is 0-100; the node box is layout-fixed (see
   // elkLayout.ts FILE_NODE_WIDTH/HEIGHT), so importance reads as accent
@@ -41,13 +44,21 @@ function FileNodeComponent({ data, selected }: NodeProps<FileNodeType>) {
         style={{ background: accent, opacity: 0.35 + importance * 0.65 }}
       />
       <div className="min-w-0 flex-1">
+        {/* Ambiguous basenames lead with the folder: `page.tsx` says nothing,
+         * `auth/signin` says everything. */}
         <div className="truncate font-mono text-xs font-medium">
-          {file.name}
+          {folder ?? file.name}
         </div>
-        {file.role_label && (
-          <div className="truncate text-xs text-muted-foreground">
-            {file.role_label}
+        {folder ? (
+          <div className="truncate font-mono text-xs text-muted-foreground">
+            {file.name}
           </div>
+        ) : (
+          file.role_label && (
+            <div className="truncate text-xs text-muted-foreground">
+              {file.role_label}
+            </div>
+          )
         )}
       </div>
       {flags.length > 0 && (

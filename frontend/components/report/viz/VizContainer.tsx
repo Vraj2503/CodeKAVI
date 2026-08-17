@@ -113,7 +113,7 @@ function renderViz(type: string, data: any) {
     case "neural_network":
       if (!data.models || data.models.length === 0)
         return (
-          <EmptyViz message="No neural network found. This view reads PyTorch (nn.Module, nn.Sequential), Keras, TensorFlow and Hugging Face transformers; scikit-learn and gradient-boosting pipelines aren't drawn yet." />
+          <EmptyViz message="No neural network found. This view reads PyTorch (nn.Module, nn.Sequential), Keras, TensorFlow and Hugging Face transformers — scikit-learn and gradient-boosting pipelines aren't drawn yet." />
         );
       return <NeuralNetworkViz data={data} />;
     default:

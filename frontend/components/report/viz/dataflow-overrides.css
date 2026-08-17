@@ -1,0 +1,19 @@
+/* Overrides for React Flow default styles */
+.react-flow__node-group {
+    background-color: transparent !important;
+    border: none !important;
+    overflow: visible !important;
+}
+
+/* Ensure edges render above group containers */
+.react-flow__edge {
+    z-index: 10 !important;
+}
+
+/* Group node wrappers should not block edge interaction */
+.react-flow__node[data-type="group"] {
+    pointer-events: none !important;
+}
+.react-flow__node[data-type="group"] > * {
+    pointer-events: auto;
+}

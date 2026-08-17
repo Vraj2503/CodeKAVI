@@ -29,19 +29,19 @@ test:
 	python -m pytest -v --tb=short
 
 test-cov:
-	python -m pytest -v --tb=short --cov=codekavi --cov-report=term-missing
+	python -m pytest -v --tb=short --cov=rune --cov-report=term-missing
 
 # ── Linting & Formatting ──
 lint:
-	python -m ruff check codekavi/
+	python -m ruff check rune/
 
 format:
-	python -m ruff check --fix codekavi/
-	python -m ruff format codekavi/
+	python -m ruff check --fix rune/
+	python -m ruff format rune/
 
 # ── Type Checking ──
 typecheck:
-	python -m mypy codekavi/ --ignore-missing-imports
+	python -m mypy rune/ --ignore-missing-imports
 
 # ── Development Server ──
 # On Windows, use `python main.py` or include both reload exclusions when

@@ -225,7 +225,9 @@ export function mockVizResponse(type: string) {
       // Deterministic so the layout is stable between regenerates — a treemap
       // that reshuffles on every click is impossible to compare against.
       const pseudo = (seed: number, span: number, floor: number) =>
-        Math.floor(((Math.sin(seed * 12.9898) * 43758.5453) % 1 + 1) / 2 * span) + floor;
+        Math.floor(
+          ((((Math.sin(seed * 12.9898) * 43758.5453) % 1) + 1) / 2) * span,
+        ) + floor;
 
       /**
        * `measured: false` mimics a language with no tree-sitter parser: the
@@ -261,11 +263,17 @@ export function mockVizResponse(type: string) {
             loc: Math.max(1, Math.round(size / 34)),
             ...(measured
               ? {
-                  complexity: pseudo(seedBase * 7 + i * 3, opts.cxSpan ?? 40, 1),
+                  complexity: pseudo(
+                    seedBase * 7 + i * 3,
+                    opts.cxSpan ?? 40,
+                    1,
+                  ),
                   complexity_source: "cyclomatic",
                 }
               : { complexity_source: "size_fallback" }),
-            language: opts.language ?? (ext.includes("ts") ? "TypeScript" : "JavaScript"),
+            language:
+              opts.language ??
+              (ext.includes("ts") ? "TypeScript" : "JavaScript"),
             role,
             importance: Number((pseudo(seedBase + i, 90, 5) / 100).toFixed(2)),
           };
@@ -280,13 +288,20 @@ export function mockVizResponse(type: string) {
             name: "src",
             path: "src",
             children: [
-              dir("src/components", 15, ".tsx", "Component", 400, 50, 1, { cxSpan: 60 }),
-              dir("src/services", 10, ".ts", "Service", 300, 100, 2, { cxSpan: 45 }),
+              dir("src/components", 15, ".tsx", "Component", 400, 50, 1, {
+                cxSpan: 60,
+              }),
+              dir("src/services", 10, ".ts", "Service", 300, 100, 2, {
+                cxSpan: 45,
+              }),
               dir("src/utils", 8, ".ts", "util", 150, 20, 3, { cxSpan: 12 }),
             ],
           },
           dir("tests", 20, ".spec.ts", "test", 200, 50, 4, { cxSpan: 20 }),
-          dir("cmd", 5, ".go", "worker", 350, 80, 5, { language: "Go", measured: false }),
+          dir("cmd", 5, ".go", "worker", 350, 80, 5, {
+            language: "Go",
+            measured: false,
+          }),
         ],
         meta: {
           total: 76,
@@ -436,7 +451,13 @@ export function mockVizResponse(type: string) {
           },
         ],
         edges: [
-          { source: "req", target: "gw", data_type: "http", label: "JSON", animated: true },
+          {
+            source: "req",
+            target: "gw",
+            data_type: "http",
+            label: "JSON",
+            animated: true,
+          },
           ...Array.from({ length: 6 }, (_, i) => ({
             source: "gw",
             target: `mw_${i}`,
@@ -447,7 +468,12 @@ export function mockVizResponse(type: string) {
             target: "ctrl",
             data_type: "internal",
           })),
-          { source: "ctrl", target: "svc", data_type: "event", label: "dispatch" },
+          {
+            source: "ctrl",
+            target: "svc",
+            data_type: "event",
+            label: "dispatch",
+          },
           { source: "svc", target: "cache", data_type: "db", label: "get" },
           { source: "svc", target: "db", data_type: "db", label: "query" },
           { source: "db", target: "res", data_type: "http", animated: true },
@@ -513,7 +539,7 @@ export function mockAnalyzeResponse(): any {
     success: true,
     repo_id: "dev-mock-repo",
     repo_name: "Mock Neural Network Repo",
-    owner: "CodeKavi",
+    owner: "Rune",
     github_url: "mock://nn",
     total_files: 10,
     total_size: 1024,

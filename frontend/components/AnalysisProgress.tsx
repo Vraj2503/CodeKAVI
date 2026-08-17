@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * AnalysisProgress — Full-screen progress component with staged timeline.
+ * AnalysisProgress — the full-screen wait.
  *
- * Shows a premium animated progress bar with a vertical stepper timeline
- * for each analysis stage. Replaces the old instant-navigate behaviour.
+ * Framer Motion is deliberately absent here. This screen animates while the
+ * main thread is busy parsing an SSE stream and mounting the next route; JS
+ * animation drops frames under exactly that load, so the bar is a CSS
+ * transform transition (compositor-only, interruptible, retargets smoothly as
+ * each progress event lands) and the stage list is plain state.
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import {
   GitBranch,
   FolderSearch,
@@ -17,12 +19,17 @@ import {
   Share2,
   FileSearch,
   Database,
-  CheckCircle,
+  Check,
   AlertCircle,
-  Loader2,
   ArrowLeft,
+  Loader2,
 } from "lucide-react";
-import { analyzeRepoStream, type AnalysisProgressEvent, type AnalyzeResponse } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import {
+  analyzeRepoStream,
+  type AnalysisProgressEvent,
+  type AnalyzeResponse,
+} from "@/lib/api";
 
 interface AnalysisProgressProps {
   repoUrl: string;
@@ -33,14 +40,14 @@ interface AnalysisProgressProps {
 
 // All analysis stages in order
 const STAGES = [
-  { key: "cloning",     label: "Cloning Repository",      icon: GitBranch,   color: "#58a6ff" },
-  { key: "traversing",  label: "Scanning File Structure",  icon: FolderSearch, color: "#4ecdc4" },
-  { key: "analyzing",   label: "Analyzing Dependencies",   icon: Network,     color: "#a78bfa" },
-  { key: "classifying", label: "Classifying File Roles",   icon: Tags,        color: "#3fb950" },
-  { key: "graphing",    label: "Building Graphs",          icon: Share2,      color: "#f0883e" },
-  { key: "selecting",   label: "Selecting Key Files",      icon: FileSearch,  color: "#ec4899" },
-  { key: "indexing",    label: "Creating Embeddings",      icon: Database,    color: "#fbbf24" },
-  { key: "complete",    label: "Analysis Complete",        icon: CheckCircle, color: "#22c55e" },
+  { key: "cloning", label: "Cloning repository", icon: GitBranch },
+  { key: "traversing", label: "Scanning file structure", icon: FolderSearch },
+  { key: "analyzing", label: "Analyzing dependencies", icon: Network },
+  { key: "classifying", label: "Classifying file roles", icon: Tags },
+  { key: "graphing", label: "Building graphs", icon: Share2 },
+  { key: "selecting", label: "Selecting key files", icon: FileSearch },
+  { key: "indexing", label: "Creating embeddings", icon: Database },
+  { key: "complete", label: "Analysis complete", icon: Check },
 ];
 
 export function AnalysisProgress({
@@ -53,7 +60,9 @@ export function AnalysisProgress({
   const [progress, setProgress] = useState(5);
   const [message, setMessage] = useState("Preparing analysis…");
   const [error, setError] = useState<string | null>(null);
-  const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
+  const [completedStages, setCompletedStages] = useState<Set<string>>(
+    new Set(),
+  );
   const [startTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -75,9 +84,7 @@ export function AnalysisProgress({
     if (stageIndex >= 0) {
       setCompletedStages((prev) => {
         const next = new Set(prev);
-        for (let i = 0; i < stageIndex; i++) {
-          next.add(STAGES[i].key);
-        }
+        for (let i = 0; i < stageIndex; i++) next.add(STAGES[i].key);
         return next;
       });
     }
@@ -96,16 +103,15 @@ export function AnalysisProgress({
 
         if (cancelled) return;
 
-        // Mark all stages complete
         setCompletedStages(new Set(STAGES.map((s) => s.key)));
         setProgress(100);
         setCurrentStage("complete");
-        setMessage("Analysis complete!");
+        setMessage("Analysis complete");
 
         // Brief delay to show the completed state before navigating
         setTimeout(() => {
           if (!cancelled) onComplete(data);
-        }, 800);
+        }, 700);
       } catch (err: unknown) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Analysis failed";
@@ -123,7 +129,7 @@ export function AnalysisProgress({
   const formatTime = (s: number) => {
     const mins = Math.floor(s / 60);
     const secs = s % 60;
-    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    return mins > 0 ? `${mins}m ${String(secs).padStart(2, "0")}s` : `${secs}s`;
   };
 
   // Extract repo name from URL for display
@@ -133,184 +139,121 @@ export function AnalysisProgress({
     .replace(/\/$/, "");
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-background"
-    >
-      {/* Subtle animated background */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-primary/5 blur-3xl animate-pulse" />
-        <div className="absolute top-1/3 right-1/4 w-[300px] h-[300px] rounded-full bg-ring/5 blur-3xl animate-pulse" style={{ animationDelay: "1s" }} />
-      </div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 30, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-        className="relative z-10 w-full max-w-lg mx-4"
-      >
-        {/* Back button */}
+    <div className="canvas fixed inset-0 z-[100] grid place-items-center overflow-y-auto p-6">
+      <div className="w-full max-w-md animate-rise">
         {!error && (
           <button
             onClick={onCancel}
-            className="absolute -top-12 left-0 flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="press mb-6 flex items-center gap-1.5 text-[12px] text-muted-foreground transition-colors duration-150 ease-out hover:text-foreground"
           >
-            <ArrowLeft size={14} />
+            <ArrowLeft size={13} />
             Cancel
           </button>
         )}
 
-        {/* Card */}
-        <div className="bg-card/60 backdrop-blur-2xl border border-border/40 rounded-2xl shadow-2xl p-8">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h2 className="text-lg font-bold text-foreground mb-1">
-              Analyzing Repository
-            </h2>
-            <p className="text-sm text-muted-foreground font-mono">
-              {repoName}
-            </p>
-          </div>
+        <p className="eyebrow">{error ? "Failed" : "Analyzing"}</p>
+        <h1 className="mt-2 truncate font-mono text-xl tracking-[-0.01em]">
+          {repoName}
+        </h1>
 
-          {/* Progress bar */}
-          <div className="relative h-2 bg-muted rounded-full overflow-hidden mb-2">
-            <motion.div
-              className="absolute inset-y-0 left-0 rounded-full"
-              style={{
-                background: error
-                  ? "#ef4444"
-                  : "linear-gradient(90deg, hsl(var(--primary)), hsl(var(--ring)))",
-              }}
-              initial={{ width: "0%" }}
-              animate={{ width: `${progress}%` }}
-              transition={{ duration: 0.5, ease: "easeOut" }}
-            />
-            {/* Shimmer overlay */}
-            {!error && progress < 100 && (
-              <div
-                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer"
-                style={{
-                  width: "50%",
-                  animation: "shimmer 1.5s infinite",
-                }}
-              />
+        {/* Progress rule — scaleX so the browser never touches layout. */}
+        <div className="mt-6 h-[3px] overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full origin-left rounded-full transition-transform duration-500 ease-out",
+              error ? "bg-destructive" : "bg-signal",
             )}
-          </div>
-
-          <div className="flex items-center justify-between mb-8">
-            <span className="text-xs text-muted-foreground">{progress}%</span>
-            <span className="text-xs text-muted-foreground">{formatTime(elapsed)}</span>
-          </div>
-
-          {/* Stage timeline */}
-          <div className="space-y-1">
-            {STAGES.map((stage, i) => {
-              const isCompleted = completedStages.has(stage.key);
-              const isCurrent = currentStage === stage.key && !error;
-              const Icon = stage.icon;
-
-              return (
-                <motion.div
-                  key={stage.key}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 ${
-                    isCurrent
-                      ? "bg-primary/10 border border-primary/20"
-                      : isCompleted
-                        ? "opacity-70"
-                        : "opacity-30"
-                  }`}
-                >
-                  {/* Icon / status indicator */}
-                  <div className="w-6 h-6 flex items-center justify-center flex-shrink-0">
-                    {isCompleted ? (
-                      <CheckCircle size={16} className="text-green-500" />
-                    ) : isCurrent ? (
-                      <Loader2 size={16} className="text-primary animate-spin" />
-                    ) : (
-                      <Icon size={16} className="text-muted-foreground" />
-                    )}
-                  </div>
-
-                  {/* Label */}
-                  <span
-                    className={`text-sm font-medium ${
-                      isCurrent
-                        ? "text-foreground"
-                        : isCompleted
-                          ? "text-muted-foreground"
-                          : "text-muted-foreground/50"
-                    }`}
-                  >
-                    {stage.label}
-                  </span>
-
-                  {/* Status dot */}
-                  {isCurrent && (
-                    <div className="ml-auto w-2 h-2 rounded-full bg-primary animate-pulse" />
-                  )}
-                </motion.div>
-              );
-            })}
-          </div>
-
-          {/* Current message */}
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={message}
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -5 }}
-              className="text-center text-sm text-muted-foreground mt-6"
-            >
-              {error ? "" : message}
-            </motion.p>
-          </AnimatePresence>
-
-          {/* Error state */}
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-6 text-center"
-            >
-              <div className="flex items-center justify-center gap-2 text-destructive mb-3">
-                <AlertCircle size={16} />
-                <span className="text-sm font-medium">Analysis Failed</span>
-              </div>
-              <p className="text-xs text-muted-foreground mb-4 bg-destructive/10 rounded-lg px-3 py-2 border border-destructive/20">
-                {error}
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <button
-                  onClick={onCancel}
-                  className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground bg-muted rounded-lg transition-colors"
-                >
-                  Go Back
-                </button>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-lg hover:bg-primary/90 transition-colors"
-                >
-                  Try Again
-                </button>
-              </div>
-            </motion.div>
-          )}
+            style={{ transform: `scaleX(${Math.max(progress, 2) / 100})` }}
+          />
         </div>
-      </motion.div>
 
-      {/* Shimmer keyframes */}
-      <style jsx global>{`
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(300%); }
-        }
-      `}</style>
-    </motion.div>
+        <div className="mt-2 flex items-baseline justify-between font-mono text-[11px] text-muted-foreground">
+          <span className="tnum">{progress}%</span>
+          <span className="tnum">{formatTime(elapsed)}</span>
+        </div>
+
+        {/* Stage transcript */}
+        <ul className="mt-7 space-y-px">
+          {STAGES.map((stage) => {
+            const isCompleted = completedStages.has(stage.key);
+            const isCurrent = currentStage === stage.key && !error;
+            const Icon = stage.icon;
+
+            return (
+              <li
+                key={stage.key}
+                className={cn(
+                  "flex items-center gap-3 rounded-md px-2.5 py-2",
+                  "transition-colors duration-200 ease-out",
+                  isCurrent && "bg-accent/60",
+                )}
+              >
+                <span className="grid h-4 w-4 flex-shrink-0 place-items-center">
+                  {isCompleted ? (
+                    <Check size={13} className="text-signal" strokeWidth={2.5} />
+                  ) : isCurrent ? (
+                    <Loader2
+                      size={13}
+                      className="animate-spin text-foreground"
+                    />
+                  ) : (
+                    <Icon size={13} className="text-muted-foreground/40" />
+                  )}
+                </span>
+
+                <span
+                  className={cn(
+                    "text-[13px]",
+                    isCurrent
+                      ? "text-foreground"
+                      : isCompleted
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground/40",
+                  )}
+                >
+                  {stage.label}
+                </span>
+
+                {isCurrent && (
+                  <span className="ml-auto h-1.5 w-1.5 rounded-full bg-signal animate-blink" />
+                )}
+              </li>
+            );
+          })}
+        </ul>
+
+        {!error && (
+          <p className="mt-6 truncate text-center text-[12px] text-muted-foreground">
+            {message}
+          </p>
+        )}
+
+        {error && (
+          <div className="mt-7 rounded-lg border border-destructive/25 bg-destructive/[0.06] p-4">
+            <p className="flex items-center gap-2 text-[13px] font-medium text-destructive">
+              <AlertCircle size={14} />
+              Analysis failed
+            </p>
+            <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+              {error}
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={onCancel}
+                className="press rounded-md border border-border bg-card px-3 py-1.5 text-[13px] transition-colors duration-150 ease-out hover:bg-accent"
+              >
+                Go back
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="press rounded-md bg-foreground px-3 py-1.5 text-[13px] text-background transition-colors duration-150 ease-out hover:bg-foreground/88"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

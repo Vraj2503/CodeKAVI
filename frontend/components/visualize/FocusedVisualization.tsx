@@ -5,7 +5,7 @@ import { useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, Network, RefreshCw, Sparkles, X } from "lucide-react";
+import { Loader2, AlertCircle, Network, RefreshCw, Telescope, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
@@ -91,11 +91,24 @@ function EmptyViz({
       ? { type: "complexity", label: "Complexity Treemap" }
       : { type: "dependencies", label: "Dependency Graph" };
 
-  // The neural network view is listed for every repository, so most visitors
-  // to this empty state are on a repo that simply has no model in it. Saying
-  // "not enough structure" there is wrong and sounds like a failure — the
-  // honest message is which frameworks we read and which we do not.
+  // Neural Network is listed for every repository, so this view is the only
+  // place an empty result can be explained. The generic line below would be a
+  // lie here: a repo can be large and richly structured and still declare no
+  // model at all. Name what the extractor reads instead, so "nothing here" is
+  // a fact about the repository rather than a suspected failure of the tool.
   const isNN = type === "neural_network";
+
+  const heading = isNN
+    ? "No neural network found"
+    : unresolvedEdges
+      ? "Nothing connects, yet"
+      : `No ${label.toLowerCase()} to draw`;
+
+  const body = isNN
+    ? "Nothing in this repository declares a model architecture we can read. This view understands PyTorch (nn.Module, nn.Sequential), Keras, TensorFlow and Hugging Face transformers — scikit-learn and gradient-boosting pipelines aren't drawn yet."
+    : unresolvedEdges
+      ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
+      : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`;
 
   return (
     <div className="w-full h-full flex flex-col items-center justify-center p-10 text-center">
@@ -106,25 +119,14 @@ function EmptyViz({
           <AlertCircle size={40} aria-hidden="true" />
         )}
       </div>
-      <h3 className="text-xl font-bold text-foreground mb-3">
-        {isNN
-          ? "No model architecture to draw"
-          : unresolvedEdges
-            ? "Nothing connects, yet"
-            : `No ${label.toLowerCase()} to draw`}
-      </h3>
+      <h3 className="text-xl font-bold text-foreground mb-3">{heading}</h3>
       <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-        {isNN
-          ? "We didn't find a neural network in this repository. This view reads PyTorch (nn.Module, nn.Sequential), Keras and TensorFlow models, and Hugging Face transformers loaded with from_pretrained."
-          : unresolvedEdges
-            ? "We found the files but couldn't resolve a single import between them. That usually means the project uses path aliases (@/, ~/) we don't map yet, or imports only external packages."
-            : `This repository doesn't have enough structure for a ${label.toLowerCase()}. Small projects and single-file scripts often land here.`}
+        {body}
       </p>
       {isNN && (
         <p className="mt-3 max-w-md text-xs leading-relaxed text-muted-foreground/80">
-          Classical machine learning — scikit-learn pipelines, XGBoost, LightGBM —
-          isn&apos;t drawn here yet. Neither are models built entirely at runtime from a
-          config file, since there is no architecture in the source to read.
+          Nor are models built entirely at runtime from a config file, since
+          there is no architecture in the source to read.
         </p>
       )}
       <Link
@@ -236,7 +238,7 @@ export function FocusedVisualization({
                     : "bg-background/90 border-border text-foreground hover:bg-muted"
                 }`}
               >
-                <Sparkles size={18} />
+                <Telescope size={18} />
                 {/* Label drops below `sm`; the icon plus `aria-label` still
                     names the control where there is no room for both. */}
                 <span className="hidden text-sm font-semibold sm:inline">
@@ -294,7 +296,11 @@ export function FocusedVisualization({
                 ~200ms before generate() lands would be a flash of a control the
                 user never needs to touch. */}
             {state.status === "idle" && !costsTokens && (
-              <motion.div key="pending" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <motion.div
+                key="pending"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+              >
                 <VizSkeleton />
               </motion.div>
             )}
@@ -379,7 +385,7 @@ export function FocusedVisualization({
             <div className="px-6 py-4 border-b border-border/50 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur-xl z-10">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <Sparkles size={16} className="text-primary" />
+                  <Telescope size={16} className="text-primary" />
                 </div>
                 <h3 className="font-bold text-foreground text-base">
                   AI Insights
@@ -399,7 +405,7 @@ export function FocusedVisualization({
               {explanationState.status === "idle" && (
                 <div className="flex flex-col items-center text-center text-muted-foreground py-10">
                   <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-5">
-                    <Sparkles size={26} className="text-muted-foreground/50" />
+                    <Telescope size={26} className="text-muted-foreground/50" />
                   </div>
                   <h4 className="text-foreground font-semibold text-lg mb-2">
                     Ready to Analyze
@@ -460,8 +466,8 @@ export function FocusedVisualization({
 
                     <div className="mt-8 pt-5 border-t border-border/50 text-xs text-muted-foreground flex items-center justify-between bg-muted/30 p-3 rounded-lg">
                       <div className="flex items-center gap-1.5">
-                        <Sparkles size={12} className="text-primary" />
-                        <span className="font-medium">CodeKavi AI</span>
+                        <Telescope size={12} className="text-primary" />
+                        <span className="font-medium">Rune AI</span>
                       </div>
                       <span className="font-mono bg-background px-2 py-1 rounded border border-border">
                         {explanationState.tokensUsed} tokens
@@ -520,7 +526,7 @@ function DiagnosticsBanner({ diagnostics }: { diagnostics: any }) {
   if (!incomplete) return null;
   const pct = Math.round((resolution_rate ?? 1) * 100);
   return (
-    <div className="absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
+    <div className="export-hide absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
       {pct}% of imports resolved.
       {unsupported_languages?.length > 0 &&
         ` Unsupported languages detected: ${unsupported_languages.join(", ")}.`}

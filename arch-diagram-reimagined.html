@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeKAVI Architecture — Reimagined</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    /* ═══════════════════════════════════════════
+       REIMAGINED THEME — Orbital Blueprint
+       Deep space navy + neon wire aesthetic
+       ═══════════════════════════════════════════ */
+    :root {
+      --bg:          #060B18;
+      --bg-card:     #0C1428;
+      --bg-card-alt: #101D36;
+      --fg:          #E8ECF4;
+      --fg-dim:      #6B7A99;
+      --fg-muted:    #3D4E6B;
+      --border:      #1A2744;
+      --border-glow: #2A3F6B;
+
+      /* Neon accent palette */
+      --neon-cyan:    #00E5FF;
+      --neon-magenta: #FF006E;
+      --neon-lime:    #76FF03;
+      --neon-amber:   #FFAB00;
+      --neon-violet:  #D500F9;
+      --neon-teal:    #1DE9B6;
+      --neon-blue:    #2979FF;
+      --neon-rose:    #FF5252;
+
+      --font-ui:   'Inter', -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ═══════════════════════════════════════════
+       CANVAS
+       ═══════════════════════════════════════════ */
+    .canvas {
+      position: relative;
+      width: 1200px;
+      height: 820px;
+    }
+
+    /* Blueprint grid background */
+    .grid-bg {
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle at 50% 50%, hsl(220 80% 20% / 0.08) 0%, transparent 70%),
+        linear-gradient(hsl(220 50% 20% / 0.12) 1px, transparent 1px),
+        linear-gradient(90deg, hsl(220 50% 20% / 0.12) 1px, transparent 1px);
+      background-size: 100%, 40px 40px, 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Orbital rings */
+    .orbit {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid hsl(220 60% 30% / 0.15);
+      pointer-events: none;
+    }
+    .orbit-1 { width: 600px; height: 600px; top: 110px; left: 300px; }
+    .orbit-2 { width: 900px; height: 500px; top: 160px; left: 150px; border-radius: 50%; }
+
+    /* Ambient neon glows */
+    .glow {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.07;
+      pointer-events: none;
+    }
+    .glow-1 { width: 400px; height: 400px; background: var(--neon-cyan); top: 100px; left: 350px; }
+    .glow-2 { width: 350px; height: 350px; background: var(--neon-magenta); bottom: 50px; right: 150px; }
+    .glow-3 { width: 250px; height: 250px; background: var(--neon-violet); top: 250px; right: 100px; }
+
+    /* ═══════════════════════════════════════════
+       HEADER
+       ═══════════════════════════════════════════ */
+    .header {
+      position: absolute;
+      top: 20px;
+      left: 28px;
+      z-index: 20;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .header h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--neon-cyan);
+    }
+    .header .tag {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-dim);
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      letter-spacing: 0.06em;
+    }
+
+    /* ═══════════════════════════════════════════
+       NODE — Hexagonal Badge Style
+       ═══════════════════════════════════════════ */
+    .node {
+      position: absolute;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px 10px 12px;
+      border-radius: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      min-width: 150px;
+      transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      cursor: default;
+    }
+
+    .node:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-alt);
+      box-shadow:
+        0 0 0 1px var(--accent),
+        0 0 30px -5px var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .node-badge {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      font-size: 14px;
+      background: hsl(0 0% 100% / 0.04);
+      border: 1px solid hsl(0 0% 100% / 0.06);
+    }
+
+    .node-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .node-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+    }
+
+    .node-desc {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-dim);
+      white-space: nowrap;
+    }
+
+    /* Status indicator dot */
+    .node-status {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    @keyframes status-blink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.3; }
+    }
+    .node-status.active {
+      animation: status-blink 2s ease-in-out infinite;
+    }
+
+    /* ═══════════════════════════════════════════
+       DATA STORE — Rounded pill with top ellipse
+       ═══════════════════════════════════════════ */
+    .node.store {
+      border-radius: 20px;
+      padding: 10px 18px;
+    }
+    .node.store .node-badge {
+      border-radius: 50%;
+    }
+
+    /* ═══════════════════════════════════════════
+       SVG EDGES
+       ═══════════════════════════════════════════ */
+    .edges-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .wire {
+      fill: none;
+      stroke-width: 1.2;
+      stroke-linecap: round;
+    }
+    .wire.dashed {
+      stroke-dasharray: 5 4;
+    }
+
+    /* Animated pulse dot traveling along edge */
+    .pulse-dot {
+      r: 2.5;
+      opacity: 0;
+    }
+    @keyframes dot-travel {
+      0%   { opacity: 0; }
+      10%  { opacity: 1; }
+      90%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    .pulse-dot { animation: dot-travel var(--dur, 2s) linear infinite; }
+
+    /* Edge mid-labels */
+    .wire-label {
+      position: absolute;
+      z-index: 12;
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 3px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+
+    /* ═══════════════════════════════════════════
+       CONNECTION HUB — central "backend" ring
+       ═══════════════════════════════════════════ */
+    .hub-ring {
+      position: absolute;
+      z-index: 8;
+      border: 2px solid var(--neon-cyan);
+      border-radius: 50%;
+      opacity: 0.15;
+      pointer-events: none;
+    }
+
+    /* ═══════════════════════════════════════════
+       LEGEND — Bottom-left tech-spec style
+       ═══════════════════════════════════════════ */
+    .legend {
+      position: absolute;
+      bottom: 16px;
+      left: 28px;
+      z-index: 20;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .legend-title {
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--fg-muted);
+      margin-bottom: 4px;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 9px;
+      color: var(--fg-dim);
+      font-family: var(--font-mono);
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 3px;
+      border-radius: 1.5px;
+    }
+    .legend-swatch.dash {
+      background: repeating-linear-gradient(
+        90deg,
+        var(--c) 0px 4px,
+        transparent 4px 7px
+      );
+    }
+
+    /* ═══════════════════════════════════════════
+       VERSION STAMP
+       ═══════════════════════════════════════════ */
+    .stamp {
+      position: absolute;
+      bottom: 16px;
+      right: 28px;
+      z-index: 20;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--fg-muted);
+      letter-spacing: 0.06em;
+    }
+
+    /* Center core glow animation */
+    @keyframes core-pulse {
+      0%, 100% { box-shadow: 0 0 20px -5px var(--neon-cyan), 0 0 60px -20px var(--neon-cyan); opacity: 0.15; }
+      50%      { box-shadow: 0 0 30px -5px var(--neon-cyan), 0 0 80px -20px var(--neon-cyan); opacity: 0.25; }
+    }
+    .hub-ring { animation: core-pulse 4s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div class="canvas">
+    <!-- Blueprint grid -->
+    <div class="grid-bg"></div>
+
+    <!-- Ambient glows -->
+    <div class="glow glow-1"></div>
+    <div class="glow glow-2"></div>
+    <div class="glow glow-3"></div>
+
+    <!-- Orbital decorative rings -->
+    <div class="orbit orbit-1"></div>
+    <div class="orbit orbit-2"></div>
+
+    <!-- Hub ring around backend -->
+    <div class="hub-ring" style="width: 180px; height: 180px; top: 291px; left: 445px;"></div>
+
+    <!-- Header -->
+    <div class="header">
+      <h1>CodeKAVI</h1>
+      <span class="tag">system‑architecture v2.0</span>
+    </div>
+
+    <!-- ═══════════ NODES ═══════════ -->
+
+    <!-- User / Browser -->
+    <div class="node" id="n-user" style="--accent: var(--neon-cyan); top: 55px; left: 460px;">
+      <div class="node-badge" style="color: var(--neon-cyan); background: hsl(187 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">User · Browser</span>
+        <span class="node-desc">web application</span>
+      </div>
+      <div class="node-status active" style="--accent: var(--neon-cyan);"></div>
+    </div>
+
+    <!-- Next.js Frontend -->
+    <div class="node" id="n-next" style="--accent: var(--neon-blue); top: 190px; left: 440px;">
+      <div class="node-badge" style="color: var(--neon-blue); background: hsl(220 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <polygon points="12,2 22,20 2,20"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Next.js Frontend</span>
+        <span class="node-desc">react · ssr · proxy</span>
+      </div>
+      <div class="node-status active" style="--accent: var(--neon-blue);"></div>
+    </div>
+
+    <!-- FastAPI Backend (CENTER) -->
+    <div class="node" id="n-fastapi" style="--accent: var(--neon-lime); top: 356px; left: 460px;">
+      <div class="node-badge" style="color: var(--neon-lime); background: hsl(100 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">FastAPI Backend</span>
+        <span class="node-desc">rest · sse · auth</span>
+      </div>
+      <div class="node-status active" style="--accent: var(--neon-lime);"></div>
+    </div>
+
+    <!-- Supabase -->
+    <div class="node store" id="n-supabase" style="--accent: var(--neon-violet); top: 560px; left: 60px;">
+      <div class="node-badge" style="color: var(--neon-violet); background: hsl(288 100% 49% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Supabase</span>
+        <span class="node-desc">jwt · userdb · l3</span>
+      </div>
+    </div>
+
+    <!-- Redis -->
+    <div class="node store" id="n-redis" style="--accent: var(--neon-amber); top: 560px; left: 305px;">
+      <div class="node-badge" style="color: var(--neon-amber); background: hsl(40 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Redis</span>
+        <span class="node-desc">l2 ttl cache</span>
+      </div>
+    </div>
+
+    <!-- Local Disk / RAM -->
+    <div class="node" id="n-disk" style="--accent: var(--neon-teal); top: 560px; left: 530px;">
+      <div class="node-badge" style="color: var(--neon-teal); background: hsl(160 82% 51% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M4 4h16v16H4z"/><path d="M4 8h16"/><circle cx="8" cy="14" r="2"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Local Disk / RAM</span>
+        <span class="node-desc">git clone · ast</span>
+      </div>
+    </div>
+
+    <!-- Groq -->
+    <div class="node" id="n-groq" style="--accent: var(--neon-magenta); top: 560px; left: 760px;">
+      <div class="node-badge" style="color: var(--neon-magenta); background: hsl(340 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z"/>
+          <line x1="10" y1="21" x2="14" y2="21"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Groq Provider</span>
+        <span class="node-desc">llama 3.3 · stream</span>
+      </div>
+    </div>
+
+    <!-- Gemini -->
+    <div class="node" id="n-gemini" style="--accent: var(--neon-rose); top: 430px; left: 910px;">
+      <div class="node-badge" style="color: var(--neon-rose); background: hsl(0 100% 66% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Gemini Provider</span>
+        <span class="node-desc">embeddings · llm</span>
+      </div>
+    </div>
+
+    <!-- Zilliz / Milvus -->
+    <div class="node store" id="n-zilliz" style="--accent: var(--neon-cyan); top: 300px; left: 910px;">
+      <div class="node-badge" style="color: var(--neon-cyan); background: hsl(187 100% 50% / 0.08);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+      </div>
+      <div class="node-text">
+        <span class="node-name">Zilliz / Milvus</span>
+        <span class="node-desc">vector search</span>
+      </div>
+    </div>
+
+    <!-- ═══════════ SVG EDGES ═══════════ -->
+    <svg class="edges-layer" viewBox="0 0 1200 820" preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <marker id="a-cyan" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-cyan)" stroke-width="1"/>
+        </marker>
+        <marker id="a-blue" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-blue)" stroke-width="1"/>
+        </marker>
+        <marker id="a-lime" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-lime)" stroke-width="1"/>
+        </marker>
+        <marker id="a-violet" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-violet)" stroke-width="1"/>
+        </marker>
+        <marker id="a-amber" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-amber)" stroke-width="1"/>
+        </marker>
+        <marker id="a-teal" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-teal)" stroke-width="1"/>
+        </marker>
+        <marker id="a-magenta" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-magenta)" stroke-width="1"/>
+        </marker>
+        <marker id="a-rose" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto">
+          <path d="M0,0 L6,2.5 L0,5" fill="none" stroke="var(--neon-rose)" stroke-width="1"/>
+        </marker>
+
+        <!-- Glow filter -->
+        <filter id="wire-glow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="2" result="blur"/>
+          <feMerge>
+            <feMergeNode in="blur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+
+      <!-- User → Next.js -->
+      <path class="wire" d="M530,100 C530,130 510,160 510,190" stroke="var(--neon-blue)" marker-end="url(#a-blue)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-blue)" style="--dur: 1.6s;">
+        <animateMotion dur="1.6s" repeatCount="indefinite" path="M530,100 C530,130 510,160 510,190"/>
+      </circle>
+
+      <!-- Next.js → FastAPI -->
+      <path class="wire" d="M510,240 C515,270 520,320 530,356" stroke="var(--neon-lime)" marker-end="url(#a-lime)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-lime)" style="--dur: 1.5s;">
+        <animateMotion dur="1.5s" repeatCount="indefinite" path="M510,240 C515,270 520,320 530,356"/>
+      </circle>
+
+      <!-- FastAPI → Supabase -->
+      <path class="wire" d="M460,400 C350,440 200,500 150,558" stroke="var(--neon-violet)" marker-end="url(#a-violet)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-violet)" style="--dur: 2.2s;">
+        <animateMotion dur="2.2s" repeatCount="indefinite" path="M460,400 C350,440 200,500 150,558"/>
+      </circle>
+
+      <!-- FastAPI → Redis -->
+      <path class="wire" d="M490,404 C460,450 420,510 400,558" stroke="var(--neon-amber)" marker-end="url(#a-amber)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-amber)" style="--dur: 1.4s;">
+        <animateMotion dur="1.4s" repeatCount="indefinite" path="M490,404 C460,450 420,510 400,558"/>
+      </circle>
+
+      <!-- FastAPI → Local Disk -->
+      <path class="wire" d="M560,404 C580,450 600,510 610,558" stroke="var(--neon-teal)" marker-end="url(#a-teal)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-teal)" style="--dur: 1.7s;">
+        <animateMotion dur="1.7s" repeatCount="indefinite" path="M560,404 C580,450 600,510 610,558"/>
+      </circle>
+
+      <!-- FastAPI → Groq -->
+      <path class="wire" d="M600,396 C680,430 760,490 830,558" stroke="var(--neon-magenta)" marker-end="url(#a-magenta)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-magenta)" style="--dur: 2.4s;">
+        <animateMotion dur="2.4s" repeatCount="indefinite" path="M600,396 C680,430 760,490 830,558"/>
+      </circle>
+
+      <!-- FastAPI → Gemini -->
+      <path class="wire dashed" d="M620,388 C720,400 840,420 910,440" stroke="var(--neon-rose)" marker-end="url(#a-rose)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-rose)" style="--dur: 2s;">
+        <animateMotion dur="2s" repeatCount="indefinite" path="M620,388 C720,400 840,420 910,440"/>
+      </circle>
+
+      <!-- FastAPI → Zilliz -->
+      <path class="wire" d="M620,372 C720,350 840,330 910,324" stroke="var(--neon-cyan)" marker-end="url(#a-cyan)" filter="url(#wire-glow)"/>
+      <circle class="pulse-dot" fill="var(--neon-cyan)" style="--dur: 2.1s;">
+        <animateMotion dur="2.1s" repeatCount="indefinite" path="M620,372 C720,350 840,330 910,324"/>
+      </circle>
+    </svg>
+
+    <!-- ═══════════ EDGE LABELS ═══════════ -->
+    <div class="wire-label" style="top: 140px; left: 530px; color: var(--neon-blue);">web app</div>
+    <div class="wire-label" style="top: 285px; left: 524px; color: var(--neon-lime);">api/proxy</div>
+    <div class="wire-label" style="top: 480px; left: 260px; color: var(--neon-violet);">jwt · l3</div>
+    <div class="wire-label" style="top: 480px; left: 430px; color: var(--neon-amber);">l2 ttl</div>
+    <div class="wire-label" style="top: 480px; left: 590px; color: var(--neon-teal);">clone · ast</div>
+    <div class="wire-label" style="top: 482px; left: 740px; color: var(--neon-magenta);">llm · sse</div>
+    <div class="wire-label" style="top: 408px; left: 780px; color: var(--neon-rose);">embed</div>
+    <div class="wire-label" style="top: 338px; left: 770px; color: var(--neon-cyan);">vector</div>
+
+    <!-- ═══════════ LEGEND ═══════════ -->
+    <div class="legend">
+      <div class="legend-title">Connection Types</div>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background: var(--neon-lime);"></div>
+        core api
+      </div>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background: var(--neon-violet);"></div>
+        data store
+      </div>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background: var(--neon-magenta);"></div>
+        llm provider
+      </div>
+      <div class="legend-row">
+        <div class="legend-swatch dash" style="--c: var(--neon-rose);"></div>
+        async / embed
+      </div>
+    </div>
+
+    <!-- Version stamp -->
+    <div class="stamp">blueprint·v2 · aug 2026</div>
+  </div>
+</body>
+</html>

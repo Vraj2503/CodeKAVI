@@ -81,7 +81,7 @@ export function DownloadMenu({
         toast.success("JSON downloaded");
       } else if (format === "svg") {
         if (!containerRef.current) throw new Error("Container not found");
-        exportAsSvg(containerRef.current, `${filename}.svg`);
+        await exportAsSvg(containerRef.current, `${filename}.svg`);
         toast.success("SVG downloaded");
       } else {
         if (!containerRef.current) throw new Error("Container not found");

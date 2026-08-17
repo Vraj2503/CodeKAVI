@@ -1,490 +1,436 @@
-"use client";
+/*  */ "use client";
 
 /**
- * DataFlowGraph — semantic data flow diagram.
+ * DataFlowGraph — semantic data flow diagram built on @xyflow/react.
  *
- * Renders conceptual stages (not files) as shaped nodes (rounded rect /
- * cylinder / parallelogram / hexagon per backend `shape`), connected by
- * curved, colour-coded edges ordered left-to-right by backend `tier`.
+ * Replaces the previous D3 implementation. Renders conceptual stages as
+ * shaped nodes connected by labelled, color-coded edges, with:
+ *   - ELK layered layout (dynamic import, zero bundle cost if unused)
+ *   - Connection-aware hover (dims unrelated nodes/edges)
+ *   - Click → detail panel (description, inputs, outputs, files, trace)
+ *   - Trace BFS upstream/downstream
+ *   - Search + filter chips
+ *   - MiniMap, keyboard nav, reduced-motion safe
  */
 
 import {
-  useRef,
+  useCallback,
   useEffect,
-  useState,
   useMemo,
-  forwardRef,
-  useImperativeHandle,
+  useReducer,
+  useRef,
+  useState,
 } from "react";
-import * as d3 from "d3";
-import { catVar, inkDimVar } from "@/lib/viz/tokens";
-import { VizShell, VizLegend, type VizLegendItem } from "@/components/viz/VizShell";
+import {
+  ReactFlow,
+  Background,
+  BackgroundVariant,
+  MiniMap,
+  ReactFlowProvider,
+  useReactFlow,
+  type NodeMouseHandler,
+  applyNodeChanges,
+  applyEdgeChanges,
+  Panel,
+} from "@xyflow/react";
+
+import "@xyflow/react/dist/style.css";
+import "./dataflow-overrides.css";
+
+import { Menu, Map } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+import { catVar } from "@/lib/viz/tokens";
+import {
+  VizShell,
+  VizLegend,
+  type VizLegendItem,
+} from "@/components/viz/VizShell";
 import { useVizCanvas } from "@/components/viz/useVizCanvas";
-import { useVizZoom, ZOOM_MIN, ZOOM_MAX } from "@/components/viz/useVizZoom";
+import { useVizZoom } from "@/components/viz/useVizZoom";
 import { useReducedMotion } from "@/components/viz/useReducedMotion";
 
-interface Node {
-  id: string;
-  label: string;
-  type: string; // "process" | "data_store" | "io" | "transform"
-  shape?: string; // "rounded_rect" | "cylinder" | "parallelogram" | "hexagon"
-  description?: string;
-  source_files?: string[];
-  tier?: number;
-}
+// Internal dataflow modules
+import type {
+  DataFlowGraphProps,
+  FlowNode,
+  RFNode,
+  RFEdge,
+} from "./dataflow/model";
+import {
+  expandTechnologies,
+  prepareFlowGraph,
+  toRFNodes,
+  toRFEdges,
+  assignClosestHandles,
+  EDGE_KIND_LABEL,
+  ALL_EDGE_KINDS,
+} from "./dataflow/model";
+import { runLayout } from "./dataflow/layout";
+import { minimapNodeColor } from "./dataflow/theming";
+import { dfgReducer, initialState } from "./dataflow/state/reducer";
+import { useHighlightMap, edgeHighlight } from "./dataflow/state/selectors";
+import { FlowEdge as FlowEdgeComponent } from "./dataflow/edges/flow-edge";
+import { FlowMarkerDefs } from "./dataflow/edges/flow-marker";
+import { ActionNode } from "./dataflow/nodes/action-node";
+import { DecisionNode } from "./dataflow/nodes/decision-node";
+import { TransformNode } from "./dataflow/nodes/transform-node";
+import { DataStoreNode } from "./dataflow/nodes/data-store-node";
+import { StartNode, EndNode } from "./dataflow/nodes/start-node";
+import { GroupFrame } from "./dataflow/nodes/group-frame";
+import { DetailPanel } from "./dataflow/detail-panel";
+import { SearchBox } from "./dataflow/search-box";
+import { FilterChips } from "./dataflow/filter-chips";
+import { TraceToolbar } from "./dataflow/trace-toolbar";
+import { entryToExitPath } from "./dataflow/replay";
 
-interface Edge {
-  source: string;
-  target: string;
-  label?: string;
-  data_type?: string; // "http" | "db" | "file" | "event" | "internal"
-  animated?: boolean;
-}
+// ── Stable nodeTypes map (must be module-level to avoid remounting) ──────────
+const nodeTypes = Object.freeze({
+  start: StartNode,
+  end: EndNode,
+  action: ActionNode,
+  decision: DecisionNode,
+  transform: TransformNode,
+  data_store: DataStoreNode,
+  group: GroupFrame,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+}) as Record<string, React.ComponentType<any>>;
 
-interface DataFlowGraphProps {
-  nodes: Node[];
-  edges: Edge[];
-}
+const edgeTypes = Object.freeze({
+  flow: FlowEdgeComponent,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+}) as Record<string, React.ComponentType<any>>;
 
-// Semantic stage kinds → categorical slots (lib/viz/tokens.ts)
-const TYPE_COLORS: Record<string, string> = {
-  io: catVar(1),
-  process: catVar(5),
-  transform: catVar(2),
-  data_store: catVar(3),
-};
+// ── Legend items ──────────────────────────────────────────────────────────────
+const NODE_LEGEND: VizLegendItem[] = [
+  { label: "Entry", color: catVar(1) },
+  { label: "Exit", color: catVar(1) },
+  { label: "Process", color: catVar(5) },
+  { label: "Transform", color: catVar(2) },
+  { label: "Data Store", color: catVar(3) },
+];
 
-// Edge kinds keep distinct hues so a flow's transport is readable at a glance
-const EDGE_COLORS: Record<string, string> = {
-  http: catVar(0),
-  db: catVar(3),
-  file: catVar(1),
-  event: catVar(2),
-};
+const EDGE_LEGEND: VizLegendItem[] = ALL_EDGE_KINDS.map((k, i) => ({
+  label: EDGE_KIND_LABEL[k],
+  color: catVar(i),
+  shape: "line" as const,
+}));
 
-// Legend copy — utility language, not the raw wire values
-const TYPE_LABELS: Record<string, string> = {
-  io: "Entry / exit",
-  process: "Process",
-  transform: "Transform",
-  data_store: "Data store",
-};
+// ── Inner component (needs useReactFlow, must be inside ReactFlowProvider) ───
 
-const EDGE_LABELS: Record<string, string> = {
-  http: "HTTP",
-  db: "Database",
-  file: "File",
-  event: "Event",
-};
+function DataFlowGraphInner({
+  nodes: propNodes,
+  edges: propEdges,
+}: DataFlowGraphProps) {
+  const rf = useReactFlow();
+  const canvas = useVizCanvas();
+  const zoom = useVizZoom();
+  const reducedMotion = useReducedMotion();
 
-const NODE_W = 150;
-const NODE_H = 46;
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [state, dispatch] = useReducer(dfgReducer, undefined, initialState);
+  const [rfNodes, setRfNodes] = useState<RFNode[]>([]);
+  const [rfEdges, setRfEdges] = useState<RFEdge[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [replayRun, setReplayRun] = useState(0);
+  const replayTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isToolbarExpanded, setIsToolbarExpanded] = useState(false);
+  const [isMinimapOpen, setIsMinimapOpen] = useState(true);
+  const layoutRunning = useRef(false);
 
-function getColor(type: string): string {
-  return TYPE_COLORS[type] || inkDimVar();
-}
+  // ── Convert props → RF shapes ──────────────────────────────────────────────
+  const preparedGraph = useMemo(
+    () => prepareFlowGraph(propNodes, propEdges),
+    [propNodes, propEdges],
+  );
+  const displayGraph = useMemo(
+    () =>
+      expandTechnologies(preparedGraph.nodes, preparedGraph.edges, expanded),
+    [preparedGraph, expanded],
+  );
+  const baseNodes = useMemo(
+    () => toRFNodes(displayGraph.nodes, expanded),
+    [displayGraph.nodes, expanded],
+  );
+  const baseEdges = useMemo(
+    () => toRFEdges(displayGraph.edges),
+    [displayGraph.edges],
+  );
 
-function getEdgeColor(dataType?: string): string {
-  return dataType && EDGE_COLORS[dataType]
-    ? EDGE_COLORS[dataType]
-    : "hsl(var(--border))";
-}
-
-function truncate(text: string, max = 20): string {
-  return text.length > max ? text.slice(0, max) + "…" : text;
-}
-
-/** Appends the SVG shape for a node's `shape` kind, centred at the origin. */
-function appendShape(
-  group: d3.Selection<SVGGElement, unknown, null, undefined>,
-  shape: string,
-  fill: string,
-  stroke: string,
-  strokeWidth: number,
-) {
-  const w = NODE_W;
-  const h = NODE_H;
-  switch (shape) {
-    case "cylinder": {
-      const rx = w / 2;
-      const ry = h * 0.18;
-      const top = -h / 2 + ry;
-      const bottom = h / 2 - ry;
-      group
-        .append("path")
-        .attr(
-          "d",
-          `M${-rx},${top} L${-rx},${bottom} A${rx},${ry} 0 0 0 ${rx},${bottom} L${rx},${top}`,
-        )
-        .attr("fill", fill)
-        .attr("stroke", stroke)
-        .attr("stroke-width", strokeWidth);
-      group
-        .append("ellipse")
-        .attr("cy", top)
-        .attr("rx", rx)
-        .attr("ry", ry)
-        .attr("fill", fill)
-        .attr("stroke", stroke)
-        .attr("stroke-width", strokeWidth);
-      break;
+  // ── Run ELK layout on graph change ────────────────────────────────────────
+  useEffect(() => {
+    if (baseNodes.length === 0) {
+      const frame = requestAnimationFrame(() => {
+        setRfNodes([]);
+        setRfEdges([]);
+      });
+      return () => cancelAnimationFrame(frame);
     }
-    case "parallelogram": {
-      const skew = w * 0.18;
-      group
-        .append("polygon")
-        .attr(
-          "points",
-          `${-w / 2 + skew},${-h / 2} ${w / 2},${-h / 2} ${w / 2 - skew},${h / 2} ${-w / 2},${h / 2}`,
+    let cancelled = false;
+    layoutRunning.current = true;
+    runLayout(baseNodes, baseEdges).then(({ nodes: laid }) => {
+      if (cancelled) return;
+      layoutRunning.current = false;
+      setRfNodes(laid);
+      setRfEdges(assignClosestHandles(laid, baseEdges));
+      // Fit after layout settles (no animation on first paint)
+      requestAnimationFrame(() => rf.fitView({ duration: 0, padding: 0.15 }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseNodes, baseEdges, rf]);
+
+  // ── Register zoom controller with VizShell ─────────────────────────────────
+  useEffect(() => {
+    zoom.register(null, {
+      zoomIn: () => rf.zoomIn({ duration: 200 }),
+      zoomOut: () => rf.zoomOut({ duration: 200 }),
+      fitToView: () => rf.fitView({ duration: 300, padding: 0.15 }),
+    });
+  }, [rf, zoom]);
+
+  // ── Highlight map from reducer state ──────────────────────────────────────
+  const hlMap = useHighlightMap(state, displayGraph.nodes, displayGraph.edges);
+
+  // ── Apply highlight to nodes ───────────────────────────────────────────────
+  const visibleNodes = useMemo<RFNode[]>(() => {
+    return rfNodes.map((n) => ({
+      ...n,
+      data: {
+        ...n.data,
+        highlight: hlMap.get(n.id) ?? "off",
+      },
+    }));
+  }, [rfNodes, hlMap]);
+
+  // ── Apply highlight to edges ───────────────────────────────────────────────
+  const visibleEdges = useMemo<RFEdge[]>(() => {
+    const replayPath = replayRun
+      ? entryToExitPath(displayGraph.nodes, displayGraph.edges)
+      : [];
+    return rfEdges.map((e) => ({
+      ...e,
+      data: {
+        ...e.data!,
+        highlight: edgeHighlight(e.source, e.target, hlMap),
+        replayRun: replayRun || undefined,
+        replayStep:
+          replayPath.indexOf(`${e.source}->${e.target}`) >= 0
+            ? replayPath.indexOf(`${e.source}->${e.target}`)
+            : undefined,
+      },
+    }));
+  }, [rfEdges, hlMap, replayRun, displayGraph]);
+
+  // ── Event handlers ─────────────────────────────────────────────────────────
+  const handleNodeClick: NodeMouseHandler = useCallback(
+    (_evt, node) => {
+      dispatch({ type: "select", id: node.id });
+      if (
+        preparedGraph.nodes.some(
+          (item) => item.id === node.id && item.technologies?.length,
         )
-        .attr("fill", fill)
-        .attr("stroke", stroke)
-        .attr("stroke-width", strokeWidth);
-      break;
-    }
-    case "hexagon": {
-      const cut = w * 0.18;
-      group
-        .append("polygon")
-        .attr(
-          "points",
-          `${-w / 2 + cut},${-h / 2} ${w / 2 - cut},${-h / 2} ${w / 2},0 ${w / 2 - cut},${h / 2} ${-w / 2 + cut},${h / 2} ${-w / 2},0`,
-        )
-        .attr("fill", fill)
-        .attr("stroke", stroke)
-        .attr("stroke-width", strokeWidth);
-      break;
-    }
-    default: // rounded_rect
-      group
-        .append("rect")
-        .attr("x", -w / 2)
-        .attr("y", -h / 2)
-        .attr("width", w)
-        .attr("height", h)
-        .attr("rx", 10)
-        .attr("fill", fill)
-        .attr("stroke", stroke)
-        .attr("stroke-width", strokeWidth);
-  }
-}
-
-export const DataFlowGraph = forwardRef<HTMLDivElement, DataFlowGraphProps>(
-  function DataFlowGraph({ nodes, edges }, ref) {
-    const svgRef = useRef<SVGSVGElement>(null);
-    const [selected, setSelected] = useState<Node | null>(null);
-
-    const canvas = useVizCanvas();
-    const reducedMotion = useReducedMotion();
-    const zoom = useVizZoom(!reducedMotion);
-    const containerRef = canvas.containerRef;
-    const containerSize = canvas.size;
-
-    useImperativeHandle(ref, () => containerRef.current!);
-
-    const maxTier = useMemo(
-      () => Math.max(0, ...nodes.map((n) => n.tier ?? 0)),
-      [nodes],
-    );
-
-    /** Only key the kinds actually present — a legend for absent things is noise. */
-    const legendItems = useMemo<VizLegendItem[]>(() => {
-      const items: VizLegendItem[] = [];
-      const seenTypes = new Set(nodes.map((n) => n.type));
-      for (const [type, label] of Object.entries(TYPE_LABELS)) {
-        if (seenTypes.has(type)) {
-          items.push({ color: getColor(type), label });
-        }
-      }
-      const seenEdges = new Set(
-        edges.map((e) => e.data_type).filter((d): d is string => !!d && d in EDGE_COLORS),
-      );
-      for (const dataType of seenEdges) {
-        items.push({
-          color: EDGE_COLORS[dataType],
-          label: EDGE_LABELS[dataType] ?? dataType,
-          shape: "line",
+      ) {
+        setExpanded((current) => {
+          const next = new Set(current);
+          if (next.has(node.id)) next.delete(node.id);
+          else next.add(node.id);
+          return next;
         });
       }
-      return items;
-    }, [nodes, edges]);
+    },
+    [preparedGraph.nodes],
+  );
 
-    useEffect(() => {
-      if (!svgRef.current || !containerRef.current || nodes.length === 0)
-        return;
+  const selectedNode: FlowNode | null = state.selected
+    ? (preparedGraph.nodes.find((n) => n.id === state.selected) ?? null)
+    : null;
 
-      const width = containerRef.current.clientWidth || 800;
-      const viewportH = containerRef.current.clientHeight || 500;
+  const replayPath = useMemo(
+    () => entryToExitPath(displayGraph.nodes, displayGraph.edges),
+    [displayGraph],
+  );
+  const replay = useCallback(() => {
+    if (reducedMotion || replayPath.length === 0) return;
 
-      // Flipped by cleanup so the particle loop below cannot outlive this draw.
-      let cancelled = false;
+    if (replayRun > 0) {
+      // Toggle off
+      setReplayRun(0);
+      if (replayTimeout.current) clearTimeout(replayTimeout.current);
+      return;
+    }
 
-      const svg = d3.select(svgRef.current);
-      svg.selectAll("*").remove();
-      svg.attr("width", width).attr("height", viewportH);
+    // Start playback
+    setReplayRun((run) => (run === 0 ? 1 : run + 1));
 
-      const g = svg.append("g");
-      const defs = svg.append("defs");
+    const duration = replayPath.length * 700 + 900;
+    if (replayTimeout.current) clearTimeout(replayTimeout.current);
 
-      // Clear selection when clicking empty canvas
-      svg.on("click", () => setSelected(null));
+    replayTimeout.current = setTimeout(() => {
+      setReplayRun(0);
+    }, duration);
+  }, [reducedMotion, replayPath, replayRun]);
 
-      // Arrow markers — one per edge colour actually in use
-      const edgeColors = new Set(edges.map((e) => getEdgeColor(e.data_type)));
-      edgeColors.forEach((color) => {
-        defs
-          .append("marker")
-          .attr("id", `flow-arrow-${cssId(color)}`)
-          .attr("viewBox", "0 -4 8 8")
-          .attr("refX", NODE_W / 2 + 8)
-          .attr("refY", 0)
-          .attr("markerWidth", 5)
-          .attr("markerHeight", 5)
-          .attr("orient", "auto")
-          .append("path")
-          .attr("d", "M0,-4L8,0L0,4")
-          .attr("fill", color);
-      });
-
-      // ── Position nodes into columns by backend-provided tier ──
-      const columns = new Map<number, Node[]>();
-      nodes.forEach((n) => {
-        const t = n.tier ?? 0;
-        if (!columns.has(t)) columns.set(t, []);
-        columns.get(t)!.push(n);
-      });
-      const maxTier = Math.max(...columns.keys(), 0);
-      const maxColSize = Math.max(
-        ...[...columns.values()].map((c) => c.length),
-        1,
-      );
-
-      const colSpacingX = NODE_W + 60;
-      const nodeSpacingY = NODE_H + 28;
-      const marginX = 50;
-      const marginY = 40;
-      const contentW = Math.max(
-        width,
-        (maxTier + 1) * colSpacingX + marginX * 2,
-      );
-      const contentH = Math.max(
-        viewportH,
-        maxColSize * nodeSpacingY + marginY * 2,
-      );
-
-      const positions = new Map<string, { x: number; y: number }>();
-      for (let t = 0; t <= maxTier; t++) {
-        const col = columns.get(t) || [];
-        const colX = marginX + t * colSpacingX + colSpacingX / 2;
-        const totalColH = (col.length - 1) * nodeSpacingY;
-        const startY = (contentH - totalColH) / 2;
-        col.forEach((n, i) =>
-          positions.set(n.id, { x: colX, y: startY + i * nodeSpacingY }),
-        );
-      }
-
-      // ── Edges — curved left-to-right flow ──
-      edges.forEach((edge) => {
-        const src = positions.get(edge.source);
-        const tgt = positions.get(edge.target);
-        if (!src || !tgt) return;
-
-        const color = getEdgeColor(edge.data_type);
-        const midX = (src.x + tgt.x) / 2;
-        const path = g
-          .append("path")
-          .attr(
-            "d",
-            `M${src.x + NODE_W / 2},${src.y} C${midX},${src.y} ${midX},${tgt.y} ${tgt.x - NODE_W / 2},${tgt.y}`,
-          )
-          .attr("fill", "none")
-          .attr("stroke", color)
-          .attr("stroke-width", 2)
-          .attr("stroke-opacity", 0.8)
-          .attr("marker-end", `url(#flow-arrow-${cssId(color)})`);
-
-        // Flow particles are decorative. Under reduced motion they are skipped
-        // outright — this loop re-arms itself forever, so it is both a
-        // vestibular trigger and a CPU/battery drain that never stops.
-        if (edge.animated && !reducedMotion) {
-          const pathNode = path.node();
-          const totalLength = pathNode?.getTotalLength() ?? 0;
-          if (totalLength > 0) {
-            const particle = g
-              .append("circle")
-              .attr("r", 3)
-              .attr("fill", color);
-            const loop = () => {
-              // `cancelled` is flipped by this effect's cleanup. isConnected
-              // alone was not enough: on a re-render the old node can still be
-              // attached for a tick, orphaning a second loop that never stops.
-              if (cancelled || !pathNode!.isConnected) return;
-              particle
-                .transition()
-                .duration(1500)
-                .ease(d3.easeLinear)
-                .attrTween("transform", () => (t: number) => {
-                  const p = pathNode!.getPointAtLength(t * totalLength);
-                  return `translate(${p.x},${p.y})`;
-                })
-                .on("end", loop);
-            };
-            loop();
-          }
-        }
-
-        if (edge.label) {
-          const labelY = (src.y + tgt.y) / 2 - 6;
-          const text = g
-            .append("text")
-            .attr("x", midX)
-            .attr("y", labelY)
-            .attr("text-anchor", "middle")
-            .attr("font-size", 11)
-            .attr("fill", "hsl(var(--muted-foreground))")
-            .text(edge.label);
-          const bbox = (text.node() as SVGTextElement).getBBox();
-          g.insert("rect", () => text.node())
-            .attr("x", bbox.x - 4)
-            .attr("y", bbox.y - 2)
-            .attr("width", bbox.width + 8)
-            .attr("height", bbox.height + 4)
-            .attr("rx", 6)
-            .attr("fill", "hsl(var(--card))")
-            .attr("fill-opacity", 0.85);
-        }
-      });
-
-      // ── Nodes ──
-      nodes.forEach((node) => {
-        const pos = positions.get(node.id);
-        if (!pos) return;
-        const color = getColor(node.type);
-
-        const nodeGroup = g
-          .append("g")
-          .attr("transform", `translate(${pos.x},${pos.y})`)
-          .style("cursor", "pointer");
-
-        appendShape(
-          nodeGroup,
-          node.shape || "rounded_rect",
-          "hsl(var(--card))",
-          color,
-          2,
-        );
-
-        nodeGroup
-          .append("text")
-          .attr("text-anchor", "middle")
-          .attr("dy", "0.35em")
-          .attr("fill", "hsl(var(--foreground))")
-          .attr("font-size", 11)
-          .attr("font-weight", 500)
-          .text(truncate(node.label));
-
-        nodeGroup
-          .on("click", (event) => {
-            event.stopPropagation();
-            setSelected(node);
-          })
-          .on("mouseenter", function () {
-            d3.select(this)
-              .selectAll("rect,path,polygon,ellipse")
-              .attr("stroke-width", 3);
-          })
-          .on("mouseleave", function () {
-            d3.select(this)
-              .selectAll("rect,path,polygon,ellipse")
-              .attr("stroke-width", 2);
-          });
-      });
-
-      // Zoom + pan — behavior stays local (the scale extent and transform
-      // target are chart-specific); the shell drives it through the controller.
-      const zoomBehavior = d3
-        .zoom<SVGSVGElement, unknown>()
-        .scaleExtent([ZOOM_MIN, ZOOM_MAX])
-        .on("zoom", (event) => g.attr("transform", event.transform));
-      svg.call(zoomBehavior);
-      zoom.register(svgRef.current, zoomBehavior, g.node());
-
-      // Auto-fit on first render
-      const padX = 20;
-      const padY = 20;
-      const fitScale = Math.min(
-        (width - padX * 2) / contentW,
-        (viewportH - padY * 2) / contentH,
-        1,
-      );
-      const fitX = (width - contentW * fitScale) / 2;
-      const fitY = (viewportH - contentH * fitScale) / 2;
-      svg.call(
-        zoomBehavior.transform,
-        d3.zoomIdentity.translate(fitX, fitY).scale(fitScale),
-      );
-
-      return () => {
-        cancelled = true;
-        zoom.register(null, null, null);
-        svg.selectAll("*").remove();
-      };
-    }, [nodes, edges, containerSize, containerRef, zoom, reducedMotion]);
-
-    return (
-      <VizShell
-        canvas={canvas}
-        zoom={zoom}
-        label="Data flow diagram"
-        description={
-          `Conceptual stages flowing left to right across ${maxTier + 1} tiers. ` +
-          "Node shape indicates the kind of stage and edge color the transport. " +
-          `${nodes.length} stages, ${edges.length} connections.`
-        }
-        legend={<VizLegend title="Flow" items={legendItems} />}
-        overlay={
-          selected && (
-            <div className="glass-panel absolute top-3 left-3 z-20 rounded-lg px-4 py-3 text-xs max-w-xs">
-              <div className="flex items-start justify-between gap-3">
-                <div className="font-semibold text-foreground">
-                  {selected.label}
-                </div>
-                <button
-                  onClick={() => setSelected(null)}
-                  aria-label="Close"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  ×
-                </button>
-              </div>
-              {selected.description && (
-                <p className="text-muted-foreground mt-1.5 leading-relaxed">
-                  {selected.description}
-                </p>
-              )}
-              {!!selected.source_files?.length && (
-                <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
-                  {selected.source_files.map((f) => (
-                    <div
-                      key={f}
-                      className="text-muted-foreground truncate font-mono text-[11px]"
-                    >
-                      {f}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        }
+  const toolbar = (
+    <div className="flex items-center">
+      <button
+        type="button"
+        onClick={() => setIsToolbarExpanded((s) => !s)}
+        className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground z-10"
+        title="Toggle Filters"
       >
-        <svg ref={svgRef} className="w-full h-full" />
-      </VizShell>
-    );
-  },
-);
+        <Menu className="h-4 w-4" />
+        Filters
+      </button>
 
-/** Turns a colour string into a valid SVG id fragment. */
-function cssId(color: string): string {
-  return color.replace(/[^a-zA-Z0-9]/g, "");
+      <div
+        className={cn(
+          "flex flex-nowrap items-center overflow-hidden transition-all duration-300 ease-in-out",
+          isToolbarExpanded
+            ? "max-w-[800px] opacity-100 px-3"
+            : "max-w-0 opacity-0 px-0 pointer-events-none",
+        )}
+      >
+        <div className="flex shrink-0 items-center gap-3">
+          <SearchBox
+            value={state.search}
+            onChange={(q) => dispatch({ type: "search", q })}
+          />
+          <FilterChips
+            value={state.filters.nodes}
+            onChange={(nextKinds) => {
+              const curr = state.filters.nodes;
+              for (const k of nextKinds) {
+                if (!curr.has(k)) {
+                  dispatch({ type: "toggle-n-kind", kind: k });
+                  return;
+                }
+              }
+              for (const k of curr) {
+                if (!nextKinds.has(k)) {
+                  dispatch({ type: "toggle-n-kind", kind: k });
+                  return;
+                }
+              }
+            }}
+          />
+          <TraceToolbar
+            traceFrom={state.traceFrom}
+            selectedId={state.selected}
+            selectedLabel={selectedNode?.label ?? ""}
+            onTrace={(id) => dispatch({ type: "trace", from: id })}
+            onReset={() => dispatch({ type: "trace", from: null })}
+          />
+          <button
+            type="button"
+            onClick={replay}
+            disabled={reducedMotion || replayPath.length === 0}
+            title={
+              reducedMotion
+                ? "Animation is disabled by your motion preference"
+                : "Replay one entry-to-exit flow"
+            }
+            className={cn(
+              "shrink-0 rounded border px-2 py-1 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              replayRun > 0
+                ? "border-viz-highlight text-viz-highlight hover:bg-viz-highlight hover:text-white"
+                : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {replayRun > 0 ? "Stop replay" : "Replay flow"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <VizShell
+      canvas={canvas}
+      zoom={zoom}
+      label="Data Flow"
+      description="Semantic data flow: nodes are stages, edges show how data moves between them."
+      toolbarLeft={toolbar}
+    >
+      <div className="relative h-full w-full">
+        <ReactFlow
+          nodes={visibleNodes}
+          edges={visibleEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeClick={handleNodeClick}
+          onNodesChange={(changes) =>
+            setRfNodes((nds) => applyNodeChanges(changes, nds))
+          }
+          onEdgesChange={(changes) =>
+            setRfEdges((eds) => applyEdgeChanges(changes, eds))
+          }
+          onPaneClick={() => dispatch({ type: "select", id: null })}
+          elementsSelectable={false}
+          nodesDraggable={true}
+          fitView={false}
+          panOnDrag
+          zoomOnScroll={false}
+          preventScrolling={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+          <FlowMarkerDefs />
+          {isMinimapOpen && (
+            <MiniMap
+              position="bottom-left"
+              pannable
+              zoomable
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              nodeColor={(n: any) =>
+                minimapNodeColor(n?.data?.flow?.kind ?? "action")
+              }
+              maskColor="hsl(var(--background) / 0.85)"
+              nodeStrokeWidth={2}
+            />
+          )}
+          <Panel position="bottom-left" className="export-hide">
+            <button
+              onClick={() => setIsMinimapOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-card/90 shadow text-muted-foreground transition-colors hover:bg-accent hover:text-foreground backdrop-blur-sm"
+              title={isMinimapOpen ? "Hide minimap" : "Show minimap"}
+              style={{
+                /* React Flow panels have margin by default. Pushing it slightly allows it to sit cleanly below/next to the minimap */
+                marginLeft: isMinimapOpen ? "4px" : "0", 
+                marginBottom: isMinimapOpen ? "4px" : "0"
+              }}
+            >
+              <Map size={14} />
+            </button>
+          </Panel>
+        </ReactFlow>
+
+        {/* Detail panel — absolutely positioned inside the canvas */}
+        <DetailPanel
+          node={selectedNode}
+          onClose={() => dispatch({ type: "select", id: null })}
+          onTraceFrom={(id) => dispatch({ type: "trace", from: id })}
+          expanded={selectedNode ? expanded.has(selectedNode.id) : false}
+          onToggleExpanded={(id) =>
+            setExpanded((current) => {
+              const next = new Set(current);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
+        />
+      </div>
+    </VizShell>
+  );
+}
+
+// ── Public export (wraps inner with ReactFlowProvider) ───────────────────────
+export function DataFlowGraph(props: DataFlowGraphProps) {
+  return (
+    <ReactFlowProvider>
+      <DataFlowGraphInner {...props} />
+    </ReactFlowProvider>
+  );
 }

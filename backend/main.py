@@ -1,7 +1,7 @@
 """
-main.py — FastAPI application entry point for CodeKavi.
+main.py — FastAPI application entry point for Rune.
 
-All route handlers live in codekavi.routes.*
+All route handlers live in rune.routes.*
 This file only wires up the app, middleware, health check, and lifespan.
 """
 
@@ -14,14 +14,14 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from codekavi.cache import AnalysisCache
-from codekavi.cloner import MAX_REPO_AGE_HOURS, cleanup_old_repos
-from codekavi.limiter import close_limiter, init_limiter, per_minute
-from codekavi.logging_config import RequestIDMiddleware, setup_logging
-from codekavi.routes import api_router
-from codekavi.settings import parsed_cors_origins, settings
-from codekavi.task_registry import BackgroundTaskRegistry
-from codekavi.utils import current_cpu_executor, current_io_executor, run_sync
+from rune.cache import AnalysisCache
+from rune.cloner import MAX_REPO_AGE_HOURS, cleanup_old_repos
+from rune.limiter import close_limiter, init_limiter, per_minute
+from rune.logging_config import RequestIDMiddleware, setup_logging
+from rune.routes import api_router
+from rune.settings import parsed_cors_origins, settings
+from rune.task_registry import BackgroundTaskRegistry
+from rune.utils import current_cpu_executor, current_io_executor, run_sync
 
 # Setup logging immediately before other modules log anything
 setup_logging()
@@ -36,11 +36,11 @@ async def lifespan(app: FastAPI):
     Shutdown: gracefully shut down the shared thread-pool executor.
     """
     # Startup
-    from codekavi.settings import validate_config
+    from rune.settings import validate_config
 
     validate_config()
 
-    from codekavi.llm.providers import validate_providers
+    from rune.llm.providers import validate_providers
 
     validate_providers()
 
@@ -51,8 +51,8 @@ async def lifespan(app: FastAPI):
     # via env, defaulting to the previous values / cpu_count().
     io_workers = int(os.getenv("IO_EXECUTOR_WORKERS", "32"))
     cpu_workers = int(os.getenv("CPU_EXECUTOR_WORKERS", str(min(8, (os.cpu_count() or 8)))))
-    io_executor = ThreadPoolExecutor(max_workers=io_workers, thread_name_prefix="codekavi-io-")
-    cpu_executor = ThreadPoolExecutor(max_workers=cpu_workers, thread_name_prefix="codekavi-cpu-")
+    io_executor = ThreadPoolExecutor(max_workers=io_workers, thread_name_prefix="rune-io-")
+    cpu_executor = ThreadPoolExecutor(max_workers=cpu_workers, thread_name_prefix="rune-cpu-")
     cache = AnalysisCache()
     task_registry = BackgroundTaskRegistry()
 
@@ -72,13 +72,13 @@ async def lifespan(app: FastAPI):
     await close_limiter()
     # H-12 — close the shared Cloudflare embedding session so its connection
     # pool is released cleanly instead of leaking on shutdown.
-    from codekavi.embedding import close_cloudflare_session
+    from rune.embedding import close_cloudflare_session
 
     await close_cloudflare_session()
 
 
 app = FastAPI(
-    title="CodeKavi API",
+    title="Rune API",
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -136,7 +136,7 @@ async def health():
     gemini_configured = bool(settings.gemini_api_key)
     return {
         "status": "ok",
-        "service": "CodeKavi API",
+        "service": "Rune API",
         "llm_configured": gemini_configured,
         "llm_provider": "gemini" if gemini_configured else None,
     }
@@ -157,7 +157,7 @@ def _ping_redis() -> bool | None:
 def _ping_zilliz() -> bool | None:
     if not (settings.zilliz_uri and settings.zilliz_api_key):
         return None
-    from codekavi.vectorstore import ZillizClient
+    from rune.vectorstore import ZillizClient
 
     try:
         return ZillizClient().collection_exists()
@@ -200,7 +200,7 @@ async def health_deep():
     healthy = all(v != "down" for v in dependencies.values())
     return {
         "status": "ok" if healthy else "degraded",
-        "service": "CodeKavi API",
+        "service": "Rune API",
         "dependencies": dependencies,
     }
 

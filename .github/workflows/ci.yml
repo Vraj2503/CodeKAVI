@@ -43,8 +43,18 @@ jobs:
         run: |
           cd backend
           pytest
-          # Guard: fail if the suite ever silently empties again
-          test "$(pytest --co -q 2>/dev/null | grep -c '::')" -gt 0
+          # Guard: fail if the suite ever silently empties again.
+          #
+          # Reads the "N tests collected" summary rather than counting "::" in
+          # a node-id listing. pytest 9 changed `--collect-only -q` to print a
+          # `<Function ...>` tree instead of `path::test_name` lines, so the
+          # old grep counted 0 and failed a suite where all 71 tests passed.
+          # The summary line has been stable across pytest majors.
+          COLLECTED="$(pytest --collect-only -q 2>/dev/null \
+            | grep -oE '[0-9]+ tests? collected' \
+            | grep -oE '^[0-9]+' | tail -1)"
+          echo "collected: ${COLLECTED:-0}"
+          test "${COLLECTED:-0}" -gt 0
 
   frontend-lint-build:
     runs-on: ubuntu-latest
