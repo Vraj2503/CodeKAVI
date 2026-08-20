@@ -13,6 +13,7 @@ from rune.complexity import (
     count_lines_of_code,
     cyclomatic_complexity,
     file_complexity,
+    function_count,
 )
 
 # ── Baseline ──
@@ -128,13 +129,31 @@ def test_oversized_file_is_not_parsed():
 
 def test_file_complexity_marks_the_fallback():
     measured = file_complexity("if x:\n    pass\n", "app/main.py")
-    assert measured == {"loc": 2, "complexity": 2, "complexity_source": "cyclomatic"}
+    assert measured == {"loc": 2, "complexity": 2, "functions": 0, "complexity_source": "cyclomatic"}
 
     fallback = file_complexity("func main() {}\n", "cmd/main.go")
     assert fallback["complexity"] is None
+    assert fallback["functions"] is None
     assert fallback["complexity_source"] == "size_fallback"
     # LOC is still real even when complexity is not.
     assert fallback["loc"] == 1
+
+
+# ── Function count ──
+
+
+def test_function_count_includes_methods_and_arrows():
+    py = "def a():\n    pass\n\nclass C:\n    def m(self):\n        pass\n"
+    assert function_count(py, ".py") == 2
+
+    js = "function a() {}\nconst b = () => 1;\nclass C { m() {} }\n"
+    assert function_count(js, ".js") == 3
+
+
+def test_function_count_is_none_without_a_parser():
+    """Same honesty rule as complexity: no parser means no number, not zero."""
+    assert function_count("func main() {}\n", ".go") is None
+    assert function_count("x = 1\n", ".py") == 0
 
 
 def test_syntax_errors_still_yield_a_count():

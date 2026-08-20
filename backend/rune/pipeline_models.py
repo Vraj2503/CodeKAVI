@@ -60,6 +60,7 @@ class FileProfile(BaseModel):
     # low score — see rune/complexity.py.
     loc: int | None = None
     complexity: int | None = None
+    functions: int | None = None
     complexity_source: str | None = None
     model_config = {"extra": "allow"}
 
