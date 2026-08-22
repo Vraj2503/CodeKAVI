@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mockup A: Force-Directed Symbol Graph</title>
+  <style>
+    :root {
+      /* Dark Theme Tokens */
+      --background: 30 9% 6%;
+      --foreground: 40 18% 94%;
+      --card: 30 8% 9%;
+      --card-foreground: 40 18% 94%;
+      --muted: 30 6% 14%;
+      --muted-foreground: 36 8% 62%;
+      --border: 32 7% 19%;
+      --signal: 34 96% 56%;
+      --destructive: 2 72% 58%;
+      --success: 148 52% 52%;
+      --viz-highlight: 34 96% 56%;
+      --viz-cat-1: 212 100% 67%;
+      --viz-cat-2: 129 49% 49%;
+      --viz-cat-3: 266 100% 77%;
+      --viz-cat-4: 26 85% 59%;
+      --viz-cat-5: 328 89% 72%;
+      --viz-cat-6: 209 100% 74%;
+      --viz-cat-7: 126 50% 45%;
+      --viz-cat-8: 267 80% 70%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 30 8% 9%;
+      --viz-ink: 40 18% 94%;
+      --viz-ink-dim: 36 8% 62%;
+      --viz-edge: 32 7% 19%;
+      --radius: 0.5rem;
+
+      /* Role Colors */
+      --role-core_module: 266 60% 52%; /* viz-cat-3, purple */
+      --role-shared_utility: 209 84% 42%; /* viz-cat-6, cyan */
+      --role-internal_helper: 28 7% 42%; /* muted */
+      --role-leaf: 32 7% 19%; /* dim */
+      --role-test: 129 54% 30%; /* viz-cat-2, green */
+      --role-orchestrator: 26 84% 42%; /* viz-cat-4, orange/amber */
+      --role-entry_point: 148 55% 32%; /* success */
+      --role-router: 328 66% 46%; /* viz-cat-5, pink */
+      --role-config: 26 84% 42%; /* viz-cat-4, orange */
+    }
+
+    * { box-sizing: border-box; }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: hsl(var(--background));
+      color: hsl(var(--foreground));
+      overflow: hidden;
+    }
+
+    #app {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    #viz-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      cursor: grab;
+    }
+
+    #viz-container:active { cursor: grabbing; }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .node {
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    
+    .node-bg {
+      stroke: hsl(0 0% 100% / 0.2);
+      stroke-width: 2px;
+    }
+    
+    .node-label {
+      fill: #ffffff;
+      font-size: 12px;
+      font-weight: 500;
+      pointer-events: none;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+
+    .edge {
+      fill: none;
+      stroke: hsl(36 8% 30%);
+      stroke-width: 1px;
+      transition: stroke 0.2s, stroke-width 0.2s, opacity 0.2s;
+    }
+    .edge.inherits {
+      stroke-dasharray: 4 4;
+      stroke-width: 2px;
+    }
+    
+    .edge-glow {
+      stroke: hsl(var(--viz-highlight));
+      stroke-width: 2px;
+      opacity: 1;
+      z-index: 10;
+    }
+
+    .faded { opacity: 0.1 !important; }
+    .highlighted { opacity: 1 !important; }
+
+    /* UI Overlays */
+    .overlay-card {
+      position: absolute;
+      background: hsl(var(--card) / 0.85);
+      backdrop-filter: blur(8px);
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      padding: 1rem;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    /* Caption Block */
+    #caption-block {
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      width: 400px;
+    }
+    #caption-block h1 { margin: 0 0 0.5rem 0; font-size: 1rem; }
+    #caption-block p { margin: 0; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+
+    /* Resolution Banner */
+    #resolution-banner {
+      top: 1rem;
+      left: 1rem;
+      width: 280px;
+    }
+    .res-bar-bg { height: 6px; background: hsl(var(--muted)); border-radius: 3px; margin: 8px 0; overflow: hidden; }
+    .res-bar-fill { height: 100%; background: hsl(var(--viz-highlight)); width: 29%; }
+    .text-sm { font-size: 0.85rem; }
+    .text-xs { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+    .mb-1 { margin-bottom: 0.25rem; }
+    .mt-2 { margin-top: 0.5rem; }
+
+    /* Legend */
+    #legend {
+      bottom: 1rem;
+      left: 1rem;
+      width: 220px;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 0.85rem; }
+    .legend-color { width: 12px; height: 12px; border-radius: 50%; border: 1px solid hsl(0 0% 100%/0.2); }
+    .legend-line { width: 16px; height: 1px; background: hsl(36 8% 30%); }
+    .legend-line.dashed { background: transparent; border-bottom: 2px dashed hsl(36 8% 30%); }
+
+    /* Controls */
+    #controls {
+      bottom: 1rem;
+      right: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .control-btn {
+      width: 32px; height: 32px;
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      color: hsl(var(--foreground));
+      border-radius: var(--radius);
+      cursor: pointer;
+      display: flex; justify-content: center; align-items: center;
+      font-size: 1.2rem;
+    }
+    .control-btn:hover { background: hsl(var(--muted)); }
+
+    /* Tooltip */
+    #tooltip {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      min-width: 250px;
+      z-index: 200;
+      transform: translate(15px, 15px);
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      background: hsl(var(--muted));
+    }
+    .badge.role { border: 1px solid currentColor; background: transparent; }
+    .tt-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .tt-title { font-weight: 600; font-size: 0.95rem; word-break: break-all; }
+    .tt-meta { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin-bottom: 8px; }
+    .tt-stats { display: flex; gap: 12px; font-size: 0.8rem; margin-top: 8px; }
+    .tt-doc { font-size: 0.8rem; font-style: italic; color: hsl(var(--muted-foreground)); margin-top: 8px; border-left: 2px solid hsl(var(--border)); padding-left: 8px; }
+
+    /* Detail Panel */
+    #detail-panel {
+      width: 320px;
+      background: hsl(var(--card));
+      border-left: 1px solid hsl(var(--border));
+      height: 100%;
+      position: absolute;
+      right: -320px;
+      top: 0;
+      transition: right 0.3s ease;
+      z-index: 150;
+      display: flex;
+      flex-direction: column;
+    }
+    #detail-panel.open { right: 0; }
+    .dp-header {
+      padding: 1rem;
+      border-bottom: 1px solid hsl(var(--border));
+      display: flex; justify-content: space-between; align-items: flex-start;
+    }
+    .dp-close { background: none; border: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 1.2rem; }
+    .dp-body { padding: 1rem; overflow-y: auto; flex: 1; }
+    .dp-section { margin-bottom: 1.5rem; }
+    .dp-section h3 { font-size: 0.8rem; text-transform: uppercase; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; margin: 0 0 0.5rem 0; }
+    .dp-code { font-family: ui-monospace, monospace; font-size: 0.8rem; background: hsl(var(--background)); padding: 0.5rem; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+    .dp-list { list-style: none; padding: 0; margin: 0; }
+    .dp-list li { font-size: 0.85rem; padding: 4px 0; border-bottom: 1px solid hsl(var(--border)); }
+    .dp-list li:last-child { border: none; }
+    
+    /* Empty State */
+    #empty-state {
+      position: absolute;
+      inset: 0;
+      background: hsl(var(--background));
+      z-index: 300;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #empty-state.active { display: flex; }
+    .es-card {
+      background: hsl(var(--card));
+      padding: 2rem;
+      border-radius: var(--radius);
+      border: 1px solid hsl(var(--border));
+      text-align: center;
+      max-width: 400px;
+    }
+    .es-icon { font-size: 3rem; color: hsl(var(--muted-foreground)); margin-bottom: 1rem; }
+    .es-btn {
+      margin-top: 1.5rem;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #toggle-empty {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 400;
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      border: 1px solid hsl(var(--border));
+      padding: 4px 8px;
+      font-size: 0.8rem;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <button id="toggle-empty">Toggle Empty State</button>
+
+  <div id="app">
+    <div id="viz-container">
+      <svg id="graph-svg">
+        <defs>
+          <marker id="arrow" viewBox="0 -5 10 10" refX="25" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,-5L10,0L0,5" fill="hsl(36 8% 30%)"></path>
+          </marker>
+          <marker id="arrow-glow" viewBox="0 -5 10 10" refX="25" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,-5L10,0L0,5" fill="hsl(34 96% 56%)"></path>
+          </marker>
+        </defs>
+        <g id="zoom-group">
+          <g id="edges-group"></g>
+          <g id="nodes-group"></g>
+        </g>
+      </svg>
+    </div>
+
+    <!-- Overlays -->
+    <div id="caption-block" class="overlay-card">
+      <h1>Mockup A: Force-Directed Symbol Graph</h1>
+      <p>Colored circles sized by importance, edges show call relationships. Dark background.<br>Prioritizes readability of hub nodes, relationship visibility.</p>
+    </div>
+
+    <div id="resolution-banner" class="overlay-card">
+      <div class="text-sm font-semibold mb-1">810 of 2,807 calls resolved (29%)</div>
+      <div class="res-bar-bg"><div class="res-bar-fill"></div></div>
+      <div class="text-xs">150 of 657 symbols shown (488 hidden)</div>
+      <div class="text-xs mt-2" style="color: hsl(var(--muted-foreground)); border-top: 1px solid hsl(var(--border)); padding-top: 4px;">Name-based resolution · No type inference</div>
+    </div>
+
+    <div id="legend" class="overlay-card">
+      <div class="text-sm font-semibold mb-1" style="margin-bottom: 8px;">Legend</div>
+      <div class="legend-item"><div class="legend-color" style="background: hsl(var(--role-core_module));"></div> Core Module</div>
+      <div class="legend-item"><div class="legend-color" style="background: hsl(var(--role-shared_utility));"></div> Shared Utility</div>
+      <div class="legend-item"><div class="legend-color" style="background: hsl(var(--role-test));"></div> Test</div>
+      <div class="legend-item"><div class="legend-color" style="background: hsl(var(--role-leaf));"></div> Leaf / Other</div>
+      <div class="legend-item" style="margin-top: 8px;"><div class="legend-line"></div> Calls</div>
+      <div class="legend-item"><div class="legend-line dashed"></div> Inherits</div>
+      <div class="text-xs mt-2" style="text-align: center; color: hsl(var(--muted-foreground));">Size = Importance</div>
+    </div>
+
+    <div id="controls" class="overlay-card" style="padding: 0.25rem;">
+      <button class="control-btn" id="btn-zoom-in">+</button>
+      <button class="control-btn" id="btn-zoom-out">-</button>
+      <button class="control-btn" id="btn-zoom-fit">⛶</button>
+    </div>
+
+    <div id="tooltip" class="overlay-card">
+      <div class="tt-header">
+        <span class="badge" id="tt-type">FN</span>
+        <span class="badge role" id="tt-role" style="color: hsl(var(--role-core_module))">core_module</span>
+      </div>
+      <div class="tt-title" id="tt-label">run_analysis</div>
+      <div class="tt-meta" id="tt-file">rune/orchestrator.py : 42</div>
+      
+      <div class="text-xs" style="margin-top:8px;">Importance</div>
+      <div class="res-bar-bg" style="height:4px; margin: 4px 0;"><div id="tt-imp-bar" class="res-bar-fill" style="background: hsl(var(--foreground)); width: 50%;"></div></div>
+      
+      <div class="tt-stats">
+        <div><strong id="tt-in">12</strong> In</div>
+        <div><strong id="tt-out">5</strong> Out</div>
+      </div>
+      <div class="tt-doc" id="tt-doc">Orchestrates file parsing, symbol extraction...</div>
+    </div>
+
+    <!-- Detail Panel -->
+    <div id="detail-panel">
+      <div class="dp-header">
+        <div>
+          <div class="badge" id="dp-type" style="margin-bottom: 8px;">FN</div>
+          <div class="tt-title" id="dp-label" style="font-size: 1.1rem;">run_analysis</div>
+          <div class="tt-meta" id="dp-file" style="margin-top: 4px;">rune/orchestrator.py</div>
+        </div>
+        <button class="dp-close" id="dp-close">×</button>
+      </div>
+      <div class="dp-body">
+        <div class="dp-section">
+          <h3>Signature</h3>
+          <div class="dp-code" id="dp-sig">def run_analysis(workspace: str) -> None:</div>
+        </div>
+        <div class="dp-section">
+          <h3>Docstring</h3>
+          <div class="text-sm" id="dp-doc" style="color: hsl(var(--muted-foreground));">Full docstring here.</div>
+        </div>
+        <div class="dp-section">
+          <h3>Callees (Out)</h3>
+          <ul class="dp-list" id="dp-callees"></ul>
+        </div>
+        <div class="dp-section">
+          <h3>Callers (In)</h3>
+          <ul class="dp-list" id="dp-callers"></ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state">
+      <div class="es-card">
+        <div class="es-icon">{ }</div>
+        <div class="tt-title" style="font-size: 1.2rem; margin-bottom: 8px;">No symbol data available</div>
+        <div class="text-sm" style="color: hsl(var(--muted-foreground)); margin-bottom: 1rem;">
+          This repository uses languages that don't support symbol-level analysis yet.
+        </div>
+        <button class="es-btn">Architecture view →</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // --- DATA GENERATION ---
+    const files = [
+      'rune/orchestrator.py', 'rune/analyzer.py', 'rune/complexity.py', 'rune/symbol_graph.py', 
+      'rune/graph_assembler.py', 'rune/classifier.py', 'rune/traverser.py', 'rune/routes/analyze.py', 
+      'rune/utils.py', 'rune/nn_extractor.py', 'tests/test_analyzer.py'
+    ];
+    
+    const nodeNames = [
+      'run_analysis', 'AnalyzerPipeline', 'classify_files', 'build_symbol_graph', 'compute_pagerank',
+      'assemble_graph', 'traverse_directory', '_resolve_call_target', '_build_adjacency', 'normalize_path',
+      'hash_content', 'CacheStore.get', 'CacheStore.set', 'test_full_pipeline', 'extract_models_from_source',
+      'run_sync', 'analyze_file', 'parse_ast', 'extract_classes', 'extract_functions',
+      'find_imports', 'resolve_imports', 'build_tree', 'GraphNode', 'GraphEdge',
+      'calculate_complexity', 'cyclomatic_complexity', 'halstead_metrics', 'maintainability_index', 'loc_count',
+      'Route_analyze', 'Route_visualize', 'start_server', 'load_config', 'parse_args'
+    ];
+
+    const roles = ['core_module', 'shared_utility', 'internal_helper', 'leaf', 'test', 'orchestrator'];
+    const types = ['function', 'class', 'method'];
+
+    const nodes = [];
+    for(let i=0; i<80; i++) {
+      let isHub = i < 5;
+      let importance = isHub ? 30 + Math.random()*22 : 3 + Math.random()*12;
+      let label = nodeNames[i % nodeNames.length] + (i >= nodeNames.length ? `_${i}` : '');
+      let role = isHub ? 'core_module' : roles[Math.floor(Math.random() * roles.length)];
+      if (label.startsWith('test')) role = 'test';
+      if (label.startsWith('Route')) role = 'router';
+      
+      nodes.push({
+        id: `node_${i}`,
+        label: label,
+        type: label.includes('.') ? 'method' : (label[0] === label[0].toUpperCase() ? 'class' : 'function'),
+        file: files[i % files.length],
+        line: Math.floor(Math.random() * 500) + 10,
+        role: role,
+        importance: importance,
+        in_degree: Math.floor(importance / 2),
+        out_degree: Math.floor(Math.random() * 5),
+        doc: `Extracts or processes data related to ${label}. Handles core logic.`,
+        signature: `def ${label}(*args, **kwargs) -> Any:`,
+        x: Math.random() * window.innerWidth,
+        y: Math.random() * window.innerHeight,
+        vx: 0, vy: 0
+      });
+    }
+
+    const edges = [];
+    for(let i=0; i<90; i++) {
+      // Prefer connecting to hubs
+      let targetIdx = Math.random() > 0.6 ? Math.floor(Math.random()*5) : Math.floor(Math.random()*80);
+      let sourceIdx = Math.floor(Math.random()*80);
+      if (sourceIdx === targetIdx) targetIdx = (targetIdx + 1) % 80;
+      
+      let isInherit = Math.random() > 0.95 && nodes[sourceIdx].type === 'class' && nodes[targetIdx].type === 'class';
+      
+      edges.push({
+        source: nodes[sourceIdx].id,
+        target: nodes[targetIdx].id,
+        sourceNode: nodes[sourceIdx],
+        targetNode: nodes[targetIdx],
+        label: isInherit ? 'inherits' : 'calls'
+      });
+    }
+
+    // --- FORCE SIMULATION ---
+    let rafId;
+    function runSimulation() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const centerX = width / 2;
+      const centerY = height / 2;
+      
+      let iterations = 0;
+      
+      function tick() {
+        // Repulsion
+        for(let i=0; i<nodes.length; i++) {
+          for(let j=i+1; j<nodes.length; j++) {
+            let dx = nodes[i].x - nodes[j].x;
+            let dy = nodes[i].y - nodes[j].y;
+            let dist2 = dx*dx + dy*dy || 1;
+            if(dist2 < 40000) { // Only repel if close
+              let force = 400 / dist2;
+              nodes[i].vx += dx * force;
+              nodes[i].vy += dy * force;
+              nodes[j].vx -= dx * force;
+              nodes[j].vy -= dy * force;
+            }
+          }
+        }
+        
+        // Attraction (Links)
+        edges.forEach(e => {
+          let dx = e.targetNode.x - e.sourceNode.x;
+          let dy = e.targetNode.y - e.sourceNode.y;
+          let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+          let force = (dist - 80) * 0.005; // spring constant
+          
+          e.sourceNode.vx += (dx / dist) * force;
+          e.sourceNode.vy += (dy / dist) * force;
+          e.targetNode.vx -= (dx / dist) * force;
+          e.targetNode.vy -= (dy / dist) * force;
+        });
+        
+        // Centering
+        nodes.forEach(n => {
+          n.vx += (centerX - n.x) * 0.001;
+          n.vy += (centerY - n.y) * 0.001;
+          
+          n.x += n.vx;
+          n.y += n.vy;
+          n.vx *= 0.85; // friction
+          n.vy *= 0.85;
+        });
+        
+        renderFrame();
+        
+        iterations++;
+        if(iterations < 300) {
+          rafId = requestAnimationFrame(tick);
+        }
+      }
+      tick();
+    }
+
+    // --- RENDERING ---
+    const nodesGroup = document.getElementById('nodes-group');
+    const edgesGroup = document.getElementById('edges-group');
+    let nodeElements = new Map();
+    let edgeElements = [];
+
+    function getRoleColor(role) {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(`--role-${role}`);
+      return v ? `hsl(${v})` : `hsl(var(--muted))`;
+    }
+
+    function initDOM() {
+      // Edges
+      edges.forEach(e => {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("class", `edge ${e.label}`);
+        path.setAttribute("marker-end", "url(#arrow)");
+        edgesGroup.appendChild(path);
+        e.dom = path;
+      });
+
+      // Nodes
+      nodes.forEach(n => {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("class", "node");
+        g.id = n.id;
+        
+        const r = Math.max(12, Math.min(48, (n.importance / 52) * 48 + 8));
+        n.radius = r;
+        
+        let shape;
+        if (n.type === 'class') {
+          shape = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          shape.setAttribute("width", r*2);
+          shape.setAttribute("height", r*2);
+          shape.setAttribute("x", -r);
+          shape.setAttribute("y", -r);
+          shape.setAttribute("rx", 6);
+        } else {
+          shape = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          shape.setAttribute("r", r);
+        }
+        
+        shape.setAttribute("class", "node-bg");
+        shape.setAttribute("fill", getRoleColor(n.role));
+        
+        g.appendChild(shape);
+        
+        if (r > 20) {
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("class", "node-label");
+          let dispLabel = n.label.length > 15 ? n.label.substring(0, 13) + '..' : n.label;
+          text.textContent = dispLabel;
+          g.appendChild(text);
+        }
+        
+        nodesGroup.appendChild(g);
+        n.dom = g;
+        nodeElements.set(n.id, n);
+
+        // Interactions
+        g.addEventListener('mouseenter', (e) => handleHover(n, e));
+        g.addEventListener('mouseleave', () => clearHover());
+        g.addEventListener('click', (e) => showDetails(n, e));
+      });
+    }
+
+    function renderFrame() {
+      edges.forEach(e => {
+        // basic curve
+        let dx = e.targetNode.x - e.sourceNode.x;
+        let dy = e.targetNode.y - e.sourceNode.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        
+        // adjust for target radius so arrow head is visible
+        let tr = e.targetNode.radius + 4;
+        let tx = e.targetNode.x - (dx/dist)*tr;
+        let ty = e.targetNode.y - (dy/dist)*tr;
+        
+        // bezier curve for visual flair
+        let cx = (e.sourceNode.x + tx) / 2 - dy * 0.2;
+        let cy = (e.sourceNode.y + ty) / 2 + dx * 0.2;
+        
+        e.dom.setAttribute("d", `M ${e.sourceNode.x} ${e.sourceNode.y} Q ${cx} ${cy} ${tx} ${ty}`);
+      });
+
+      nodes.forEach(n => {
+        n.dom.setAttribute("transform", `translate(${n.x}, ${n.y})`);
+      });
+    }
+
+    // --- INTERACTIONS ---
+    const tooltip = document.getElementById('tooltip');
+    
+    function handleHover(node, event) {
+      // Fade others
+      nodes.forEach(n => n.dom.classList.add('faded'));
+      edges.forEach(e => e.dom.classList.add('faded'));
+      
+      node.dom.classList.remove('faded');
+      node.dom.classList.add('highlighted');
+      
+      edges.forEach(e => {
+        if(e.source === node.id || e.target === node.id) {
+          e.dom.classList.remove('faded');
+          e.dom.classList.add('edge-glow');
+          e.dom.setAttribute("marker-end", "url(#arrow-glow)");
+          if(e.source === node.id) {
+            e.targetNode.dom.classList.remove('faded');
+            e.targetNode.dom.classList.add('highlighted');
+          } else {
+            e.sourceNode.dom.classList.remove('faded');
+            e.sourceNode.dom.classList.add('highlighted');
+          }
+        }
+      });
+
+      // Show tooltip
+      document.getElementById('tt-type').textContent = node.type.substring(0,3).toUpperCase();
+      const roleEl = document.getElementById('tt-role');
+      roleEl.textContent = node.role;
+      roleEl.style.color = getRoleColor(node.role);
+      document.getElementById('tt-label').textContent = node.label;
+      document.getElementById('tt-file').textContent = `${node.file} : ${node.line}`;
+      document.getElementById('tt-imp-bar').style.width = `${(node.importance/52)*100}%`;
+      document.getElementById('tt-in').textContent = node.in_degree;
+      document.getElementById('tt-out').textContent = node.out_degree;
+      document.getElementById('tt-doc').textContent = node.doc.substring(0, 80) + '...';
+      
+      tooltip.style.display = 'block';
+      tooltip.style.left = event.clientX + 'px';
+      tooltip.style.top = event.clientY + 'px';
+    }
+
+    function clearHover() {
+      nodes.forEach(n => {
+        n.dom.classList.remove('faded', 'highlighted');
+      });
+      edges.forEach(e => {
+        e.dom.classList.remove('faded', 'edge-glow');
+        e.dom.setAttribute("marker-end", "url(#arrow)");
+      });
+      tooltip.style.display = 'none';
+    }
+
+    const detailPanel = document.getElementById('detail-panel');
+    function showDetails(node, event) {
+      event.stopPropagation();
+      document.getElementById('dp-type').textContent = node.type.substring(0,3).toUpperCase();
+      document.getElementById('dp-label').textContent = node.label;
+      document.getElementById('dp-file').textContent = `${node.file} : ${node.line}`;
+      document.getElementById('dp-sig').textContent = node.signature;
+      document.getElementById('dp-doc').textContent = node.doc;
+      
+      const callersList = document.getElementById('dp-callers');
+      callersList.innerHTML = '';
+      const callers = edges.filter(e => e.target === node.id);
+      if(callers.length === 0) callersList.innerHTML = '<li style="color:var(--muted-foreground)">None</li>';
+      callers.forEach(e => {
+        callersList.innerHTML += `<li>${e.sourceNode.label} <span style="color:var(--muted-foreground);font-size:0.75rem">(${e.sourceNode.file})</span></li>`;
+      });
+      
+      const calleesList = document.getElementById('dp-callees');
+      calleesList.innerHTML = '';
+      const callees = edges.filter(e => e.source === node.id);
+      if(callees.length === 0) calleesList.innerHTML = '<li style="color:var(--muted-foreground)">None</li>';
+      callees.forEach(e => {
+        calleesList.innerHTML += `<li>${e.targetNode.label} <span style="color:var(--muted-foreground);font-size:0.75rem">(${e.targetNode.file})</span></li>`;
+      });
+      
+      detailPanel.classList.add('open');
+    }
+
+    document.getElementById('dp-close').addEventListener('click', () => {
+      detailPanel.classList.remove('open');
+    });
+    
+    document.getElementById('viz-container').addEventListener('click', () => {
+      detailPanel.classList.remove('open');
+    });
+
+    // --- PAN & ZOOM ---
+    const zoomGroup = document.getElementById('zoom-group');
+    let scale = 1, panX = 0, panY = 0;
+    let isDragging = false, startX, startY;
+
+    function applyTransform() {
+      zoomGroup.setAttribute('transform', `translate(${panX}, ${panY}) scale(${scale})`);
+    }
+
+    document.getElementById('viz-container').addEventListener('mousedown', (e) => {
+      if(e.target.closest('.node')) return;
+      isDragging = true;
+      startX = e.clientX - panX;
+      startY = e.clientY - panY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if(!isDragging) return;
+      panX = e.clientX - startX;
+      panY = e.clientY - startY;
+      applyTransform();
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    document.getElementById('viz-container').addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY * -0.001;
+      const newScale = Math.min(Math.max(0.1, scale + delta), 4);
+      
+      // zoom to mouse position
+      const rect = document.getElementById('viz-container').getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      panX = mouseX - (mouseX - panX) * (newScale / scale);
+      panY = mouseY - (mouseY - panY) * (newScale / scale);
+      scale = newScale;
+      
+      applyTransform();
+    });
+
+    document.getElementById('btn-zoom-in').addEventListener('click', () => { scale *= 1.2; applyTransform(); });
+    document.getElementById('btn-zoom-out').addEventListener('click', () => { scale /= 1.2; applyTransform(); });
+    document.getElementById('btn-zoom-fit').addEventListener('click', () => { scale = 1; panX = 0; panY = 0; applyTransform(); });
+
+    // Empty state toggle
+    document.getElementById('toggle-empty').addEventListener('click', () => {
+      document.getElementById('empty-state').classList.toggle('active');
+    });
+
+    // INIT
+    initDOM();
+    runSimulation();
+
+  </script>
+</body>
+</html>

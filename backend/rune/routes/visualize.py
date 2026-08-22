@@ -10,9 +10,12 @@ Endpoints:
     GET  /visualize/architecture/{repo_id}  — Module-level architecture graph
     GET  /visualize/dataflow/{repo_id}      — Data flow diagram (entry-point graph)
     POST /visualize/mindmap/{repo_id}       — Mind map (static or LLM-enhanced)
+    GET  /visualize/knowledge/{repo_id}     — Symbol-level graph (+ cached concept overlay)
+    POST /visualize/knowledge/{repo_id}     — Concept overlay (static or LLM-enhanced)
     POST /explain/visualization/{viz_type}  — LLM explanation for a visualization
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -31,6 +34,7 @@ from rune.routes._errors import internal_error
 from rune.routes.dependencies import get_cache
 from rune.session import ensure_repo_loaded
 from rune.settings import settings
+from rune.symbol_graph import select_groups
 from rune.utils import run_sync
 
 router = APIRouter()
@@ -824,4 +828,150 @@ async def visualize_neural_network(
             "models": nn_models,
             "count": len(nn_models),
         },
+    }
+
+
+# ─────────────────────────────────────────
+# 7. Knowledge Graph — symbols and calls (NO LLM)
+# ─────────────────────────────────────────
+
+
+@router.get("/visualize/knowledge/{repo_id}", dependencies=[Depends(per_minute(30))])
+async def visualize_knowledge_graph(
+    request: Request,
+    repo_id: str,
+    file: str | None = None,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """Return the symbol-level graph: functions/classes as nodes, calls and
+    inheritance as edges.
+
+    Zero LLM cost — built during analysis from the parse complexity.py already
+    does. Optionally scope to one file's symbols with ?file=path/to/file.py.
+    """
+    result, _ = await _load_repo(repo_id, cache, user_id)
+
+    graph = result.get("symbol_graph") or {"nodes": [], "edges": [], "metadata": {}, "diagnostics": {}}
+
+    if file:
+        nodes = [n for n in graph.get("nodes", []) if n.get("file") == file]
+        kept = {n["id"] for n in nodes}
+        edges = [e for e in graph.get("edges", []) if e["source"] in kept and e["target"] in kept]
+        # Drill-down is one group's insides; shipping the repo-wide overview
+        # alongside it would leave the caller holding two different scopes.
+        groups = [g for g in graph.get("groups", []) if g.get("id") == file]
+        graph = {**graph, "nodes": nodes, "edges": edges, "groups": groups, "group_edges": []}
+
+    concepts = result.get("knowledge_llm")
+    if concepts:
+        graph = _with_concepts(graph, concepts)
+
+    return {"type": "knowledge", "data": graph}
+
+
+class KnowledgeRequest(BaseModel):
+    use_llm: bool = False
+
+
+@router.post("/visualize/knowledge/{repo_id}", dependencies=[Depends(per_minute(5))])
+async def enrich_knowledge_graph(
+    request: Request,
+    repo_id: str,
+    body: KnowledgeRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """Overlay the symbol graph with the domain concepts it is about.
+
+    Static by default (identical to the GET). With `use_llm: true` one billed
+    pass per package directory names the concepts and grounds each in real
+    symbol ids; the overlay is cached on the analysis result, so a second call
+    spends nothing. Any provider failure returns the symbol graph alone with a
+    `fallback_reason` — never a 500.
+    """
+    result, _ = await _load_repo(repo_id, cache, user_id)
+    graph = result.get("symbol_graph") or {"nodes": [], "edges": [], "metadata": {}, "diagnostics": {}}
+
+    cached = result.get("knowledge_llm")
+    if cached:
+        return {"type": "knowledge", "data": _with_concepts(graph, cached)}
+
+    if not body.use_llm:
+        return {"type": "knowledge", "data": graph}
+
+    from rune.concept_graph import build_evidence_digest, merge_concepts
+    from rune.quota import get_token_tracker
+
+    tracker = get_token_tracker()
+    if not tracker.check_quota(user_id):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "quota_exceeded",
+                "message": "Daily LLM token quota exceeded. Please retry tomorrow.",
+                "remaining_tokens": tracker.get_remaining(user_id),
+            },
+        )
+
+    digest = build_evidence_digest(graph)
+    if not digest:
+        return {"type": "knowledge", "data": {**graph, "concepts": _empty_concepts("no_symbols")}}
+
+    try:
+        from rune.llm.prompts import SYSTEM_KNOWLEDGE_ANALYST, build_knowledge_prompt
+        from rune.llm.providers import get_provider
+
+        provider = get_provider("knowledge_graph")
+
+        async def one_chunk(chunk: dict) -> dict:
+            response, _usage = await provider.generate_with_usage(
+                system_prompt=SYSTEM_KNOWLEDGE_ANALYST,
+                user_prompt=build_knowledge_prompt(chunk),
+                temperature=0.2,
+                max_tokens=2000,
+                json_mode=True,
+                user_id=user_id,
+            )
+            return json.loads(response)
+
+        # One chunk returning garbage shouldn't lose the other five.
+        settled = await asyncio.gather(*(one_chunk(c) for c in digest), return_exceptions=True)
+        parsed = [r for r in settled if isinstance(r, dict)]
+        if not parsed:
+            raise RuntimeError(f"all {len(digest)} knowledge chunks failed")
+
+        overlay = merge_concepts(
+            parsed,
+            valid_symbol_ids={n["id"] for n in graph.get("nodes", [])},
+            valid_files={n.get("file") for n in graph.get("nodes", []) if n.get("file")},
+        )
+    except Exception as e:
+        logger.warning(f"Knowledge graph LLM enrichment failed, returning symbols only: {e}")
+        return {"type": "knowledge", "data": {**graph, "concepts": _empty_concepts("llm_failed")}}
+
+    if overlay["entities"]:
+        result["knowledge_llm"] = overlay
+        await run_sync(cache.set, repo_id, result)
+
+    return {"type": "knowledge", "data": _with_concepts(graph, overlay)}
+
+
+def _with_concepts(graph: dict, concepts: dict) -> dict:
+    """Attach the concept overlay and let it re-pick which groups are drawn.
+
+    The adaptive count reads the importance falloff, which measures how connected
+    a file is. Once the concept pass has named what the repo is *about*, the files
+    it cites are the better answer, so the overview follows them. Falls back to the
+    adaptive pick when the overlay cites nothing the graph stored.
+    """
+    files = {f for e in concepts.get("entities") or [] for f in e.get("files") or []}
+    return {**select_groups(graph, files), "concepts": concepts}
+
+
+def _empty_concepts(reason: str) -> dict:
+    return {
+        "entities": [],
+        "relations": [],
+        "metadata": {"is_llm_enriched": False, "chunks": 0, "dropped_ungrounded": 0, "fallback_reason": reason},
     }

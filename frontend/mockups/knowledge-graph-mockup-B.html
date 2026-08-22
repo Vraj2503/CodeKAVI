@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mockup B: Role-Ranked Swim Lanes — Knowledge Graph</title>
+  <style>
+    :root {
+      --background: 40 30% 96.5%;
+      --foreground: 24 14% 10%;
+      --card: 42 42% 99%;
+      --card-foreground: 24 14% 10%;
+      --muted: 38 20% 92.5%;
+      --muted-foreground: 28 7% 42%;
+      --border: 33 16% 86%;
+      --signal: 26 90% 46%;
+      --destructive: 0 68% 45%;
+      --success: 148 55% 32%;
+      --viz-highlight: 26 90% 46%;
+      --viz-cat-1: 212 88% 45%;
+      --viz-cat-2: 129 54% 30%;
+      --viz-cat-3: 266 60% 52%;
+      --viz-cat-4: 26 84% 42%;
+      --viz-cat-5: 328 66% 46%;
+      --viz-cat-6: 209 84% 42%;
+      --viz-cat-7: 126 50% 29%;
+      --viz-cat-8: 267 52% 50%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 42 42% 99%;
+      --viz-ink: 24 14% 10%;
+      --viz-ink-dim: 28 7% 42%;
+      --viz-edge: 33 16% 86%;
+      --radius: 0.5rem;
+    }
+
+    .dark {
+      --background: 30 9% 6%;
+      --foreground: 40 18% 94%;
+      --card: 30 8% 9%;
+      --card-foreground: 40 18% 94%;
+      --muted: 30 6% 14%;
+      --muted-foreground: 36 8% 62%;
+      --border: 32 7% 19%;
+      --signal: 34 96% 56%;
+      --destructive: 2 72% 58%;
+      --success: 148 52% 52%;
+      --viz-highlight: 34 96% 56%;
+      --viz-cat-1: 212 100% 67%;
+      --viz-cat-2: 129 49% 49%;
+      --viz-cat-3: 266 100% 77%;
+      --viz-cat-4: 26 85% 59%;
+      --viz-cat-5: 328 89% 72%;
+      --viz-cat-6: 209 100% 74%;
+      --viz-cat-7: 126 50% 45%;
+      --viz-cat-8: 267 80% 70%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 30 8% 9%;
+      --viz-ink: 40 18% 94%;
+      --viz-ink-dim: 36 8% 62%;
+      --viz-edge: 32 7% 19%;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: hsl(var(--background));
+      color: hsl(var(--foreground));
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Caption header ──────────────────────────────── */
+    .caption-header {
+      padding: 16px 24px;
+      border-bottom: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 24px;
+      flex-shrink: 0;
+      z-index: 20;
+    }
+    .caption-header h1 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .caption-header p { color: hsl(var(--muted-foreground)); font-size: 13px; line-height: 1.5; margin-bottom: 4px; }
+    .caption-header strong { color: hsl(var(--foreground)); }
+    .compat-badge {
+      margin-top: 8px;
+      padding: 8px 12px;
+      background: hsl(var(--muted));
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      font-size: 11px;
+      color: hsl(var(--muted-foreground));
+      line-height: 1.45;
+    }
+    .compat-badge strong { color: hsl(var(--foreground)); }
+    .theme-btn {
+      flex-shrink: 0;
+      padding: 8px 14px;
+      background: hsl(var(--muted));
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      color: hsl(var(--foreground));
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .theme-btn:hover { background: hsl(var(--border)); }
+
+    /* ── Truncation banner ────────────────────────────── */
+    .trunc-banner {
+      flex-shrink: 0;
+      padding: 10px 24px;
+      background: hsl(var(--muted) / 0.7);
+      border-bottom: 1px solid hsl(var(--border));
+      font-size: 13px;
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      backdrop-filter: blur(6px);
+      z-index: 15;
+    }
+    .trunc-banner strong { color: hsl(var(--foreground)); }
+    .trunc-banner .dismiss {
+      background: none; border: none; cursor: pointer;
+      color: hsl(var(--muted-foreground)); padding: 4px; border-radius: 4px;
+    }
+    .trunc-banner .dismiss:hover { background: hsl(var(--border)); }
+
+    /* ── Canvas ───────────────────────────────────────── */
+    .canvas-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      cursor: grab;
+      background: hsl(var(--background));
+      background-image: radial-gradient(hsl(var(--muted-foreground) / 0.15) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    .canvas-wrap:active { cursor: grabbing; }
+    .canvas-world {
+      position: absolute;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    /* ── Swim lane ────────────────────────────────────── */
+    .lane {
+      position: absolute;
+      top: 0;
+      border-left: 1px dashed hsl(var(--border));
+    }
+    .lane:first-child { border-left: none; }
+    .lane-head {
+      position: sticky;
+      top: 0;
+      padding: 14px 16px 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .lane-name {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      color: hsl(var(--muted-foreground));
+      opacity: 0.6;
+    }
+    .lane-count {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      color: hsl(var(--muted-foreground));
+      opacity: 0.6;
+    }
+
+    /* ── Node cards ───────────────────────────────────── */
+    .sym-card {
+      position: absolute;
+      background: hsl(var(--card) / 0.7);
+      border: 1px solid hsl(var(--border));
+      border-radius: 10px;
+      backdrop-filter: blur(8px);
+      padding: 8px 14px 8px 18px;
+      cursor: pointer;
+      transition: opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
+      overflow: hidden;
+    }
+    .sym-card .rail {
+      position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+      border-radius: 0 2px 2px 0; opacity: 0.85;
+    }
+    .sym-card .kind-label {
+      font-size: 8px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.12em; line-height: 11px; opacity: 0.9;
+    }
+    .sym-card .sym-name {
+      font-size: 12px; font-weight: 600; line-height: 16px;
+      color: hsl(var(--foreground));
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sym-card .sym-file {
+      font-size: 10px; font-weight: 300; line-height: 13px;
+      letter-spacing: 0.04em; color: hsl(var(--muted-foreground));
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    /* Hover isolation */
+    .canvas-world.hovering .sym-card { opacity: 0.12; }
+    .canvas-world.hovering .sym-card.hot { opacity: 1; border-color: hsl(var(--viz-highlight)); box-shadow: 0 0 0 1px hsl(var(--viz-highlight)); }
+    .canvas-world.hovering .sym-card.connected { opacity: 1; }
+
+    /* ── Edges SVG ────────────────────────────────────── */
+    .edge-layer {
+      position: absolute; top: 0; left: 0;
+      pointer-events: none; overflow: visible;
+    }
+    .edge-layer path { transition: opacity 0.15s, stroke-width 0.15s; }
+    .canvas-world.hovering .edge-layer path { opacity: 0.04; }
+    .canvas-world.hovering .edge-layer path.edge-hot {
+      opacity: 1; stroke-width: 2;
+      stroke: hsl(var(--viz-highlight)) !important;
+    }
+
+    /* ── Detail panel ─────────────────────────────────── */
+    .detail-panel {
+      display: none;
+      position: absolute; top: 12px; left: 12px; z-index: 30;
+      width: 280px; max-height: calc(100% - 24px); overflow-y: auto;
+      background: hsl(var(--card) / 0.92);
+      border: 1px solid hsl(var(--border));
+      border-radius: 10px;
+      backdrop-filter: blur(12px);
+      padding: 16px;
+      font-size: 12px;
+      box-shadow: 0 8px 32px hsl(var(--foreground) / 0.08);
+    }
+    .detail-panel.open { display: block; }
+    .detail-panel .dp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .detail-panel .dp-name { font-weight: 700; font-size: 14px; color: hsl(var(--foreground)); word-break: break-all; }
+    .detail-panel .dp-meta { margin-top: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: hsl(var(--muted-foreground)); }
+    .detail-panel .dp-close {
+      background: none; border: none; cursor: pointer;
+      color: hsl(var(--muted-foreground)); font-size: 18px; line-height: 1; padding: 2px 6px;
+    }
+    .detail-panel .dp-close:hover { color: hsl(var(--foreground)); }
+    .detail-panel .dp-section { margin-top: 12px; }
+    .detail-panel .dp-section-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: hsl(var(--muted-foreground)); margin-bottom: 4px;
+    }
+    .detail-panel .dp-list { max-height: 130px; overflow-y: auto; }
+    .detail-panel .dp-list-item {
+      font-family: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+      font-size: 11px; color: hsl(var(--muted-foreground));
+      padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .detail-panel .dp-stat-row {
+      display: flex; justify-content: space-between; font-size: 11px;
+      padding: 3px 0; color: hsl(var(--muted-foreground));
+    }
+    .detail-panel .dp-stat-row span:last-child { font-weight: 600; color: hsl(var(--foreground)); }
+    .dp-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 99px;
+      font-size: 10px; font-weight: 600;
+      background: hsl(var(--muted)); color: hsl(var(--foreground));
+      margin-top: 6px;
+    }
+
+    /* ── Resolution footer ────────────────────────────── */
+    .res-footer {
+      flex-shrink: 0;
+      padding: 8px 24px;
+      background: hsl(var(--card) / 0.9);
+      border-top: 1px solid hsl(var(--border));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: hsl(var(--muted-foreground));
+      backdrop-filter: blur(8px);
+      z-index: 20;
+    }
+    .res-footer strong { color: hsl(var(--foreground)); }
+    .res-left, .res-right { display: flex; align-items: center; gap: 12px; }
+    .ratio-bar {
+      width: 110px; height: 5px;
+      background: hsl(var(--muted)); border-radius: 3px; overflow: hidden;
+    }
+    .ratio-fill { height: 100%; background: hsl(var(--signal)); border-radius: 3px; }
+    .whats-hidden { color: hsl(var(--viz-cat-1)); text-decoration: none; cursor: pointer; font-size: 11px; }
+    .whats-hidden:hover { text-decoration: underline; }
+
+    /* ── Legend ────────────────────────────────────────── */
+    .legend-cluster {
+      position: absolute; bottom: 12px; left: 12px; z-index: 25;
+      background: hsl(var(--card) / 0.9); border: 1px solid hsl(var(--border));
+      border-radius: 10px; padding: 10px 14px;
+      backdrop-filter: blur(8px); box-shadow: 0 2px 8px hsl(var(--foreground) / 0.04);
+    }
+    .legend-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.18em; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 11px; color: hsl(var(--muted-foreground)); padding: 2px 0; }
+    .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .legend-line { width: 16px; height: 0; flex-shrink: 0; border-top: 2px solid; }
+    .legend-line.dashed { border-top-style: dashed; }
+    .legend-sep { height: 1px; background: hsl(var(--border)); margin: 6px 0; }
+
+    /* ── Zoom cluster ─────────────────────────────────── */
+    .zoom-cluster {
+      position: absolute; bottom: 12px; right: 12px; z-index: 25;
+      display: flex; flex-direction: column;
+      background: hsl(var(--card) / 0.9); border: 1px solid hsl(var(--border));
+      border-radius: 10px; overflow: hidden;
+      backdrop-filter: blur(8px); box-shadow: 0 4px 16px hsl(var(--foreground) / 0.06);
+    }
+    .zoom-btn {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: pointer;
+      color: hsl(var(--muted-foreground)); font-size: 18px; line-height: 1;
+      transition: background 0.1s, color 0.1s;
+    }
+    .zoom-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+    .zoom-btn + .zoom-btn { border-top: 1px solid hsl(var(--border)); }
+  </style>
+</head>
+<body>
+
+  <!-- Caption -->
+  <div class="caption-header">
+    <div style="max-width:820px">
+      <h1>Mockup B: Role-Ranked Swim Lanes</h1>
+      <p><strong>Organizing idea:</strong> Five vertical swim-lanes ordered by semantic role — Core → Shared → Helpers → Leaf → Tests. The most architecturally central symbols are on the left, peripheral code on the right. Within each lane, nodes are sorted top-to-bottom by importance.</p>
+      <p><strong>Prioritizes:</strong> Problem 1 (collapses 38 files into 5 role lanes), Problem 4 (rail color = kind, card height = importance), Problem 2 (resolution footer), Problem 5 (inherits = dashed + diamond).</p>
+      <div class="compat-badge">
+        <strong>React Flow:</strong> Directly renderable — this IS the existing swim-lane layout, pivoted 90° and keyed on <code>role</code> instead of architectural layer. ELK layered algorithm with <code>direction=RIGHT</code>. Needs a custom node type for importance-scaled card heights, but the component structure is identical to what ships today.
+      </div>
+    </div>
+    <button class="theme-btn" onclick="document.documentElement.classList.toggle('dark')">◐ Theme</button>
+  </div>
+
+  <!-- Truncation banner -->
+  <div class="trunc-banner" id="banner">
+    <span>Showing the <strong>150 most-connected symbols</strong> out of 657 found. 488 lower-connectivity symbols are hidden to keep the graph readable.</span>
+    <button class="dismiss" onclick="document.getElementById('banner').style.display='none'" aria-label="Dismiss">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m18 15-6-6-6 6"/></svg>
+    </button>
+  </div>
+
+  <!-- Canvas -->
+  <div class="canvas-wrap" id="wrap">
+    <div class="canvas-world" id="world"></div>
+
+    <!-- Legend -->
+    <div class="legend-cluster">
+      <div class="legend-title">Kind</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:hsl(var(--viz-cat-1))"></span> Function</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:hsl(var(--viz-cat-2))"></span> Class</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:hsl(var(--viz-cat-3))"></span> Method</div>
+      <div class="legend-sep"></div>
+      <div class="legend-title">Edges</div>
+      <div class="legend-item"><span class="legend-line" style="border-color:hsl(var(--viz-ink-dim))"></span> Calls</div>
+      <div class="legend-item"><span class="legend-line dashed" style="border-color:hsl(var(--viz-ink-dim))"></span> Inherits</div>
+    </div>
+
+    <!-- Detail panel -->
+    <div class="detail-panel" id="detail"></div>
+
+    <!-- Zoom -->
+    <div class="zoom-cluster">
+      <button class="zoom-btn" onclick="zoomBy(1.25)" aria-label="Zoom in">+</button>
+      <button class="zoom-btn" onclick="zoomBy(0.8)" aria-label="Zoom out">−</button>
+      <button class="zoom-btn" onclick="fitView()" aria-label="Fit to view">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Resolution footer -->
+  <div class="res-footer">
+    <div class="res-left">
+      <strong>810 calls resolved (29%)</strong>
+      <span>· 1,997 calls unresolved</span>
+      <div class="ratio-bar"><div class="ratio-fill" style="width:29%"></div></div>
+    </div>
+    <div class="res-right">
+      <span>Showing 150 of 657 symbols · Ranked by connectivity</span>
+      <a class="whats-hidden" href="#">What's hidden?</a>
+    </div>
+  </div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────
+
+const ROLES = [
+  { id: 'core_module',     label: 'Core',    count: 13 },
+  { id: 'shared_utility',  label: 'Shared',  count: 24 },
+  { id: 'internal_helper', label: 'Helpers', count: 21 },
+  { id: 'leaf',            label: 'Leaf',    count: 76 },
+  { id: 'test',            label: 'Tests',   count: 16 },
+];
+
+const FILES = [
+  'codekavi/analyzer/pipeline.py','codekavi/analyzer/ast_visitor.py','codekavi/analyzer/import_resolver.py',
+  'codekavi/graph/builder.py','codekavi/graph/pagerank.py','codekavi/graph/serializer.py',
+  'codekavi/classifier/role_classifier.py','codekavi/classifier/heuristics.py',
+  'codekavi/indexer/vector_store.py','codekavi/indexer/embeddings.py',
+  'codekavi/routes/analyze.py','codekavi/routes/visualize.py','codekavi/routes/report.py',
+  'codekavi/models/repository.py','codekavi/models/symbol.py','codekavi/models/edge.py',
+  'codekavi/utils/cache.py','codekavi/utils/fs.py','codekavi/utils/hashing.py',
+  'codekavi/nn_extractor.py','codekavi/cloner.py','codekavi/config.py',
+  'tests/test_analyzer.py','tests/test_graph.py','tests/test_classifier.py',
+  'tests/test_indexer.py','tests/test_routes.py','tests/test_utils.py',
+  'codekavi/traverser.py','codekavi/summarizer.py','codekavi/formatter.py',
+  'codekavi/cache_store.py','codekavi/report/builder.py','codekavi/report/templates.py',
+  'codekavi/auth/middleware.py','codekavi/auth/tokens.py',
+  'codekavi/workers/tasks.py','codekavi/workers/queue.py',
+];
+
+const NAMES = {
+  core_module: [
+    'AnalyzerPipeline','build_knowledge_graph','classify_symbols','GraphBuilder',
+    'compute_pagerank','resolve_calls','index_repository','run_analysis',
+    'CodebaseAnalyzer','AstVisitor','parse_repository','traverse_codebase','ReportGenerator',
+  ],
+  shared_utility: [
+    'normalize_path','hash_content','read_file_safe','merge_dicts','sanitize_name',
+    'cached_property','retry_with_backoff','format_duration','Logger','Config',
+    'ensure_dir','safe_json_load','Timer','debounce','flatten_list','deep_merge',
+    'to_snake_case','chunked','PathResolver','memoize','read_gitignore',
+    'strip_ansi','truncate_string','FileWatcher',
+  ],
+  internal_helper: [
+    '_extract_imports','_build_adjacency','_score_node','_merge_edges',
+    '_deduplicate','_walk_tree','_parse_docstring','_resolve_types',
+    '_compute_fan_in','_normalize_calls','_assign_roles','_build_index',
+    '_emit_edge','_collect_definitions','_rank_nodes','_filter_builtins',
+    '_tokenize_source','_map_scopes','_infer_module','_group_by_file',
+    '_attach_metadata',
+  ],
+  leaf: [
+    '_emit_warning','_format_label','_is_test_file','_count_lines','_strip_decorators',
+    'get_id','set_name','to_string','is_valid','validate_node','_log_progress',
+    '_check_extension','_read_line','_hash_line','_trim_whitespace','_to_json',
+    '_from_dict','_compare','_default_config','_get_env','_parse_bool',
+    '_write_cache','_load_cache','_format_path','_clean_name','_split_module',
+    '_resolve_relative','_is_dunder','_is_private','_skip_init','_needs_update',
+    '_is_builtin','_format_error','_wrap_result','_check_cycle','_add_to_set',
+    'get_line_count','get_file_size','has_docstring','is_async','is_generator',
+    'is_classmethod','is_staticmethod','is_property','get_return_type','get_params',
+    'get_decorators','get_bases','get_body_lines','to_dict','from_json',
+    'serialize','deserialize','clone','reset','clear','update','merge',
+    'append','remove','contains','find','filter_by','sort_by','group_by',
+    'count_by','sum_by','max_by','min_by','avg_by','first','last',
+    'take','skip','unique','compact','zip_with','map_values','flat_map',
+    '_noop','_identity','_constant',
+  ],
+  test: [
+    'test_analyzer_pipeline','test_graph_builder','test_import_resolution',
+    'TestCacheInvalidation','test_parser','test_role_classifier',
+    'test_pagerank','test_indexer','test_normalize_path','test_hash_content',
+    'test_serializer','test_empty_repo','test_truncation','test_edge_cases',
+    'TestSymbolTable','test_config',
+  ],
+};
+
+// Build nodes
+const nodes = [];
+let nid = 0;
+const kindWeights = { function: 106, method: 26, class: 18 };
+// Distribute kinds proportionally
+function pickKind(i) {
+  if (i < 18) return 'class';
+  if (i < 44) return 'method';
+  return 'function';
+}
+
+let globalIdx = 0;
+ROLES.forEach((role, ri) => {
+  const pool = NAMES[role.id];
+  for (let i = 0; i < role.count; i++) {
+    // Importance: core is high, leaf is low, with jitter
+    const baseImp = role.id === 'core_module' ? 35 :
+                    role.id === 'shared_utility' ? 22 :
+                    role.id === 'internal_helper' ? 15 :
+                    role.id === 'test' ? 8 : 6;
+    const jitter = (Math.sin(globalIdx * 7.3) * 0.5 + 0.5) * 18;
+    const importance = Math.min(52.71, Math.max(3.0, baseImp + jitter - 5));
+
+    nodes.push({
+      id: 'n' + nid++,
+      name: pool[i % pool.length] + (i >= pool.length ? '_' + i : ''),
+      role: role.id,
+      roleIdx: ri,
+      kind: pickKind(globalIdx),
+      importance,
+      file: FILES[(globalIdx * 3 + i) % FILES.length],
+      inDeg: 0,
+      outDeg: 0,
+    });
+    globalIdx++;
+  }
+});
+
+// Sort within each role by importance desc
+nodes.sort((a, b) => a.roleIdx !== b.roleIdx ? a.roleIdx - b.roleIdx : b.importance - a.importance);
+
+// Build edges
+const edges = [];
+function seededRand(i) { return ((Math.sin(i * 127.1 + 311.7) * 43758.5453) % 1 + 1) % 1; }
+
+for (let i = 0; i < 117; i++) {
+  const si = Math.floor(seededRand(i * 2) * nodes.length);
+  // bias target to same or higher roleIdx
+  const src = nodes[si];
+  const candidates = nodes.filter(n => n.id !== src.id && n.roleIdx >= src.roleIdx);
+  if (candidates.length === 0) continue;
+  const ti = Math.floor(seededRand(i * 2 + 1) * candidates.length);
+  const tgt = candidates[ti];
+  edges.push({ id: 'e' + i, source: src.id, target: tgt.id, type: 'calls' });
+  src.outDeg++;
+  tgt.inDeg++;
+}
+
+// 3 inheritance edges between classes
+const classes = nodes.filter(n => n.kind === 'class');
+for (let i = 0; i < 3 && classes.length >= 2; i++) {
+  const s = classes[i % classes.length];
+  const t = classes[(i + 1) % classes.length];
+  edges.push({ id: 'ei' + i, source: s.id, target: t.id, type: 'inherits' });
+  s.outDeg++;
+  t.inDeg++;
+}
+
+// ── Layout ────────────────────────────────────────────────────
+
+const LANE_W = 300;
+const CARD_W = 230;
+const CARD_GAP = 10;
+const LANE_TOP_PAD = 48;
+const LANE_SIDE_PAD = (LANE_W - CARD_W) / 2;
+
+const cardPositions = {};
+const laneHeights = [];
+
+ROLES.forEach((role, ri) => {
+  const laneNodes = nodes.filter(n => n.roleIdx === ri);
+  let y = LANE_TOP_PAD;
+  laneNodes.forEach(n => {
+    const h = 48 + ((n.importance - 3) / 50) * 42; // 48–90px
+    cardPositions[n.id] = {
+      x: ri * LANE_W + LANE_SIDE_PAD,
+      y,
+      w: CARD_W,
+      h,
+    };
+    y += h + CARD_GAP;
+  });
+  laneHeights.push(y + 40);
+});
+
+const worldW = ROLES.length * LANE_W;
+const worldH = Math.max(...laneHeights);
+
+// ── Render ────────────────────────────────────────────────────
+
+const world = document.getElementById('world');
+world.style.width = worldW + 'px';
+world.style.height = worldH + 'px';
+
+const kindColors = { function: '--viz-cat-1', class: '--viz-cat-2', method: '--viz-cat-3' };
+const kindLabels = { function: 'FN', class: 'CLS', method: 'MTD' };
+
+// Lanes
+ROLES.forEach((role, ri) => {
+  const lane = document.createElement('div');
+  lane.className = 'lane';
+  lane.style.left = ri * LANE_W + 'px';
+  lane.style.width = LANE_W + 'px';
+  lane.style.height = worldH + 'px';
+  lane.innerHTML = `<div class="lane-head"><span class="lane-name">${role.label}</span><span class="lane-count">${role.count}</span></div>`;
+  world.appendChild(lane);
+});
+
+// Edge SVG
+const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+svg.classList.add('edge-layer');
+svg.setAttribute('width', worldW);
+svg.setAttribute('height', worldH);
+svg.style.width = worldW + 'px';
+svg.style.height = worldH + 'px';
+
+// Arrowhead markers
+const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+['calls', 'inherits'].forEach(t => {
+  const mk = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+  mk.id = 'mk-' + t;
+  mk.setAttribute('markerWidth', '8');
+  mk.setAttribute('markerHeight', '8');
+  mk.setAttribute('refX', t === 'calls' ? '7' : '8');
+  mk.setAttribute('refY', '4');
+  mk.setAttribute('orient', 'auto');
+  mk.setAttribute('markerUnits', 'strokeWidth');
+  if (t === 'calls') {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M1,1 L7,4 L1,7 Z');
+    p.setAttribute('fill', 'hsl(var(--viz-ink-dim))');
+    mk.appendChild(p);
+  } else {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M4,0 L8,4 L4,8 L0,4 Z');
+    p.setAttribute('fill', 'hsl(var(--viz-ink-dim))');
+    mk.appendChild(p);
+  }
+  defs.appendChild(mk);
+});
+// Hot marker
+const mkHot = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+mkHot.id = 'mk-hot';
+mkHot.setAttribute('markerWidth', '8');
+mkHot.setAttribute('markerHeight', '8');
+mkHot.setAttribute('refX', '7');
+mkHot.setAttribute('refY', '4');
+mkHot.setAttribute('orient', 'auto');
+mkHot.setAttribute('markerUnits', 'strokeWidth');
+const mkHotP = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+mkHotP.setAttribute('d', 'M1,1 L7,4 L1,7 Z');
+mkHotP.setAttribute('fill', 'hsl(var(--viz-highlight))');
+mkHot.appendChild(mkHotP);
+defs.appendChild(mkHot);
+
+svg.appendChild(defs);
+
+const edgeEls = {};
+edges.forEach(e => {
+  const sp = cardPositions[e.source];
+  const tp = cardPositions[e.target];
+  if (!sp || !tp) return;
+
+  const sx = sp.x + sp.w;
+  const sy = sp.y + sp.h / 2;
+  const tx = tp.x;
+  const ty = tp.y + tp.h / 2;
+
+  const dx = tx - sx;
+  const cpOffset = Math.max(40, Math.abs(dx) * 0.4);
+
+  let d;
+  if (dx > 0) {
+    d = `M${sx},${sy} C${sx + cpOffset},${sy} ${tx - cpOffset},${ty} ${tx},${ty}`;
+  } else {
+    // Backwards edge — loop up
+    const loopY = Math.min(sy, ty) - 60;
+    d = `M${sx},${sy} C${sx + 60},${sy} ${sx + 60},${loopY} ${(sx + tx) / 2},${loopY} S${tx - 60},${ty} ${tx},${ty}`;
+  }
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'hsl(var(--viz-ink-dim))');
+  path.setAttribute('marker-end', `url(#mk-${e.type})`);
+  if (e.type === 'inherits') {
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-dasharray', '6,4');
+  } else {
+    path.setAttribute('stroke-width', '1.2');
+  }
+  path.setAttribute('opacity', '0.35');
+  path.dataset.eid = e.id;
+  svg.appendChild(path);
+  edgeEls[e.id] = path;
+});
+
+world.appendChild(svg);
+
+// Cards
+const cardEls = {};
+nodes.forEach(n => {
+  const pos = cardPositions[n.id];
+  const el = document.createElement('div');
+  el.className = 'sym-card';
+  el.dataset.nid = n.id;
+  el.style.left = pos.x + 'px';
+  el.style.top = pos.y + 'px';
+  el.style.width = pos.w + 'px';
+  el.style.height = pos.h + 'px';
+
+  const colorVar = kindColors[n.kind];
+  el.innerHTML = `
+    <span class="rail" style="background:hsl(var(${colorVar}))"></span>
+    <div class="kind-label" style="color:hsl(var(${colorVar}))">${kindLabels[n.kind]}</div>
+    <div class="sym-name">${n.name}</div>
+    <div class="sym-file">${n.file}</div>
+  `;
+
+  el.addEventListener('mouseenter', () => highlightNode(n.id));
+  el.addEventListener('mouseleave', () => clearHighlight());
+  el.addEventListener('click', (ev) => { ev.stopPropagation(); showDetail(n); });
+
+  world.appendChild(el);
+  cardEls[n.id] = el;
+});
+
+// ── Hover isolation ──────────────────────────────────────────
+
+function highlightNode(nid) {
+  world.classList.add('hovering');
+  const el = cardEls[nid];
+  if (el) el.classList.add('hot');
+
+  edges.forEach(e => {
+    if (e.source === nid || e.target === nid) {
+      const path = edgeEls[e.id];
+      if (path) path.classList.add('edge-hot');
+      const otherId = e.source === nid ? e.target : e.source;
+      const otherEl = cardEls[otherId];
+      if (otherEl) otherEl.classList.add('connected');
+    }
+  });
+}
+
+function clearHighlight() {
+  world.classList.remove('hovering');
+  document.querySelectorAll('.sym-card.hot, .sym-card.connected').forEach(el => {
+    el.classList.remove('hot', 'connected');
+  });
+  document.querySelectorAll('.edge-hot').forEach(p => p.classList.remove('edge-hot'));
+}
+
+// ── Detail panel ─────────────────────────────────────────────
+
+function showDetail(n) {
+  const panel = document.getElementById('detail');
+  const callers = edges.filter(e => e.target === n.id).map(e => nodes.find(nd => nd.id === e.source));
+  const callees = edges.filter(e => e.source === n.id).map(e => nodes.find(nd => nd.id === e.target));
+
+  panel.innerHTML = `
+    <div class="dp-head">
+      <div>
+        <div class="dp-name">${n.name}</div>
+        <div class="dp-meta">${n.kind} · ${n.file}:${Math.floor(n.importance * 30 + 10)}</div>
+        <span class="dp-pill">${n.role.replace('_', ' ')}</span>
+      </div>
+      <button class="dp-close" onclick="document.getElementById('detail').classList.remove('open')">×</button>
+    </div>
+    <div class="dp-section">
+      <div class="dp-stat-row"><span>Importance</span><span>${n.importance.toFixed(1)}</span></div>
+      <div class="dp-stat-row"><span>In-degree</span><span>${n.inDeg}</span></div>
+      <div class="dp-stat-row"><span>Out-degree</span><span>${n.outDeg}</span></div>
+    </div>
+    ${callers.length ? `<div class="dp-section"><div class="dp-section-title">Used by (${callers.length})</div><div class="dp-list">${callers.map(c => `<div class="dp-list-item">${c ? c.name : '?'}</div>`).join('')}</div></div>` : ''}
+    ${callees.length ? `<div class="dp-section"><div class="dp-section-title">Depends on (${callees.length})</div><div class="dp-list">${callees.map(c => `<div class="dp-list-item">${c ? c.name : '?'}</div>`).join('')}</div></div>` : ''}
+    ${!callers.length && !callees.length ? '<p style="margin-top:12px;color:hsl(var(--muted-foreground))">No connections in this view.</p>' : ''}
+  `;
+  panel.classList.add('open');
+}
+
+// ── Pan & Zoom ───────────────────────────────────────────────
+
+let scale = 1, tx = 0, ty = 0;
+let dragging = false, dragX = 0, dragY = 0;
+
+const wrap = document.getElementById('wrap');
+
+function applyTransform() {
+  world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+}
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.sym-card') || e.target.closest('.legend-cluster') ||
+      e.target.closest('.zoom-cluster') || e.target.closest('.detail-panel')) return;
+  dragging = true;
+  dragX = e.clientX - tx;
+  dragY = e.clientY - ty;
+  document.getElementById('detail').classList.remove('open');
+});
+
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  tx = e.clientX - dragX;
+  ty = e.clientY - dragY;
+  applyTransform();
+});
+
+window.addEventListener('mouseup', () => { dragging = false; });
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const factor = e.deltaY < 0 ? 1.08 : 0.93;
+  const ns = Math.min(3, Math.max(0.15, scale * factor));
+  tx = mx - (mx - tx) * (ns / scale);
+  ty = my - (my - ty) * (ns / scale);
+  scale = ns;
+  applyTransform();
+}, { passive: false });
+
+function zoomBy(factor) {
+  const rect = wrap.getBoundingClientRect();
+  const cx = rect.width / 2, cy = rect.height / 2;
+  const ns = Math.min(3, Math.max(0.15, scale * factor));
+  tx = cx - (cx - tx) * (ns / scale);
+  ty = cy - (cy - ty) * (ns / scale);
+  scale = ns;
+  applyTransform();
+}
+
+function fitView() {
+  const rect = wrap.getBoundingClientRect();
+  const padding = 0.12;
+  const sw = rect.width * (1 - padding * 2);
+  const sh = rect.height * (1 - padding * 2);
+  scale = Math.min(sw / worldW, sh / worldH, 1);
+  tx = (rect.width - worldW * scale) / 2;
+  ty = (rect.height - worldH * scale) / 2;
+  applyTransform();
+}
+
+// Initial fit
+requestAnimationFrame(fitView);
+</script>
+
+</body>
+</html>

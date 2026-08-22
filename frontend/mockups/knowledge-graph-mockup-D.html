@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mockup D: Concentric Importance Rings</title>
+  <style>
+    :root {
+      --background: 40 30% 96.5%;
+      --foreground: 24 14% 10%;
+      --card: 42 42% 99%;
+      --card-foreground: 24 14% 10%;
+      --muted: 38 20% 92.5%;
+      --muted-foreground: 28 7% 42%;
+      --border: 33 16% 86%;
+      --signal: 26 90% 46%;
+      --destructive: 0 68% 45%;
+      --success: 148 55% 32%;
+      --viz-highlight: 26 90% 46%;
+      --viz-cat-1: 212 88% 45%;
+      --viz-cat-2: 129 54% 30%;
+      --viz-cat-3: 266 60% 52%;
+      --viz-cat-4: 26 84% 42%;
+      --viz-cat-5: 328 66% 46%;
+      --viz-cat-6: 209 84% 42%;
+      --viz-cat-7: 126 50% 29%;
+      --viz-cat-8: 267 52% 50%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 42 42% 99%;
+      --viz-ink: 24 14% 10%;
+      --viz-ink-dim: 28 7% 42%;
+      --viz-edge: 33 16% 86%;
+      --radius: 0.5rem;
+    }
+
+    .dark {
+      --background: 30 9% 6%;
+      --foreground: 40 18% 94%;
+      --card: 30 8% 9%;
+      --card-foreground: 40 18% 94%;
+      --muted: 30 6% 14%;
+      --muted-foreground: 36 8% 62%;
+      --border: 32 7% 19%;
+      --signal: 34 96% 56%;
+      --destructive: 2 72% 58%;
+      --success: 148 52% 52%;
+      --viz-highlight: 34 96% 56%;
+      --viz-cat-1: 212 100% 67%;
+      --viz-cat-2: 129 49% 49%;
+      --viz-cat-3: 266 100% 77%;
+      --viz-cat-4: 26 85% 59%;
+      --viz-cat-5: 328 89% 72%;
+      --viz-cat-6: 209 100% 74%;
+      --viz-cat-7: 126 50% 45%;
+      --viz-cat-8: 267 80% 70%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 30 8% 9%;
+      --viz-ink: 40 18% 94%;
+      --viz-ink-dim: 36 8% 62%;
+      --viz-edge: 32 7% 19%;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: hsl(var(--background));
+      color: hsl(var(--foreground));
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+      transition: background-color 0.3s, color 0.3s;
+    }
+
+    header {
+      padding: 1rem;
+      border-bottom: 1px solid hsl(var(--border));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .title {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .theme-toggle {
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      border: 1px solid hsl(var(--border));
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+
+    .main-container {
+      display: flex;
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      cursor: grab;
+    }
+    .canvas-container:active {
+      cursor: grabbing;
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .node {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .node:hover {
+      transform: scale(1.5);
+    }
+
+    .edge-call {
+      fill: none;
+      stroke: hsl(var(--viz-edge));
+      stroke-width: 0.8;
+      opacity: 0.15;
+    }
+    
+    .edge-inherit {
+      fill: none;
+      stroke: hsl(var(--viz-edge));
+      stroke-width: 2;
+      opacity: 0.3;
+    }
+    
+    .tick-inherit {
+      fill: none;
+      stroke: hsl(var(--viz-edge));
+      stroke-width: 2;
+      opacity: 0.3;
+    }
+
+    .edge.highlight {
+      stroke: hsl(var(--viz-highlight));
+      opacity: 1;
+      z-index: 10;
+    }
+
+    .tick.highlight {
+      stroke: hsl(var(--viz-highlight));
+      opacity: 1;
+    }
+
+    .ghost-ring {
+      fill: none;
+      stroke: hsl(var(--muted-foreground));
+      stroke-dasharray: 4 4;
+      stroke-width: 1;
+      animation: pulse 4s infinite alternate;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.05; }
+      100% { opacity: 0.15; }
+    }
+    
+    .ring-boundary {
+      fill: none;
+      stroke: hsl(var(--border));
+      stroke-dasharray: 2 4;
+      stroke-width: 1;
+      opacity: 0.5;
+    }
+    
+    .sector-line {
+      stroke: hsl(var(--border));
+      stroke-width: 0.5;
+      opacity: 0.5;
+    }
+
+    .file-label {
+      font-size: 8px;
+      fill: hsl(var(--muted-foreground));
+      user-select: none;
+    }
+
+    .center-stats {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      pointer-events: none;
+      background: hsl(var(--background) / 0.8);
+      border-radius: 50%;
+      width: 180px;
+      height: 180px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      border: 1px solid hsl(var(--border));
+    }
+    
+    .center-val {
+      font-size: 2.5rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .center-label {
+      font-size: 0.85rem;
+      color: hsl(var(--foreground));
+      margin-bottom: 0.5rem;
+    }
+    .center-res {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: hsl(var(--signal));
+    }
+    .center-sub {
+      font-size: 0.75rem;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .overlay {
+      position: absolute;
+      pointer-events: none;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1rem;
+    }
+    
+    .controls-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      pointer-events: none;
+      width: 100%;
+    }
+
+    .legend {
+      background: hsl(var(--card) / 0.9);
+      border: 1px solid hsl(var(--border));
+      padding: 0.75rem;
+      border-radius: var(--radius);
+      pointer-events: auto;
+      font-size: 0.85rem;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.25rem;
+    }
+    .legend-item:last-child {
+      margin-bottom: 0;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .zoom-controls {
+      display: flex;
+      gap: 0.5rem;
+      pointer-events: auto;
+    }
+    .btn-icon {
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      color: hsl(var(--foreground));
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      font-size: 1.2rem;
+    }
+
+    .resolution-bar-container {
+      position: absolute;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      width: 400px;
+      text-align: center;
+    }
+    .resolution-bar {
+      height: 6px;
+      border-radius: 3px;
+      display: flex;
+      overflow: hidden;
+      margin-bottom: 0.25rem;
+    }
+    .res-fill-resolved {
+      background: hsl(var(--signal));
+      width: 29%;
+    }
+    .res-fill-unresolved {
+      background: hsl(var(--muted));
+      width: 71%;
+    }
+    .res-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      margin-bottom: 0.25rem;
+    }
+    .res-label-res { color: hsl(var(--signal)); font-weight: 600; }
+    .res-label-un { color: hsl(var(--muted-foreground)); }
+    .res-caption {
+      font-size: 0.7rem;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .detail-panel {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      width: 320px;
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      padding: 1rem;
+      pointer-events: auto;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      max-height: calc(100vh - 8rem);
+      overflow-y: auto;
+    }
+    .detail-panel.visible {
+      display: block;
+    }
+    .dp-close {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      background: none;
+      border: none;
+      color: hsl(var(--muted-foreground));
+      cursor: pointer;
+      font-size: 1.2rem;
+    }
+    .dp-title {
+      font-family: monospace;
+      font-size: 1.1rem;
+      font-weight: 600;
+      word-break: break-all;
+      margin-bottom: 0.25rem;
+      padding-right: 1.5rem;
+    }
+    .dp-meta {
+      font-size: 0.8rem;
+      color: hsl(var(--muted-foreground));
+      margin-bottom: 0.75rem;
+    }
+    .role-badge {
+      display: inline-block;
+      padding: 0.1rem 0.4rem;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+      margin-bottom: 1rem;
+    }
+    .dp-stats {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+    }
+    .dp-stat {
+      text-align: center;
+    }
+    .dp-stat-val {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+    .dp-stat-label {
+      color: hsl(var(--muted-foreground));
+      font-size: 0.75rem;
+    }
+    .importance-bar-bg {
+      height: 4px;
+      background: hsl(var(--muted));
+      border-radius: 2px;
+      margin-top: 0.25rem;
+      overflow: hidden;
+    }
+    .importance-bar-fill {
+      height: 100%;
+      background: hsl(var(--foreground));
+    }
+    .dp-list-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      border-bottom: 1px solid hsl(var(--border));
+      padding-bottom: 0.25rem;
+      margin-top: 1rem;
+    }
+    .dp-list {
+      list-style: none;
+      font-size: 0.8rem;
+    }
+    .dp-list li {
+      margin-bottom: 0.25rem;
+      font-family: monospace;
+      color: hsl(var(--viz-ink-dim));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .caption-block {
+      background: hsl(var(--muted));
+      padding: 1rem;
+      font-size: 0.85rem;
+      border-top: 1px solid hsl(var(--border));
+      flex-shrink: 0;
+    }
+    .caption-title {
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: hsl(var(--foreground));
+    }
+    .caption-content {
+      color: hsl(var(--muted-foreground));
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .caption-warn {
+      color: hsl(var(--destructive));
+      font-weight: 600;
+    }
+    .tooltip {
+      position: absolute;
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      pointer-events: none;
+      display: none;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="title">CodeKavi Mockup D: Concentric Importance Rings</div>
+    <button class="theme-toggle" onclick="toggleTheme()">Toggle Dark Mode</button>
+  </header>
+
+  <div class="main-container">
+    <div class="canvas-container" id="canvasContainer">
+      <svg id="viz">
+        <g id="zoomGroup">
+          <!-- Render groups -->
+          <g id="rings"></g>
+          <g id="sectors"></g>
+          <g id="edges"></g>
+          <g id="nodes"></g>
+          <g id="labels"></g>
+        </g>
+      </svg>
+      <div class="center-stats">
+        <div class="center-val">150</div>
+        <div class="center-label">symbols</div>
+        <div class="center-res">29% resolved</div>
+        <div class="center-sub">of 657 found</div>
+      </div>
+    </div>
+    
+    <div class="overlay">
+      <div></div>
+      <div class="controls-bottom">
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-dot" style="background: hsl(var(--viz-cat-1))"></div>
+            <span>Function</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: hsl(var(--viz-cat-2))"></div>
+            <span>Class</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: hsl(var(--viz-cat-3))"></div>
+            <span>Method</span>
+          </div>
+        </div>
+        
+        <div class="zoom-controls">
+          <button class="btn-icon" onclick="zoomIn()">+</button>
+          <button class="btn-icon" onclick="zoomOut()">-</button>
+          <button class="btn-icon" onclick="resetZoom()">⟲</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="resolution-bar-container">
+      <div class="res-labels">
+        <span class="res-label-res">810 resolved</span>
+        <span class="res-label-un">1,997 unresolved</span>
+      </div>
+      <div class="resolution-bar">
+        <div class="res-fill-resolved"></div>
+        <div class="res-fill-unresolved"></div>
+      </div>
+      <div class="res-caption">Name-based resolution. No type inference. Unresolved calls are dropped, not guessed.</div>
+    </div>
+
+    <div class="detail-panel" id="detailPanel">
+      <button class="dp-close" onclick="closeDetailPanel()">×</button>
+      <div class="dp-title" id="dpTitle">SymbolName</div>
+      <div class="dp-meta" id="dpMeta">file.py : 123</div>
+      <div class="role-badge" id="dpRole">core_module</div>
+      <div class="dp-stats">
+        <div class="dp-stat">
+          <div class="dp-stat-label">Importance</div>
+          <div class="dp-stat-val" id="dpImp">42.5</div>
+          <div class="importance-bar-bg">
+            <div class="importance-bar-fill" id="dpImpBar" style="width: 50%"></div>
+          </div>
+        </div>
+        <div class="dp-stat">
+          <div class="dp-stat-label">In</div>
+          <div class="dp-stat-val" id="dpIn">5</div>
+        </div>
+        <div class="dp-stat">
+          <div class="dp-stat-label">Out</div>
+          <div class="dp-stat-val" id="dpOut">3</div>
+        </div>
+      </div>
+      
+      <div class="dp-list-title">Callers</div>
+      <ul class="dp-list" id="dpCallers"></ul>
+      
+      <div class="dp-list-title">Callees</div>
+      <ul class="dp-list" id="dpCallees"></ul>
+    </div>
+    
+    <div id="tooltip" class="tooltip"></div>
+  </div>
+
+  <div class="caption-block">
+    <div class="caption-title">Mockup D: Concentric Importance Rings with Radial File Sectors</div>
+    <div class="caption-content">
+      <p><strong>Organizing Idea:</strong> Importance controls radius (core at center), file controls angular sector. Keeps architecture central and groups file-mates natively without bounding boxes.</p>
+      <p><strong>Problems Addressed:</strong> Handles dense layouts (P1) via radial space usage, visually explains truncation with ghost ring (P3), avoids triple-encoding by using radial position for importance (P4), and distinguishes edges (P5).</p>
+      <p><span class="caption-warn">DEPARTURE from ArchitectureGraph:</span> React Flow does not support polar/radial layouts natively. This requires computing absolute coordinates externally (losing ELK layout engine) or rendering via D3 directly. Approximating in React Flow requires rectangular concentric rings, losing the neat angular file sectors.</p>
+    </div>
+  </div>
+
+  <script>
+    function toggleTheme() {
+      document.body.classList.toggle('dark');
+    }
+
+    // --- DATA GENERATION ---
+    const NUM_NODES = 150;
+    const NUM_FILES = 38;
+    
+    const ROLES = ['leaf', 'internal_helper', 'test', 'core_module', 'shared_utility'];
+    const KINDS = ['function', 'class', 'method'];
+    
+    const FILES = Array.from({length: NUM_FILES}, (_, i) => {
+      const dirs = ['api', 'models', 'utils', 'services', 'core', 'ui'];
+      const dir = dirs[Math.floor(i / 7) % dirs.length];
+      return `${dir}/file_${i}.py`;
+    });
+    
+    const nodes = [];
+    for (let i = 0; i < NUM_NODES; i++) {
+      let kind = i < 106 ? 'function' : i < 132 ? 'method' : 'class';
+      let r = Math.random();
+      let role = r < 0.5 ? 'leaf' : r < 0.65 ? 'internal_helper' : r < 0.75 ? 'test' : r < 0.85 ? 'core_module' : 'shared_utility';
+      
+      // Skewed importance 3.0 to 52.71
+      let imp = 3.0 + Math.pow(Math.random(), 3) * 49.71; 
+      
+      nodes.push({
+        id: `node_${i}`,
+        name: `${kind === 'class' ? 'Class' : 'func_'}${Math.floor(Math.random()*1000)}`,
+        kind: kind,
+        role: role,
+        file: FILES[i % NUM_FILES], // Distribute across files
+        line: Math.floor(Math.random() * 500) + 1,
+        importance: imp,
+        inEdges: [],
+        outEdges: []
+      });
+    }
+
+    // Sort by file so sectors are contiguous
+    nodes.sort((a, b) => a.file.localeCompare(b.file));
+    
+    // Distribute into 38 files groups
+    const fileGroups = {};
+    FILES.forEach(f => fileGroups[f] = []);
+    nodes.forEach(n => fileGroups[n.file].push(n));
+    
+    const edges = [];
+    for (let i = 0; i < 117; i++) {
+      let src = nodes[Math.floor(Math.random() * NUM_NODES)];
+      let tgt = nodes[Math.floor(Math.random() * NUM_NODES)];
+      if (src !== tgt) {
+        let e = { source: src, target: tgt, type: 'call' };
+        edges.push(e);
+        src.outEdges.push(e);
+        tgt.inEdges.push(e);
+      }
+    }
+    for (let i = 0; i < 3; i++) {
+      let src = nodes.find(n => n.kind === 'class');
+      let tgt = nodes.find(n => n.kind === 'class' && n !== src);
+      if (src && tgt) {
+        let e = { source: src, target: tgt, type: 'inherit' };
+        edges.push(e);
+        src.outEdges.push(e);
+        tgt.inEdges.push(e);
+      }
+    }
+
+    // --- LAYOUT COMPUTATION ---
+    const RINGS = {
+      inner: [120, 200, 30], // minR, maxR, minImp
+      middle: [220, 320, 15],
+      outer: [340, 440, 3],
+      ghost: [460, 500, 0]
+    };
+    
+    let currentAngle = 0;
+    const sectorsData = [];
+    
+    // Assign angular sectors
+    for (const [file, fNodes] of Object.entries(fileGroups)) {
+      if (fNodes.length === 0) continue;
+      const arcWidth = (fNodes.length / NUM_NODES) * Math.PI * 2;
+      sectorsData.push({
+        file,
+        startAngle: currentAngle,
+        endAngle: currentAngle + arcWidth,
+        midAngle: currentAngle + arcWidth / 2
+      });
+      
+      fNodes.forEach(n => {
+        // Map importance to radius
+        let rRange, minI;
+        if (n.importance > RINGS.inner[2]) { rRange = RINGS.inner; minI = 30; }
+        else if (n.importance > RINGS.middle[2]) { rRange = RINGS.middle; minI = 15; }
+        else { rRange = RINGS.outer; minI = 3; }
+        
+        // Normalize importance within band (approximate)
+        let t = Math.random(); // Jitter radially within band
+        let r = rRange[0] + t * (rRange[1] - rRange[0]);
+        
+        let a = currentAngle + (Math.random() * 0.8 + 0.1) * arcWidth; // Jitter angularly within sector
+        
+        n.x = r * Math.cos(a);
+        n.y = r * Math.sin(a);
+      });
+      
+      currentAngle += arcWidth;
+    }
+
+    // --- RENDERING ---
+    const svg = document.getElementById('viz');
+    const gRings = document.getElementById('rings');
+    const gSectors = document.getElementById('sectors');
+    const gEdges = document.getElementById('edges');
+    const gNodes = document.getElementById('nodes');
+    const gLabels = document.getElementById('labels');
+    const zoomGroup = document.getElementById('zoomGroup');
+    const tooltip = document.getElementById('tooltip');
+    
+    let width = svg.clientWidth;
+    let height = svg.clientHeight;
+    
+    let cx = width / 2;
+    let cy = height / 2;
+
+    // Render Rings
+    function drawRing(r, isGhost = false) {
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('cx', cx);
+      circle.setAttribute('cy', cy);
+      circle.setAttribute('r', r);
+      if (isGhost) {
+        circle.setAttribute('class', 'ghost-ring');
+      } else {
+        circle.setAttribute('class', 'ring-boundary');
+      }
+      gRings.appendChild(circle);
+    }
+    drawRing(210); // Between inner and middle
+    drawRing(330); // Between middle and outer
+    drawRing(450); // Boundary for ghost
+    drawRing(480, true); // Ghost ring
+
+    // Ghost label
+    const textPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    textPath.setAttribute('id', 'ghostPath');
+    textPath.setAttribute('d', `M ${cx-490} ${cy} a 490 490 0 1 1 980 0`);
+    textPath.setAttribute('fill', 'none');
+    gRings.appendChild(textPath);
+    
+    const ghostText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    ghostText.style.fill = 'hsl(var(--muted-foreground))';
+    ghostText.style.fontSize = '12px';
+    const textPathEl = document.createElementNS('http://www.w3.org/2000/svg', 'textPath');
+    textPathEl.setAttribute('href', '#ghostPath');
+    textPathEl.setAttribute('startOffset', '50%');
+    textPathEl.setAttribute('text-anchor', 'middle');
+    textPathEl.textContent = '488 hidden symbols (low connectivity)';
+    ghostText.appendChild(textPathEl);
+    gRings.appendChild(ghostText);
+
+    // Render Sectors
+    sectorsData.forEach(sec => {
+      // Line
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', cx + 110 * Math.cos(sec.startAngle));
+      line.setAttribute('y1', cy + 110 * Math.sin(sec.startAngle));
+      line.setAttribute('x2', cx + 450 * Math.cos(sec.startAngle));
+      line.setAttribute('y2', cy + 450 * Math.sin(sec.startAngle));
+      line.setAttribute('class', 'sector-line');
+      gSectors.appendChild(line);
+      
+      // Label
+      const labelRadius = 460;
+      let angleDeg = sec.midAngle * (180 / Math.PI);
+      let rX = cx + labelRadius * Math.cos(sec.midAngle);
+      let rY = cy + labelRadius * Math.sin(sec.midAngle);
+      
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('class', 'file-label');
+      label.setAttribute('x', rX);
+      label.setAttribute('y', rY);
+      
+      // Rotate text
+      if (angleDeg > 90 && angleDeg < 270) {
+        label.setAttribute('transform', `rotate(${angleDeg + 180}, ${rX}, ${rY})`);
+        label.setAttribute('text-anchor', 'end');
+      } else {
+        label.setAttribute('transform', `rotate(${angleDeg}, ${rX}, ${rY})`);
+        label.setAttribute('text-anchor', 'start');
+      }
+      
+      label.textContent = sec.file.split('/').pop();
+      gLabels.appendChild(label);
+    });
+
+    // Render Edges
+    const edgeEls = [];
+    edges.forEach(e => {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const x1 = cx + e.source.x;
+      const y1 = cy + e.source.y;
+      const x2 = cx + e.target.x;
+      const y2 = cy + e.target.y;
+      
+      // Quadratic bezier bowed towards center
+      const mx = (x1 + x2) / 2;
+      const my = (y1 + y2) / 2;
+      const cx_ctrl = mx + (cx - mx) * 0.5;
+      const cy_ctrl = my + (cy - my) * 0.5;
+      
+      path.setAttribute('d', `M ${x1} ${y1} Q ${cx_ctrl} ${cy_ctrl} ${x2} ${y2}`);
+      path.setAttribute('class', e.type === 'inherit' ? 'edge-inherit' : 'edge-call');
+      
+      gEdges.appendChild(path);
+      edgeEls.push({ path, edge: e });
+      
+      if (e.type === 'inherit') {
+        const tick = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        // Simple tick mark near target
+        const dx = x2 - cx_ctrl;
+        const dy = y2 - cy_ctrl;
+        const len = Math.sqrt(dx*dx + dy*dy);
+        const nx = -dy/len * 5;
+        const ny = dx/len * 5;
+        
+        // Position slightly before target
+        const tx = x2 - (dx/len)*10;
+        const ty = y2 - (dy/len)*10;
+        
+        tick.setAttribute('d', `M ${tx+nx} ${ty+ny} L ${tx-nx} ${ty-ny}`);
+        tick.setAttribute('class', 'tick-inherit');
+        gEdges.appendChild(tick);
+        edgeEls[edgeEls.length-1].tick = tick;
+      }
+    });
+
+    // Render Nodes
+    const nodeEls = [];
+    nodes.forEach(n => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('transform', `translate(${cx + n.x}, ${cy + n.y})`);
+      g.setAttribute('class', 'node');
+      
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', 7);
+      
+      let colorVar = '--viz-cat-1';
+      if (n.kind === 'class') colorVar = '--viz-cat-2';
+      if (n.kind === 'method') colorVar = '--viz-cat-3';
+      
+      circle.style.fill = `hsl(var(${colorVar}))`;
+      circle.style.stroke = 'hsl(var(--background))';
+      circle.style.strokeWidth = '1.5';
+      
+      g.appendChild(circle);
+      gNodes.appendChild(g);
+      
+      n.el = g;
+      nodeEls.push(n);
+      
+      // Interactions
+      g.addEventListener('mouseenter', (ev) => {
+        // Highlight edges
+        edgeEls.forEach(ee => {
+          if (ee.edge.source === n || ee.edge.target === n) {
+            ee.path.classList.add('highlight');
+            if (ee.tick) ee.tick.classList.add('highlight');
+          } else {
+            ee.path.style.opacity = '0.02';
+            if (ee.tick) ee.tick.style.opacity = '0.02';
+          }
+        });
+        
+        // Tooltip
+        tooltip.innerHTML = `<strong>${n.name}</strong><br/>${n.kind} • ${n.file}<br/>Imp: ${n.importance.toFixed(1)}`;
+        tooltip.style.display = 'block';
+        tooltip.style.left = ev.pageX + 10 + 'px';
+        tooltip.style.top = ev.pageY + 10 + 'px';
+      });
+      
+      g.addEventListener('mousemove', (ev) => {
+        tooltip.style.left = ev.pageX + 10 + 'px';
+        tooltip.style.top = ev.pageY + 10 + 'px';
+      });
+      
+      g.addEventListener('mouseleave', () => {
+        edgeEls.forEach(ee => {
+          ee.path.classList.remove('highlight');
+          ee.path.style.opacity = '';
+          if (ee.tick) {
+            ee.tick.classList.remove('highlight');
+            ee.tick.style.opacity = '';
+          }
+        });
+        tooltip.style.display = 'none';
+      });
+      
+      g.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openDetail(n);
+      });
+    });
+
+    // --- PAN AND ZOOM ---
+    let scale = 1;
+    let translateX = 0;
+    let translateY = 0;
+    let isDragging = false;
+    let startX, startY;
+    const canvasContainer = document.getElementById('canvasContainer');
+
+    function updateTransform() {
+      zoomGroup.setAttribute('transform', `translate(${translateX}, ${translateY}) scale(${scale})`);
+    }
+
+    canvasContainer.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.node')) return;
+      isDragging = true;
+      startX = e.clientX - translateX;
+      startY = e.clientY - translateY;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      translateX = e.clientX - startX;
+      translateY = e.clientY - startY;
+      updateTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    canvasContainer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = -e.deltaY * 0.001;
+      const newScale = Math.min(Math.max(0.2, scale * (1 + zoomFactor)), 5);
+      
+      // Zoom toward pointer
+      const rect = canvasContainer.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      translateX = mouseX - (mouseX - translateX) * (newScale / scale);
+      translateY = mouseY - (mouseY - translateY) * (newScale / scale);
+      scale = newScale;
+      updateTransform();
+    });
+
+    function zoomIn() { scale *= 1.2; updateTransform(); }
+    function zoomOut() { scale /= 1.2; updateTransform(); }
+    function resetZoom() { scale = 1; translateX = 0; translateY = 0; updateTransform(); }
+
+    // --- DETAIL PANEL ---
+    const dp = document.getElementById('detailPanel');
+    function openDetail(node) {
+      document.getElementById('dpTitle').textContent = node.name;
+      document.getElementById('dpMeta').textContent = `${node.file} : ${node.line}`;
+      document.getElementById('dpRole').textContent = node.role;
+      document.getElementById('dpImp').textContent = node.importance.toFixed(2);
+      document.getElementById('dpImpBar').style.width = `${Math.min(100, (node.importance / 53) * 100)}%`;
+      document.getElementById('dpIn').textContent = node.inEdges.length;
+      document.getElementById('dpOut').textContent = node.outEdges.length;
+      
+      const clrs = document.getElementById('dpCallers');
+      clrs.innerHTML = '';
+      node.inEdges.forEach(e => {
+        let li = document.createElement('li');
+        li.textContent = `← ${e.source.name}`;
+        clrs.appendChild(li);
+      });
+      if (node.inEdges.length === 0) clrs.innerHTML = '<li>none</li>';
+      
+      const clees = document.getElementById('dpCallees');
+      clees.innerHTML = '';
+      node.outEdges.forEach(e => {
+        let li = document.createElement('li');
+        li.textContent = `→ ${e.target.name}`;
+        clees.appendChild(li);
+      });
+      if (node.outEdges.length === 0) clees.innerHTML = '<li>none</li>';
+      
+      dp.classList.add('visible');
+    }
+    
+    function closeDetailPanel() {
+      dp.classList.remove('visible');
+    }
+    
+    // Auto-center initially
+    window.addEventListener('resize', () => {
+      // Re-center on resize if needed
+    });
+    
+  </script>
+</body>
+</html>

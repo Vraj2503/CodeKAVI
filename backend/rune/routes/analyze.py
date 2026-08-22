@@ -43,11 +43,31 @@ from rune.routes.dependencies import get_cache
 from rune.schemas import AnalyzeRequest
 from rune.session import assert_repo_owner, ensure_repo_loaded, save_analysis
 from rune.settings import settings
+from rune.symbol_graph import build_symbol_graph
 from rune.traverser import traverse_repo
 from rune.utils import BoundedContentCache
 from rune.utils import run_sync as _run_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _empty_symbol_graph(error: BaseException | str) -> dict:
+    """Degraded symbol graph. The endpoint renders an empty view rather than 404ing."""
+    logger.warning(f"Symbol graph failed: {error}")
+    return {
+        "nodes": [],
+        "edges": [],
+        "metadata": {
+            "total_symbols": 0,
+            "resolved_calls": 0,
+            "unresolved_calls": 0,
+            "is_truncated": False,
+            "truncated_count": 0,
+            "unsupported_languages": [],
+            "error": str(error),
+        },
+        "diagnostics": {"node_count": 0, "edge_count": 0, "resolution_rate": 0.0, "unsupported_languages": []},
+    }
 
 
 def safe_cleanup(path: str):
@@ -77,6 +97,7 @@ class PipelineResult:
     mermaid: dict  # {"file_level": str, "module_level": str} — unified shape (IMPL-13/B-3)
     selected_files: list
     nn_models: list
+    symbol_graph: dict
 
 
 async def _run_pipeline(
@@ -169,10 +190,18 @@ async def _run_pipeline(
 
     yield ("analyzing", 60, "Classifying file roles…", None)
     start_time = time.perf_counter()
+    # Symbols ride along with the complexity parse classify_files already does;
+    # they must be collected here because content_cache is cleared before graphing.
+    symbols_by_file: dict[str, list[dict]] = {}
     try:
         with analysis_stage_timer("classifying"):
             file_profiles = await _run_sync(
-                classify_files, clone_info["clone_path"], repo_data.files, dep_data, content_cache=content_cache
+                classify_files,
+                clone_info["clone_path"],
+                repo_data.files,
+                dep_data,
+                content_cache=content_cache,
+                symbols_out=symbols_by_file,
             )
             role_summary = summarize_roles(file_profiles)
         duration = (time.perf_counter() - start_time) * 1000
@@ -218,9 +247,10 @@ async def _run_pipeline(
             )
             module_graph_future = _run_sync(build_module_graph, dep_data_dict, file_profiles_dicts)
             cycles_future = _run_sync(detect_cycles, dep_data_dict)
+            symbol_graph_future = _run_sync(build_symbol_graph, symbols_by_file, file_profiles_dicts, dep_data_dict)
 
             results = await asyncio.gather(
-                graph_json_future, module_graph_future, cycles_future, return_exceptions=True
+                graph_json_future, module_graph_future, cycles_future, symbol_graph_future, return_exceptions=True
             )
 
             graph_json = (
@@ -236,6 +266,7 @@ async def _run_pipeline(
                 if isinstance(results[2], dict)
                 else {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {results[2]}"}
             )
+            symbol_graph = results[3] if isinstance(results[3], dict) else _empty_symbol_graph(results[3])
 
             try:
                 mermaid_file = await _run_sync(export_mermaid, graph_json)
@@ -252,6 +283,7 @@ async def _run_pipeline(
         mermaid_file = ""
         module_graph = {"error": f"Module graph failed: {e}"}
         cycles_data = {"has_cycles": False, "cycles": [], "summary": f"Detection failed: {e}"}
+        symbol_graph = _empty_symbol_graph(e)
 
         dep_data_dict = dep_data.model_dump()
         file_profiles_dicts = [p.model_dump() for p in file_profiles]
@@ -290,6 +322,7 @@ async def _run_pipeline(
         mermaid=mermaid,
         selected_files=selected_files,
         nn_models=nn_models,
+        symbol_graph=symbol_graph,
     )
     yield ("__result__", 100, "", result)
 
@@ -467,6 +500,10 @@ async def analyze(
             "module_graph": module_graph,
             "selected_files": pipeline_result.selected_files,
             "nn_models": nn_models,
+            # Cached, not returned in the response body — /visualize/knowledge
+            # serves it from here, and the browser already receives file_profiles
+            # in full without a second per-symbol payload on top.
+            "symbol_graph": pipeline_result.symbol_graph,
             # H-01: pin this result to its origin repo_id so cross-user
             # signature dedup (T4.4) can never rebind the signature index
             # to a requester's repo_id whose result was never cached.
@@ -735,6 +772,8 @@ async def analyze_stream(
                 "module_graph": module_graph,
                 "selected_files": selected_files,
                 "nn_models": nn_models,
+                # See non-streaming /analyze — cached for /visualize/knowledge only.
+                "symbol_graph": pipeline_result.symbol_graph,
                 # H-01: see non-streaming /analyze — pins dedup to the origin repo_id.
                 "_origin_repo_id": repo_id,
                 # H1: see non-streaming /analyze — diff-tour input, including

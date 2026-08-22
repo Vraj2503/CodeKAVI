@@ -371,3 +371,52 @@ Rules:
 - For web apps: Client Request -> Routing -> Authentication -> Business Logic -> Data Access -> Response
 - Maximum 15 nodes, 25 edges
 - source_files must reference actual file paths from the provided file roles"""
+
+
+# ─────────────────────────────────────────────
+# Knowledge graph prompt (concept overlay)
+# ─────────────────────────────────────────────
+
+SYSTEM_KNOWLEDGE_ANALYST = (
+    "You are Rune, an expert software architect naming the domain concepts a "
+    "codebase is built around. Return ONLY valid JSON, no prose.\n\n" + UNTRUSTED_CODE_DISCLAIMER
+)
+
+
+def build_knowledge_prompt(digest_chunk: dict) -> str:
+    """
+    Build the user prompt for one evidence chunk from `concept_graph.build_evidence_digest`.
+    Plain string, paired with SYSTEM_KNOWLEDGE_ANALYST — same calling style as
+    build_dataflow_prompt above.
+    """
+    symbol_lines = "\n".join(f"  - {line}" for line in digest_chunk.get("symbols", [])) or "  (none)"
+
+    return f"""These are the functions and classes in `{digest_chunk.get("scope", ".")}`, with their
+documentation, signatures, external calls and detected side effects.
+
+{symbol_lines}
+
+Identify the DOMAIN CONCEPTS this code is about and return a JSON object:
+{{
+  "entities": [
+    {{
+      "name": "Analysis Cache",
+      "summary": "One or two sentences on what this concept is and why it exists.",
+      "symbols": ["exact path::name lines copied from above"],
+      "files": ["exact file paths from those symbols"]
+    }}
+  ],
+  "relations": [
+    {{"source": "Analysis Cache", "target": "Repository", "label": "stores results for"}}
+  ]
+}}
+
+Rules:
+- An entity is a domain idea (Repository, Quota, Clone, Token Budget), NOT a
+  restatement of one function's name. If the only thing you can say about it is
+  what the function is called, it is not a concept.
+- Every entity MUST cite at least one `path::name` copied VERBATIM from the list
+  above. Entities citing anything else are discarded.
+- Prefer 3-8 entities for this chunk. Fewer, sharper concepts beat a long list.
+- `source` and `target` in relations must be entity names you returned.
+- `label` is a verb phrase describing the real dependency, not "relates to"."""

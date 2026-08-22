@@ -395,6 +395,7 @@ def classify_files(
     file_list: list[FileEntry],
     dep_data: DepGraph,
     content_cache: dict[str, str] | BoundedContentCache | None = None,
+    symbols_out: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[FileProfile]:
     """
     Produce a rich profile for every file in the repo.
@@ -403,6 +404,11 @@ def classify_files(
         repo_root:  Absolute path to the cloned repo.
         file_list:  Flat file list from traverser (each has 'path', 'language', 'size', etc.).
         dep_data:   Output from analyze_dependencies() — edges, adjacency, reverse, entry_points, etc.
+        symbols_out: Optional dict, filled in place with `{rel_path: [symbol record]}` for
+                     every parseable source file. An out-parameter rather than a second
+                     return value so existing callers keep working, and because symbols
+                     deliberately stay off FileProfile — that model is serialized into
+                     every /analyze response and per-symbol data would bloat it.
 
     Returns:
         list of file profiles, each with:
@@ -488,7 +494,11 @@ def classify_files(
         if ext.lower() in _SOURCE_EXTENSIONS:
             source = _full_source(file_info, abs_path)
             if source is not None:
-                metrics = file_complexity(source, rel_path)
+                metrics = file_complexity(source, rel_path, with_symbols=symbols_out is not None)
+                # Only parseable languages yield symbols; skip the empty lists so
+                # the map stays a record of what we actually read.
+                if symbols_out is not None and metrics.get("symbols"):
+                    symbols_out[rel_path] = metrics["symbols"]
 
         profiles.append(
             FileProfile(
