@@ -38,10 +38,12 @@ import {
   PALETTES,
   SURFACES,
   paletteById,
+  resolveSurface,
   swatchFor,
-  type Surface,
+  type SurfaceId,
 } from "@/lib/viz/palettes";
-import { STYLES, styleById } from "@/lib/viz/styles";
+import { useTheme } from "next-themes";
+import { DEFAULT_STYLE, STYLES, styleById } from "@/lib/viz/styles";
 import { formatShape } from "@/lib/viz/nnLayout";
 import { toast } from "sonner";
 
@@ -72,11 +74,14 @@ export function NNEditor({
   const [selectedId, setSelectedId] = useState<string | null>(
     initial.layers[0]?.id ?? null,
   );
-  const [offsets, setOffsets] = useState<Record<string, { dx: number; dy: number }>>({});
+  const [offsets, setOffsets] = useState<
+    Record<string, { dx: number; dy: number }>
+  >({});
   const [colors, setColors] = useState<Record<string, string>>({});
-  const [styleId, setStyleId] = useState("publication");
+  const [styleId, setStyleId] = useState(DEFAULT_STYLE.id);
   const [paletteId, setPaletteId] = useState("scientific");
-  const [surfaceKey, setSurfaceKey] = useState<keyof typeof SURFACES>("black");
+  const [surfaceKey, setSurfaceKey] = useState<SurfaceId>("black");
+  const [surfaceTouched, setSurfaceTouched] = useState(false);
   const [ground, setGround] = useState<"plain" | "grid" | "dots">("dots");
   const [busy, setBusy] = useState<string | null>(null);
   /*
@@ -89,6 +94,10 @@ export function NNEditor({
    * figure looked while they were still working on it.
    */
   const [exportBg, setExportBg] = useState(true);
+  // Caption fields. Blank label falls back to the model name, so the caption
+  // is right without being touched and overridable when the paper disagrees.
+  const [figNumber, setFigNumber] = useState("1");
+  const [figLabel, setFigLabel] = useState("");
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -147,7 +156,13 @@ export function NNEditor({
 
   const style = styleById(styleId);
   const palette = paletteById(paletteId);
-  const surface: Surface = { ...SURFACES[surfaceKey], ...(style.surface ?? {}) };
+  // Same rule as the read-only view: explicit pick → style → app theme.
+  const { resolvedTheme } = useTheme();
+  const surface = resolveSurface(
+    style,
+    surfaceTouched ? surfaceKey : null,
+    resolvedTheme === "light" ? "paper" : "black",
+  );
 
   const selected = useMemo(
     () => model.layers.find((l) => l.id === selectedId) ?? null,
@@ -235,7 +250,9 @@ export function NNEditor({
             className={selectCls}
           >
             {STYLES.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
             ))}
           </select>
         </Field2>
@@ -270,14 +287,17 @@ export function NNEditor({
 
         <Field2 label="Canvas">
           <select
-            value={surfaceKey}
-            onChange={(e) =>
-              setSurfaceKey(e.target.value as keyof typeof SURFACES)
-            }
+            value={surface.id}
+            onChange={(e) => {
+              setSurfaceTouched(true);
+              setSurfaceKey(e.target.value as SurfaceId);
+            }}
             className={selectCls}
           >
             {Object.values(SURFACES).map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
             ))}
           </select>
         </Field2>
@@ -311,6 +331,27 @@ export function NNEditor({
             )}
           </RoundBtn>
 
+          {/* Only the flat figure has a caption to fill in. */}
+          {style.flat && (
+            <>
+              <input
+                value={figNumber}
+                onChange={(e) => setFigNumber(e.target.value)}
+                title="Figure number"
+                aria-label="Figure number"
+                className="h-9 w-12 rounded-full border border-border/60 bg-card/60 px-2.5 text-center font-sans text-[12px] text-foreground outline-none transition-colors focus:border-signal/60"
+              />
+              <input
+                value={figLabel}
+                onChange={(e) => setFigLabel(e.target.value)}
+                placeholder={model.name}
+                title="Caption title — blank uses the model name"
+                aria-label="Figure caption title"
+                className="h-9 w-40 rounded-full border border-border/60 bg-card/60 px-3 font-sans text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-signal/60"
+              />
+            </>
+          )}
+
           <button
             type="button"
             role="switch"
@@ -333,7 +374,9 @@ export function NNEditor({
               aria-hidden
               className={cn(
                 "h-3 w-3 rounded-[3px] border",
-                exportBg ? "border-border bg-foreground/70" : "border-signal/60",
+                exportBg
+                  ? "border-border bg-foreground/70"
+                  : "border-signal/60",
               )}
               /* Checkerboard when off — the universal "no background" cue. */
               style={
@@ -444,13 +487,22 @@ export function NNEditor({
                     {l.type}
                   </span>
                   <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
-                    <IconBtn onClick={() => commit(moveLayer(model, i, i - 1))} label="Up">
+                    <IconBtn
+                      onClick={() => commit(moveLayer(model, i, i - 1))}
+                      label="Up"
+                    >
                       <ChevronUp className="h-3.5 w-3.5" />
                     </IconBtn>
-                    <IconBtn onClick={() => commit(moveLayer(model, i, i + 1))} label="Down">
+                    <IconBtn
+                      onClick={() => commit(moveLayer(model, i, i + 1))}
+                      label="Down"
+                    >
                       <ChevronDown className="h-3.5 w-3.5" />
                     </IconBtn>
-                    <IconBtn onClick={() => commit(duplicateLayer(model, l.id))} label="Duplicate">
+                    <IconBtn
+                      onClick={() => commit(duplicateLayer(model, l.id))}
+                      label="Duplicate"
+                    >
                       <Copy className="h-3.5 w-3.5" />
                     </IconBtn>
                     <IconBtn
@@ -493,7 +545,12 @@ export function NNEditor({
           ref={paneRef}
           className="min-w-0 overflow-auto rounded-2xl border border-border/60 shadow-lift"
           style={{
-            background: surface.bg === "transparent" ? undefined : surface.bg,
+            /* `backgroundColor`, not the `background` shorthand: the ground
+               below sets `backgroundImage`/`backgroundSize`, and React warns
+               that a shorthand rewritten on re-render can clobber the
+               longhands it is mixed with. */
+            backgroundColor:
+              surface.bg === "transparent" ? undefined : surface.bg,
             ...(ground === "dots"
               ? {
                   backgroundImage: `radial-gradient(circle at 2px 2px, ${surface.inkDim}57 1.1px, transparent 1.1px)`,
@@ -519,6 +576,8 @@ export function NNEditor({
             selectedId={selectedId}
             onSelect={setSelectedId}
             onNodeDrag={nudge}
+            figureNumber={figNumber}
+            figureLabel={figLabel}
             ground={ground}
             fitWidth={paneWidth ? paneWidth - 2 : undefined}
           />
@@ -558,9 +617,15 @@ export function NNEditor({
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
-                    value={colors[selected.id] ?? swatchFor(palette, selected.category).face}
+                    value={
+                      colors[selected.id] ??
+                      swatchFor(palette, selected.category).face
+                    }
                     onChange={(e) =>
-                      setColors((c) => ({ ...c, [selected.id]: e.target.value }))
+                      setColors((c) => ({
+                        ...c,
+                        [selected.id]: e.target.value,
+                      }))
                     }
                     className="h-8 w-10 cursor-pointer rounded-lg border border-border/60 bg-transparent p-0.5"
                   />
@@ -602,7 +667,9 @@ export function NNEditor({
                 <input
                   defaultValue={formatShape(selected.output_shape)}
                   placeholder="64×112×112"
-                  onBlur={(e) => patch({ output_shape: parseShape(e.target.value) })}
+                  onBlur={(e) =>
+                    patch({ output_shape: parseShape(e.target.value) })
+                  }
                   className={inputCls}
                 />
               </Field>
@@ -624,14 +691,18 @@ export function NNEditor({
                   max={64}
                   value={repeatOf(model, selected.id)}
                   onChange={(e) =>
-                    commit(setRepeat(model, selected.id, Number(e.target.value)))
+                    commit(
+                      setRepeat(model, selected.id, Number(e.target.value)),
+                    )
                   }
                   className={inputCls}
                 />
               </Field>
 
-              {model.layers.slice(0, model.layers.findIndex((l) => l.id === selected.id))
-                .length > 0 && (
+              {model.layers.slice(
+                0,
+                model.layers.findIndex((l) => l.id === selected.id),
+              ).length > 0 && (
                 <Field label="Residual">
                   <select
                     value=""
@@ -643,7 +714,10 @@ export function NNEditor({
                   >
                     <option value="">add from…</option>
                     {model.layers
-                      .slice(0, model.layers.findIndex((l) => l.id === selected.id))
+                      .slice(
+                        0,
+                        model.layers.findIndex((l) => l.id === selected.id),
+                      )
                       .map((l) => (
                         <option key={l.id} value={l.id}>
                           {l.type}
@@ -670,10 +744,18 @@ const selectCls =
   "h-7 rounded-full bg-transparent px-1 font-sans text-[12px] text-foreground outline-none";
 
 /** Label + control in one capsule, so the bar reads as a row of settings. */
-function Field2({ label, children }: { label: string; children: React.ReactNode }) {
+function Field2({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="flex h-9 items-center gap-1.5 rounded-full border border-border/60 bg-card/60 pl-3 pr-1.5">
-      <span className="font-sans text-[11px] text-muted-foreground">{label}</span>
+      <span className="font-sans text-[11px] text-muted-foreground">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -682,7 +764,13 @@ function Field2({ label, children }: { label: string; children: React.ReactNode 
 const inputCls =
   "w-full rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5 font-sans text-[12.5px] text-foreground outline-none transition-colors focus:border-signal";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="mb-1 block font-sans text-[11px] font-medium text-muted-foreground">

@@ -154,7 +154,8 @@ describe("buildFigure", () => {
   it("folds ghost copies into the node bounds", () => {
     // Otherwise the next block overlaps the stack and the outgoing arrow
     // starts underneath it.
-    const enc = (id: string) => layer({ id, type: "Enc", category: "attention" });
+    const enc = (id: string) =>
+      layer({ id, type: "Enc", category: "attention" });
     const solo = buildFigure(model({ layers: [enc("e1")] }));
     const stack = buildFigure(
       model({ layers: [enc("e1"), enc("e2"), enc("e3")] }),
@@ -166,7 +167,8 @@ describe("buildFigure", () => {
 
   it("drops connections that fall inside one folded stack", () => {
     // The internal links of a repeated block would scribble over it.
-    const enc = (id: string) => layer({ id, type: "Enc", category: "attention" });
+    const enc = (id: string) =>
+      layer({ id, type: "Enc", category: "attention" });
     const fig = buildFigure(
       model({
         layers: [enc("e1"), enc("e2"), enc("e3")],
@@ -185,7 +187,7 @@ describe("buildFigure", () => {
       model({
         layers: [
           layer({ id: "a" }),
-          layer({ id: "b" , type: "ReLU", category: "activation" }),
+          layer({ id: "b", type: "ReLU", category: "activation" }),
           layer({ id: "c", type: "Add", category: "other" }),
         ],
         connections: [
@@ -207,7 +209,12 @@ describe("buildFigure", () => {
         layers: [
           layer({ id: "a", category: "convolution" }),
           layer({ id: "b", category: "pooling", type: "MaxPool2d" }),
-          layer({ id: "c", category: "convolution", type: "Conv2d", param_count: 9 }),
+          layer({
+            id: "c",
+            category: "convolution",
+            type: "Conv2d",
+            param_count: 9,
+          }),
         ],
       }),
     );
@@ -229,9 +236,7 @@ describe("buildFigure", () => {
     // under any stacked block with no parameter count.
     const enc = (id: string) =>
       layer({ id, type: "Enc", category: "attention", param_count: undefined });
-    const fig = buildFigure(
-      model({ layers: [enc("e1"), enc("e2")] }),
-    );
+    const fig = buildFigure(model({ layers: [enc("e1"), enc("e2")] }));
     expect(fig.nodes[0].repeat).toBe(2);
     expect(fig.nodes[0].subtitle).toBe("");
   });
@@ -243,7 +248,10 @@ describe("buildFigure", () => {
      * which pushed every OTHER block right while the dragged one stayed
      * pinned. Left read as right.
      */
-    const layers = [layer({ id: "a" }), layer({ id: "b", type: "ReLU", category: "activation" })];
+    const layers = [
+      layer({ id: "a" }),
+      layer({ id: "b", type: "ReLU", category: "activation" }),
+    ];
     const base = buildFigure(model({ layers }));
     const moved = buildFigure(model({ layers }), {
       offsets: { a: { dx: -60, dy: 0 } },
@@ -304,12 +312,65 @@ describe("deriveDims", () => {
 
   it("makes parameterless layers the smallest thing in the figure", () => {
     const drop = deriveDims(
-      layer({ type: "Dropout", category: "dropout", output_shape: undefined, params: {} }),
+      layer({
+        type: "Dropout",
+        category: "dropout",
+        output_shape: undefined,
+        params: {},
+      }),
     );
     const dense = deriveDims(
       layer({ output_shape: undefined, params: {}, param_count: 4200 }),
     );
     expect(drop.h).toBeLessThan(dense.h);
+  });
+});
+
+describe("buildFigure — flat", () => {
+  const enc = (i: number) =>
+    layer({
+      id: `e${i}`,
+      type: "TransformerEncoderLayer",
+      category: "attention",
+      output_shape: [1, 197, 768],
+      param_count: 7_000_000,
+    });
+
+  it("collapses depth so the block is a plain rect", () => {
+    const flat = buildFigure(model({ layers: [enc(1)] }), { flat: true });
+    const n = flat.nodes[0];
+    // Zero recession: the right anchor sits on the rect's right edge instead
+    // of on a receded back face.
+    expect(n.anchorRight.x).toBeCloseTo(n.rect.x + n.rect.w, 6);
+    expect(n.rect.h).toBeCloseTo(n.bottom - n.top, 6);
+    expect(n.rect.w).toBeGreaterThan(0);
+  });
+
+  it("drops ghosts and braces a repeated stack instead", () => {
+    const layers = [enc(1), enc(2), enc(3)];
+    const flat = buildFigure(model({ layers }), { flat: true });
+    const solid = buildFigure(model({ layers }));
+
+    expect(flat.nodes[0].ghosts).toHaveLength(0);
+    expect(solid.nodes[0].ghosts.length).toBeGreaterThan(0);
+
+    expect(flat.braces).toHaveLength(1);
+    const [brace] = flat.braces;
+    expect(brace.x1).toBeCloseTo(flat.nodes[0].left, 6);
+    expect(brace.x2).toBeCloseTo(flat.nodes[0].right, 6);
+    expect(brace.y).toBeGreaterThan(flat.nodes[0].bottom);
+    expect(brace.label).toBe("× 3 TransformerEncoderLayer");
+
+    expect(solid.braces).toEqual([]);
+  });
+
+  it("leaves the volumetric build untouched", () => {
+    const solid = buildFigure(model({ layers: [enc(1)] }));
+    const n = solid.nodes[0];
+    // Still recedes, so the right anchor overhangs the front face.
+    expect(n.anchorRight.x).toBeGreaterThan(n.rect.x);
+    expect(n.faces.top).not.toBe("");
+    expect(n.rect.w).toBeGreaterThan(0);
   });
 });
 
