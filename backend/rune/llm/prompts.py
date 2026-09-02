@@ -374,12 +374,13 @@ Rules:
 
 
 # ─────────────────────────────────────────────
-# Knowledge graph prompt (concept overlay)
+# Knowledge graph prompt (per-symbol descriptions)
 # ─────────────────────────────────────────────
 
 SYSTEM_KNOWLEDGE_ANALYST = (
-    "You are Rune, an expert software architect naming the domain concepts a "
-    "codebase is built around. Return ONLY valid JSON, no prose.\n\n" + UNTRUSTED_CODE_DISCLAIMER
+    "You are Rune, an expert code analyst writing one-line purpose "
+    "descriptions for the most important functions and classes in a "
+    "codebase. Return ONLY valid JSON, no prose.\n\n" + UNTRUSTED_CODE_DISCLAIMER
 )
 
 
@@ -391,32 +392,19 @@ def build_knowledge_prompt(digest_chunk: dict) -> str:
     """
     symbol_lines = "\n".join(f"  - {line}" for line in digest_chunk.get("symbols", [])) or "  (none)"
 
-    return f"""These are the functions and classes in `{digest_chunk.get("scope", ".")}`, with their
+    return f"""These are important functions and classes in a codebase, with their
 documentation, signatures, external calls and detected side effects.
 
 {symbol_lines}
 
-Identify the DOMAIN CONCEPTS this code is about and return a JSON object:
+Write a 1-2 sentence purpose description for each symbol and return a JSON object:
 {{
-  "entities": [
-    {{
-      "name": "Analysis Cache",
-      "summary": "One or two sentences on what this concept is and why it exists.",
-      "symbols": ["exact path::name lines copied from above"],
-      "files": ["exact file paths from those symbols"]
-    }}
-  ],
-  "relations": [
-    {{"source": "Analysis Cache", "target": "Repository", "label": "stores results for"}}
+  "descriptions": [
+    {{"symbol_id": "exact path::name copied VERBATIM from the list above", "text": "1-2 sentence purpose, grounded in the evidence above"}}
   ]
 }}
 
 Rules:
-- An entity is a domain idea (Repository, Quota, Clone, Token Budget), NOT a
-  restatement of one function's name. If the only thing you can say about it is
-  what the function is called, it is not a concept.
-- Every entity MUST cite at least one `path::name` copied VERBATIM from the list
-  above. Entities citing anything else are discarded.
-- Prefer 3-8 entities for this chunk. Fewer, sharper concepts beat a long list.
-- `source` and `target` in relations must be entity names you returned.
-- `label` is a verb phrase describing the real dependency, not "relates to"."""
+- `symbol_id` MUST be copied VERBATIM from the list above; ids not in the list are discarded.
+- One entry per symbol in the list above.
+- Ground the description in the evidence shown (doc, signature, calls, effects) — don't invent behavior."""

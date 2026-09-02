@@ -34,7 +34,6 @@ from rune.routes._errors import internal_error
 from rune.routes.dependencies import get_cache
 from rune.session import ensure_repo_loaded
 from rune.settings import settings
-from rune.symbol_graph import select_groups
 from rune.utils import run_sync
 
 router = APIRouter()
@@ -840,32 +839,22 @@ async def visualize_neural_network(
 async def visualize_knowledge_graph(
     request: Request,
     repo_id: str,
-    file: str | None = None,
     cache: AnalysisCache = Depends(get_cache),
     user_id: str = Depends(verify_supabase_token),
 ):
-    """Return the symbol-level graph: functions/classes as nodes, calls and
-    inheritance as edges.
+    """Return the symbol-level graph: the repo's most important functions and
+    classes as nodes, calls and inheritance as edges.
 
     Zero LLM cost — built during analysis from the parse complexity.py already
-    does. Optionally scope to one file's symbols with ?file=path/to/file.py.
+    does.
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
 
     graph = result.get("symbol_graph") or {"nodes": [], "edges": [], "metadata": {}, "diagnostics": {}}
 
-    if file:
-        nodes = [n for n in graph.get("nodes", []) if n.get("file") == file]
-        kept = {n["id"] for n in nodes}
-        edges = [e for e in graph.get("edges", []) if e["source"] in kept and e["target"] in kept]
-        # Drill-down is one group's insides; shipping the repo-wide overview
-        # alongside it would leave the caller holding two different scopes.
-        groups = [g for g in graph.get("groups", []) if g.get("id") == file]
-        graph = {**graph, "nodes": nodes, "edges": edges, "groups": groups, "group_edges": []}
-
-    concepts = result.get("knowledge_llm")
-    if concepts:
-        graph = _with_concepts(graph, concepts)
+    descriptions = result.get("knowledge_llm")
+    if descriptions:
+        graph = _with_concepts(graph, descriptions)
 
     return {"type": "knowledge", "data": graph}
 
@@ -900,7 +889,7 @@ async def enrich_knowledge_graph(
     if not body.use_llm:
         return {"type": "knowledge", "data": graph}
 
-    from rune.concept_graph import build_evidence_digest, merge_concepts
+    from rune.concept_graph import build_evidence_digest, merge_descriptions
     from rune.quota import get_token_tracker
 
     tracker = get_token_tracker()
@@ -916,7 +905,7 @@ async def enrich_knowledge_graph(
 
     digest = build_evidence_digest(graph)
     if not digest:
-        return {"type": "knowledge", "data": {**graph, "concepts": _empty_concepts("no_symbols")}}
+        return {"type": "knowledge", "data": _with_concepts(graph, _empty_concepts("no_symbols"))}
 
     try:
         from rune.llm.prompts import SYSTEM_KNOWLEDGE_ANALYST, build_knowledge_prompt
@@ -941,16 +930,12 @@ async def enrich_knowledge_graph(
         if not parsed:
             raise RuntimeError(f"all {len(digest)} knowledge chunks failed")
 
-        overlay = merge_concepts(
-            parsed,
-            valid_symbol_ids={n["id"] for n in graph.get("nodes", [])},
-            valid_files={n.get("file") for n in graph.get("nodes", []) if n.get("file")},
-        )
+        overlay = merge_descriptions(parsed, valid_symbol_ids={n["id"] for n in graph.get("nodes", [])})
     except Exception as e:
         logger.warning(f"Knowledge graph LLM enrichment failed, returning symbols only: {e}")
-        return {"type": "knowledge", "data": {**graph, "concepts": _empty_concepts("llm_failed")}}
+        return {"type": "knowledge", "data": _with_concepts(graph, _empty_concepts("llm_failed"))}
 
-    if overlay["entities"]:
+    if overlay["descriptions"]:
         result["knowledge_llm"] = overlay
         await run_sync(cache.set, repo_id, result)
 
@@ -958,20 +943,21 @@ async def enrich_knowledge_graph(
 
 
 def _with_concepts(graph: dict, concepts: dict) -> dict:
-    """Attach the concept overlay and let it re-pick which groups are drawn.
+    """Attach each description onto its matching node.
 
-    The adaptive count reads the importance falloff, which measures how connected
-    a file is. Once the concept pass has named what the repo is *about*, the files
-    it cites are the better answer, so the overview follows them. Falls back to the
-    adaptive pick when the overlay cites nothing the graph stored.
+    The important-set selection already happened in `build_symbol_graph`;
+    descriptions don't change which nodes are shown, only what's said about them.
     """
-    files = {f for e in concepts.get("entities") or [] for f in e.get("files") or []}
-    return {**select_groups(graph, files), "concepts": concepts}
+    desc_by_id = {d["symbol_id"]: d["text"] for d in concepts.get("descriptions") or []}
+    return {
+        **graph,
+        "nodes": [{**n, "description": desc_by_id.get(n["id"])} for n in graph.get("nodes", [])],
+        "descriptions_meta": concepts.get("metadata"),
+    }
 
 
 def _empty_concepts(reason: str) -> dict:
     return {
-        "entities": [],
-        "relations": [],
+        "descriptions": [],
         "metadata": {"is_llm_enriched": False, "chunks": 0, "dropped_ungrounded": 0, "fallback_reason": reason},
     }

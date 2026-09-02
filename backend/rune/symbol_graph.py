@@ -9,12 +9,14 @@ whole thing costs zero extra parses and zero tokens.
 Pure function, no I/O, same contract as `graph_assembler.assemble_graph`: dicts in,
 graph payload out, safe to call from anywhere and trivial to test for determinism.
 
-Two tiers come back. `groups`/`group_edges` is the overview — one node per file,
-call counts aggregated onto the arrows between them — and `nodes`/`edges` is the
-drill-down inside a group. The tiers exist because a repo's symbol graph is a
-hairball (665 nodes / 806 edges here) and the obvious fix is the wrong one:
-ranking symbols and keeping the top 25 leaves 7 edges standing, since the arrows
-ran through the mid-tier functions the cut removed. Collapsing keeps them.
+One flat tier: the most important symbols in the repo (by `symbol_importance`,
+adaptively counted, hard exclusions applied — see "Per-symbol importance"
+below), connected by their real call/inheritance relationships. A repo's symbol
+graph is a hairball (665 nodes / 806 edges here) and the obvious fix is the
+wrong one: ranking symbols and keeping the top 25 leaves 7 edges standing,
+since the arrows ran through the mid-tier functions the cut removed.
+`_contract_edges` fixes this by BFS-bridging through the cut symbols instead of
+dropping what routed through them — see its docstring.
 
 Resolution is by name, walking a proximity ladder (same file → an imported file →
 a unique repo-wide definition). Names that survive all three are dropped and
@@ -46,41 +48,24 @@ from rune.analyzer import SUPPORTED_LANGUAGES
 #: reduce to three language names.
 SYMBOL_LANGUAGES: frozenset[str] = frozenset({"Python", "JavaScript", "TypeScript"})
 
-#: Node budget. Ranked by fan-in before the cut, and the remainder is reported in
-#: `metadata` — a graph that silently shows a third of the repo while looking
-#: complete is the failure mode this cap exists to avoid, not to cause.
-MAX_GRAPH_NODES = 150
+#: Adaptive count for the function-level "important" set — same floor/clamp
+#: shape as the group selection above, retargeted at symbols. A symbol is a
+#: candidate at all only if it clears the hard exclusions in `_is_excluded`;
+#: among candidates, importance clearing `IMPORTANT_SYMBOL_FLOOR` of the top
+#: score is marked `important: True`, clamped to `[MIN, MAX]`.
+IMPORTANT_SYMBOL_FLOOR = 0.20
+MIN_IMPORTANT_SYMBOLS = 15
+MAX_IMPORTANT_SYMBOLS = 40
 
-#: How many collapsed file groups the default view draws.
-#:
-#: Collapsing is what makes the view legible at all: cutting *symbols* to a
-#: readable count strands them — 25 top-ranked symbols on this repo keep 7 of 806
-#: edges and leave 60% of nodes alone, because the arrows ran through the mid-tier
-#: functions the cut removed. Two thirds of edges are intra-file, so collapsing
-#: tucks the hairball inside a group instead of deleting it (15% alone).
-#:
-#: The count itself is not a constant, because "how many parts does this repo
-#: have" is a property of the repo. A group is drawn when its importance clears
-#: `OVERVIEW_IMPORTANCE_FLOOR` of the top group's — the shape of the falloff is
-#: the signal, since a repo with ten real modules drops off a cliff after ten and
-#: a genuinely broad one doesn't. On this codebase that picks 25 files, on
-#: `rune/routes` 5, on `rune/llm` 3, with no tuning per repo.
-OVERVIEW_IMPORTANCE_FLOOR = 0.15
+#: How far a `calls` chain may run through cut, non-important glue functions
+#: before the branch is abandoned — same "cut and disclose" philosophy as
+#: `MAX_GRAPH_NODES`, just applied per-branch instead of per-node.
+MAX_TRANSITIVE_HOPS = 4
 
-#: Guard rails on the adaptive count. The floor keeps a repo with one dominant
-#: file from rendering as a single box; the ceiling is where any layout turns
-#: back into a hairball no matter how legitimate the groups are.
-MIN_OVERVIEW_GROUPS = 8
-MAX_OVERVIEW_GROUPS = 40
-
-#: Groups carried in the payload regardless of what is drawn. The overview is a
-#: `drawn` flag rather than a slice so the LLM pass can re-pick the selection
-#: without a rebuild — a memory bound, not a display one.
-MAX_STORED_GROUPS = 120
-
-#: Symbols named on a collapsed group, so a group reads as "what's in here"
-#: rather than as an opaque box the reader has to click to learn anything.
-GROUP_PREVIEW_SYMBOLS = 3
+#: Cap on the contracted edge list `_contract_edges` returns. Direct edges are
+#: kept first, then transitive ones by fewest hops, so a hairball of important
+#: symbols degrades to "the closest relationships" rather than an arbitrary cut.
+MAX_TRANSITIVE_EDGES = 400
 
 #: External callee names kept per node. The names a call *fails* to resolve to —
 #: `json.loads`, `logger.warning`, `subprocess.run` — are the most direct
@@ -131,34 +116,10 @@ _ROUTE_DECORATOR = re.compile(
     re.IGNORECASE,
 )
 
-
-def select_groups(graph: dict, files: set[str]) -> dict:
-    """
-    Re-pick which groups the overview draws, from a set of file paths.
-
-    The adaptive count in `build_symbol_graph` reads the importance falloff, which
-    is a statement about how connected a file is — not about whether it matters to
-    someone reading the repo. When the concept pass has run, the files its entities
-    cite are a better answer to both "which" and "how many", and this folds that
-    answer in by flipping `drawn`. Pure, and no rebuild: `groups`/`group_edges`
-    are already stored wider than the default selection.
-
-    Falls through unchanged if `files` names nothing the graph stored, so a model
-    that returns paths in some other shape degrades to the adaptive count rather
-    than to an empty canvas.
-    """
-    stored = graph.get("groups") or []
-    chosen = {g["id"] for g in stored if g["id"] in files}
-    if not chosen:
-        return graph
-
-    groups = [{**g, "drawn": g["id"] in chosen} for g in stored]
-    return {
-        **graph,
-        "groups": groups,
-        "metadata": {**graph.get("metadata", {}), "drawn_groups": len(chosen), "group_selection": "llm"},
-        "diagnostics": {**graph.get("diagnostics", {}), "group_count": len(chosen)},
-    }
+#: Directories that mark a file as frontend UI rather than application logic —
+#: cast wide per the user's call to capture as many conventions as possible,
+#: not just this repo's `components/`/`hooks/`.
+_FRONTEND_DIR = re.compile(r"(?:^|/)(components|pages|app|hooks|layouts|src|ui|screens|views)/")
 
 
 def _node_id(path: str, name: str) -> str:
@@ -173,27 +134,176 @@ def _http_route(decorators: list[str] | None) -> str | None:
     return None
 
 
+# ── Per-symbol importance ──
+#
+# Hard exclusions never become candidates for `important`, no matter how high
+# their fan-in — a getter with twenty callers is still a getter. `role == "test"`
+# is deprioritized instead (sorted last), not excluded here, mirroring the
+# groups' "tests sort last, not out".
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _is_accessor(name: str, decorators: list[str], loc: int, out_degree: int) -> bool:
+    if any("@property" in d or ".setter" in d or ".deleter" in d for d in decorators):
+        return True
+    return name.startswith(("get_", "set_", "is_")) and loc <= 2 and out_degree == 0
+
+
+def _is_trivial_wrapper(node: dict) -> bool:
+    return (
+        node["loc"] <= 1
+        and node["out_degree"] <= 1
+        and node["in_degree"] == 0
+        and not node["effects"]
+        and not node["http"]
+        and not node["doc"]
+        and not node["external_calls"]
+    )
+
+
+def _is_isolated_leaf(node: dict) -> bool:
+    return (
+        node["in_degree"] == 0
+        and node["out_degree"] == 0
+        and not node["effects"]
+        and not node["http"]
+        and not node["external_calls"]
+    )
+
+
+def _is_ui_wrapper(node: dict) -> bool:
+    """A top-level React/Next-style component: nothing calls it (it's an entry
+    point the framework invokes), it does nothing effectful itself, and it
+    sits in a frontend directory. Scores well on out_degree/cross_file_reach
+    from the hooks and API calls it makes, but it's a shallow wrapper over
+    them, not the behavior itself."""
+    return (
+        node["role"] in ("leaf", "internal_helper")
+        and node["in_degree"] == 0
+        and not node["effects"]
+        and not node["http"]
+        and node["label"][:1].isupper()
+        and bool(_FRONTEND_DIR.search(node["file"]))
+    )
+
+
+def _is_excluded(node: dict, decorators: list[str]) -> bool:
+    return (
+        _is_dunder(node["label"])
+        or _is_accessor(node["label"], decorators, node["loc"], node["out_degree"])
+        or _is_trivial_wrapper(node)
+        or _is_isolated_leaf(node)
+        or _is_ui_wrapper(node)
+    )
+
+
+def _symbol_importance_maxima(candidates: list[dict]) -> tuple[int, int, int, int]:
+    if not candidates:
+        return (0, 0, 0, 0)
+    return (
+        max(n["in_degree"] for n in candidates),
+        max(n["out_degree"] for n in candidates),
+        max(n["cross_file_reach"] for n in candidates),
+        max(n["effect_signal"] for n in candidates),
+    )
+
+
+def _compute_symbol_importance(
+    in_degree: int,
+    out_degree: int,
+    cross_file_reach: int,
+    effect_signal: int,
+    maxima: tuple[int, int, int, int],
+) -> float:
+    """Four terms, 25 points each, normalized against the max of that term among
+    non-excluded candidates. Filename is never a signal — reach/effects are about
+    behavior, not the path string."""
+    max_in, max_out, max_reach, max_effect = maxima
+    score = 0.0
+    score += 25 * in_degree / max_in if max_in else 0.0
+    score += 25 * out_degree / max_out if max_out else 0.0
+    score += 25 * cross_file_reach / max_reach if max_reach else 0.0
+    score += 25 * effect_signal / max_effect if max_effect else 0.0
+    return round(score, 2)
+
+
+def _contract_edges(
+    edges: dict[tuple[str, str, str], dict[str, str]], important_ids: set[str]
+) -> tuple[list[dict], bool]:
+    """
+    Collapse the full call graph onto the important-symbol set without
+    stranding edges that route through cut glue functions.
+
+    For each important node `A`, BFS outward over `calls` edges. The first
+    time a branch reaches another important node `B`, record `A -> B` and stop
+    expanding that branch — `B` has its own BFS covering what's downstream of
+    it. A branch that never reaches an important node within
+    `MAX_TRANSITIVE_HOPS` is dropped, same as a symbol that misses the node
+    budget. BFS visits nodes in increasing-depth order, so the first path found
+    to any node is the shortest one.
+
+    `inherits` edges are direct-only — a straight filter, no BFS.
+    """
+    calls_adj: dict[str, list[str]] = {}
+    for source, target, label in edges:
+        if label == "calls":
+            calls_adj.setdefault(source, []).append(target)
+
+    contracted: dict[tuple[str, str], dict[str, Any]] = {}
+    for start in important_ids:
+        visited = {start}
+        queue: list[tuple[str, list[str], int]] = [(succ, [], 1) for succ in calls_adj.get(start, [])]
+        head = 0
+        while head < len(queue):
+            node, via, hops = queue[head]
+            head += 1
+            if node in visited:
+                continue
+            visited.add(node)
+            if node in important_ids:
+                contracted[(start, node)] = (
+                    {"source": start, "target": node, "kind": "calls_direct", "hops": 1}
+                    if hops == 1
+                    else {"source": start, "target": node, "kind": "calls_transitive", "hops": hops, "via": via[:3]}
+                )
+                continue
+            if hops >= MAX_TRANSITIVE_HOPS:
+                continue
+            for succ in calls_adj.get(node, ()):
+                if succ not in visited:
+                    queue.append((succ, via + [node], hops + 1))
+
+    for source, target, label in edges:
+        if label == "inherits" and source in important_ids and target in important_ids:
+            contracted[(source, target)] = {"source": source, "target": target, "kind": "inherits", "hops": 1}
+
+    result = sorted(
+        contracted.values(), key=lambda e: (e["kind"] != "calls_direct", e["hops"], e["source"], e["target"])
+    )
+    truncated = len(result) > MAX_TRANSITIVE_EDGES
+    return result[:MAX_TRANSITIVE_EDGES], truncated
+
+
 def build_symbol_graph(
     symbols_by_file: dict[str, list[dict[str, Any]]],
     file_profiles: list[dict],
     dep_data: dict,
-    max_nodes: int = MAX_GRAPH_NODES,
-    max_groups: int | None = None,
 ) -> dict:
     """
-    Assemble the symbol-level graph.
+    Assemble the symbol-level graph: the important symbols in the repo, connected
+    by their real call/inheritance relationships (contracted through cut glue —
+    see `_contract_edges`).
 
     Args:
         symbols_by_file: `{rel_path: [symbol record]}` from classify_files(symbols_out=...).
         file_profiles:   classify_files() output, dict-shaped — supplies role/importance.
         dep_data:        DepGraph, dict-shaped — `adjacency` drives cross-file resolution.
-        max_nodes:       Node budget; the top `max_nodes` by fan-in survive.
-        max_groups:      Force the overview to exactly this many groups. Default
-                         `None` derives it from the importance falloff.
 
     Returns:
-        `{nodes, edges, groups, group_edges, metadata, diagnostics}` — see the
-        module docstring.
+        `{nodes, edges, metadata, diagnostics}` — see the module docstring.
     """
     profile_map = {p.get("path"): p for p in file_profiles or []}
     adjacency = dep_data.get("adjacency") or {}
@@ -202,6 +312,7 @@ def build_symbol_graph(
     nodes: dict[str, dict[str, Any]] = {}
     by_file_name: dict[tuple[str, str], str] = {}  # (path, name) → node id
     by_name: dict[str, list[str]] = {}  # name → node ids, for the repo-wide fallback
+    decorators_by_id: dict[str, list[str]] = {}  # for _is_accessor; not part of the payload
     total_symbols = 0
 
     for path in sorted(symbols_by_file):
@@ -237,6 +348,7 @@ def build_symbol_graph(
             }
             by_file_name[(path, name)] = node_id
             by_name.setdefault(name, []).append(node_id)
+            decorators_by_id[node_id] = symbol.get("decorators") or []
 
     # ── Resolution ──
     def resolve(name: str, from_path: str) -> str | None:
@@ -295,90 +407,55 @@ def build_symbol_graph(
                 if target != source:
                     edges.setdefault((source, target, label), {"source": source, "target": target, "label": label})
 
+    # Files reached by each node's edges, in either direction — the raw material
+    # for `cross_file_reach`. Built alongside degree since both walk the same
+    # edge set once.
+    cross_file_by_id: dict[str, set[str]] = {}
     for edge in edges.values():
         nodes[edge["source"]]["out_degree"] += 1
         nodes[edge["target"]]["in_degree"] += 1
+        source_file = nodes[edge["source"]]["file"]
+        target_file = nodes[edge["target"]]["file"]
+        if source_file != target_file:
+            cross_file_by_id.setdefault(edge["source"], set()).add(target_file)
+            cross_file_by_id.setdefault(edge["target"], set()).add(source_file)
 
-    # ── Budget ──
-    # Rank first, then cut: the surplus is the tail of the ranking, not whatever
-    # happened to be last in file order.
-    ranked = sorted(nodes.values(), key=lambda n: (-n["in_degree"], -n["out_degree"], n["id"]))
-    kept = ranked[:max_nodes]
-    kept_ids = {n["id"] for n in kept}
-    truncated_count = len(ranked) - len(kept)
+    for node_id, node in nodes.items():
+        node["cross_file_reach"] = len(cross_file_by_id.get(node_id, ()))
+        node["effect_signal"] = len(node["effects"]) + (1 if node["http"] else 0)
 
-    # Degrees stay as measured on the whole repo, not on the visible subgraph —
-    # "9 callers" is a fact about the code, and `is_truncated` says why fewer
-    # arrows are drawn.
-    visible_edges = [e for e in edges.values() if e["source"] in kept_ids and e["target"] in kept_ids]
-    visible_edges.sort(key=lambda e: (e["source"], e["target"], e["label"]))
+    excluded_ids = {node_id for node_id, node in nodes.items() if _is_excluded(node, decorators_by_id.get(node_id, []))}
+    importance_candidates = [n for n in nodes.values() if n["id"] not in excluded_ids]
+    maxima = _symbol_importance_maxima(importance_candidates)
+    for node in nodes.values():
+        node["symbol_importance"] = (
+            0.0
+            if node["id"] in excluded_ids
+            else _compute_symbol_importance(
+                node["in_degree"], node["out_degree"], node["cross_file_reach"], node["effect_signal"], maxima
+            )
+        )
 
-    # ── Overview tier ──
-    # Collapse every symbol into its file. Built from `ranked`, not from `kept`:
-    # a group's counts are a fact about the file, and a collapse that quietly
-    # drops the symbols the node budget already cut would be a cut wearing a
-    # group's clothes. Iterating in fan-in order makes `top_symbols` fall out.
-    groups: dict[str, dict[str, Any]] = {}
-    for node in ranked:
-        group = groups.get(node["file"])
-        if group is None:
-            group = groups[node["file"]] = {
-                "id": node["file"],
-                "label": node["file"].rsplit("/", 1)[-1],
-                "file": node["file"],
-                "role": node["role"],
-                "importance": node["importance"] or 0.0,
-                "symbol_count": 0,
-                "top_symbols": [],
-                "effects": [],
-                "routes": [],
-            }
-        group["symbol_count"] += 1
-        if len(group["top_symbols"]) < GROUP_PREVIEW_SYMBOLS:
-            group["top_symbols"].append(node["label"])
-        if node["effects"]:
-            group["effects"] = sorted(set(group["effects"]) | set(node["effects"]))
-        if node["http"] and node["http"] not in group["routes"]:
-            group["routes"].append(node["http"])
-
-    # Tests sort last, not out. A test file scores high on importance — it imports
-    # widely and the classifier counts that — so on this repo the three heaviest
-    # arrows were all test→source, which is true and is not what the overview is
-    # for. Demoted rather than filtered: a repo with room to spare should still
-    # show them, and a repo that is mostly tests should still draw something.
-    ranked_groups = sorted(
-        groups.values(),
-        key=lambda g: (g["role"] == "test", -g["importance"], -g["symbol_count"], g["id"]),
+    ranked_candidates = sorted(
+        importance_candidates,
+        key=lambda n: (n["role"] == "test", -n["symbol_importance"], -n["in_degree"], n["id"]),
     )
-    stored_groups = ranked_groups[:MAX_STORED_GROUPS]
-
-    # How many to draw: let the importance falloff say so, then clamp. `top` comes
-    # from the ranked head so a test-only repo still measures against something.
-    top_importance = stored_groups[0]["importance"] if stored_groups else 0.0
-    above_floor = sum(1 for g in stored_groups if g["importance"] >= top_importance * OVERVIEW_IMPORTANCE_FLOOR)
-    drawn_count = (
-        max_groups if max_groups is not None else min(max(above_floor, MIN_OVERVIEW_GROUPS), MAX_OVERVIEW_GROUPS)
+    top_symbol_importance = ranked_candidates[0]["symbol_importance"] if ranked_candidates else 0.0
+    above_symbol_floor = sum(
+        1 for n in ranked_candidates if n["symbol_importance"] >= top_symbol_importance * IMPORTANT_SYMBOL_FLOOR
     )
-    drawn_count = min(drawn_count, len(stored_groups))
-    for index, group in enumerate(stored_groups):
-        group["drawn"] = index < drawn_count
+    important_count = min(max(above_symbol_floor, MIN_IMPORTANT_SYMBOLS), MAX_IMPORTANT_SYMBOLS, len(ranked_candidates))
+    important_ids = {n["id"] for n in ranked_candidates[:important_count]}
+    for node in nodes.values():
+        node["important"] = node["id"] in important_ids
 
-    # Aggregated over *all* edges rather than the visible ones: a cross-file call
-    # the symbol budget dropped is exactly the arrow this view exists to show.
-    # Intra-file edges are skipped — they are the two thirds of the hairball that
-    # collapsing is meant to tuck away, and they would draw as self-loops.
-    #
-    # Computed across every stored group, not just the drawn ones, so re-picking
-    # the selection later (see `select_groups`) never needs the symbol graph back.
-    stored_ids = {g["id"] for g in stored_groups}
-    group_edges: dict[tuple[str, str], dict[str, Any]] = {}
-    for edge in edges.values():
-        source = nodes[edge["source"]]["file"]
-        target = nodes[edge["target"]]["file"]
-        if source == target or source not in stored_ids or target not in stored_ids:
-            continue
-        aggregate = group_edges.setdefault((source, target), {"source": source, "target": target, "weight": 0})
-        aggregate["weight"] += 1
+    # ── Cut to the important set, then bridge across what got cut ──
+    # `ranked_candidates` is already sorted by the selection key (including the
+    # -in_degree tiebreak that keeps importance ties from falling back to
+    # alphabetical id order) — slicing it keeps that order instead of re-deriving
+    # a weaker one from the id set.
+    kept = ranked_candidates[:important_count]
+    contracted_edges, edges_truncated = _contract_edges(edges, important_ids)
 
     languages_present = {p.get("language") for p in file_profiles or []}
     unsupported_languages = sorted((languages_present & SUPPORTED_LANGUAGES) - SYMBOL_LANGUAGES)
@@ -388,28 +465,19 @@ def build_symbol_graph(
 
     return {
         "nodes": kept,
-        "edges": visible_edges,
-        # The default view: draw the groups flagged `drawn`. `nodes`/`edges` are
-        # the drill-down for one group.
-        "groups": stored_groups,
-        "group_edges": sorted(group_edges.values(), key=lambda e: (e["source"], e["target"])),
+        "edges": contracted_edges,
         "metadata": {
             "total_symbols": total_symbols,
-            "total_groups": len(groups),
-            "drawn_groups": drawn_count,
-            "group_selection": "fixed" if max_groups is not None else "adaptive",
+            "important_symbols": len(kept),
             "resolved_calls": resolved_calls,
             "unresolved_calls": unresolved_calls,
-            "is_truncated": truncated_count > 0,
-            "truncated_count": truncated_count,
+            "edges_truncated": edges_truncated,
             "unsupported_languages": unsupported_languages,
         },
         # Shape the existing DiagnosticsBanner already reads.
         "diagnostics": {
             "node_count": len(kept),
-            "edge_count": len(visible_edges),
-            "group_count": drawn_count,
-            "group_edge_count": len(group_edges),
+            "edge_count": len(contracted_edges),
             "resolution_rate": resolution_rate,
             "unsupported_languages": unsupported_languages,
         },

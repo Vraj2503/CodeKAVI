@@ -41,21 +41,6 @@ function renderViz(type: string, data: any) {
   const hasEdgelessNodes = (d: any) =>
     d.nodes?.length > 0 && (!d.edges || d.edges.length === 0);
 
-  const DiagnosticsBanner = ({ diagnostics }: { diagnostics: any }) => {
-    if (!diagnostics) return null;
-    const { resolution_rate, unsupported_languages } = diagnostics;
-    const incomplete = resolution_rate < 1 || unsupported_languages?.length > 0;
-    if (!incomplete) return null;
-    const pct = Math.round((resolution_rate ?? 1) * 100);
-    return (
-      <div className="mb-3 text-xs text-muted-foreground bg-card/50 border border-dashed border-border rounded-lg px-3 py-2">
-        {pct}% of imports resolved.
-        {unsupported_languages?.length > 0 &&
-          ` Unsupported languages detected: ${unsupported_languages.join(", ")}.`}
-      </div>
-    );
-  };
-
   switch (type) {
     case "dependency_graph":
       if (!data.nodes || data.nodes.length === 0)
@@ -67,15 +52,12 @@ function renderViz(type: string, data: any) {
           <EmptyViz message="Dependencies detected but no connections resolved. This may indicate unsupported import syntax." />
         );
       return (
-        <div>
-          <DiagnosticsBanner diagnostics={data.diagnostics} />
-          <DependencyGraph
-            nodes={data.nodes}
-            edges={data.edges}
-            moduleGraph={data.module_graph}
-            modules={data.modules}
-          />
-        </div>
+        <DependencyGraph
+          nodes={data.nodes}
+          edges={data.edges}
+          moduleGraph={data.module_graph}
+          modules={data.modules}
+        />
       );
     case "architecture_graph":
       if (!data.nodes || data.nodes.length === 0)
@@ -86,12 +68,7 @@ function renderViz(type: string, data: any) {
         return (
           <EmptyViz message="Modules detected but no connections resolved. This project may use path aliases (@/, ~/) or only import external packages. Try the Dependency Graph for file-level detail." />
         );
-      return (
-        <div>
-          <DiagnosticsBanner diagnostics={data.diagnostics} />
-          <ArchitectureGraph nodes={data.nodes} edges={data.edges} />
-        </div>
-      );
+      return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
     case "flow_diagram":
       if (!data.nodes || data.nodes.length === 0)
         return <EmptyViz message="No entry points found to map data flow." />;
