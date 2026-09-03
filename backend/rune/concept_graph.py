@@ -28,6 +28,9 @@ MAX_CHUNKS = 3
 MAX_DOC_CHARS = 120
 MAX_EXTERNAL_CALLS_IN_LINE = 5
 
+#: LLM descriptions are unbounded prose otherwise — cap so a node card doesn't overflow.
+MAX_DESCRIPTION_CHARS = 140
+
 
 def _symbol_line(node: dict[str, Any]) -> str:
     """One digest line: identity, then whatever evidence Layer 1 found."""
@@ -96,6 +99,8 @@ def merge_descriptions(chunk_results: list[dict], valid_symbol_ids: set[str]) ->
                 dropped += 1
                 continue
             text = (raw.get("text") or "").strip()
+            if len(text) > MAX_DESCRIPTION_CHARS:
+                text = text[:MAX_DESCRIPTION_CHARS].rstrip() + "…"
             if text:
                 descriptions[symbol_id] = text
 

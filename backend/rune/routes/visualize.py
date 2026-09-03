@@ -928,7 +928,8 @@ async def enrich_knowledge_graph(
         settled = await asyncio.gather(*(one_chunk(c) for c in digest), return_exceptions=True)
         parsed = [r for r in settled if isinstance(r, dict)]
         if not parsed:
-            raise RuntimeError(f"all {len(digest)} knowledge chunks failed")
+            errs = [str(r) for r in settled if isinstance(r, BaseException)]
+            raise RuntimeError(f"all {len(digest)} knowledge chunks failed: {errs[:1]}")
 
         overlay = merge_descriptions(parsed, valid_symbol_ids={n["id"] for n in graph.get("nodes", [])})
     except Exception as e:

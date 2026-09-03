@@ -302,7 +302,9 @@ def _clean_doc(raw: str | None) -> str | None:
     if not body:
         return None
     first = re.split(r"(?<=[.!?])\s", body, maxsplit=1)[0]
-    return first[:MAX_DOC_CHARS].strip() or None
+    if len(first) <= MAX_DOC_CHARS:
+        return first.strip() or None
+    return first[:MAX_DOC_CHARS].strip() + "…"
 
 
 def _doc(node: Any, grammar: str) -> str | None:
@@ -343,7 +345,10 @@ def _signature(node: Any) -> str | None:
     if returns is not None:
         # Python's field is the type itself; TS wraps it in `: T`.
         signature += f" -> {_text(returns).lstrip(': ').strip()}"
-    return re.sub(r"\s+", " ", signature).strip()[:MAX_SIGNATURE_CHARS] or None
+    signature = re.sub(r"\s+", " ", signature).strip()
+    if len(signature) <= MAX_SIGNATURE_CHARS:
+        return signature or None
+    return signature[:MAX_SIGNATURE_CHARS] + "…"
 
 
 def _decorators(node: Any, grammar: str) -> list[str]:

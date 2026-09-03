@@ -3,7 +3,7 @@ import type { KnowledgeGraphPayload } from "@/lib/api";
 import { layout, type LayoutResult } from "@/lib/graph/elkLayout";
 
 export const SYMBOL_NODE_WIDTH = 200;
-export const SYMBOL_NODE_HEIGHT = 64;
+export const SYMBOL_NODE_HEIGHT = 88;
 
 const FUNCTION_GRAPH_ELK_OPTIONS: LayoutOptions = {
   "elk.algorithm": "layered",

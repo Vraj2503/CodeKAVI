@@ -67,20 +67,20 @@ function SymbolNodeComponent({ data, selected }: NodeProps<SymbolNodeType>) {
           )}
         </div>
 
-        {symbol.signature && (
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
-            {symbol.signature}
-          </span>
-        )}
-
-        {(symbol.description ?? symbol.doc) && (
-          <span
-            className="truncate text-[10px] text-muted-foreground"
-            title={symbol.description ?? symbol.doc ?? undefined}
-          >
-            {symbol.description ?? symbol.doc}
-          </span>
-        )}
+        {(() => {
+          const secondary =
+            symbol.description ?? symbol.doc ?? symbol.signature;
+          return (
+            secondary && (
+              <span
+                className="truncate text-[10px] text-muted-foreground"
+                title={secondary}
+              >
+                {secondary}
+              </span>
+            )
+          );
+        })()}
 
         {symbol.http && (
           <span className="w-fit truncate rounded border bg-muted px-1 py-0.5 font-mono text-[9px] leading-none text-muted-foreground">
