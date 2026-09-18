@@ -40,7 +40,7 @@ def _make_serializable(obj: Any) -> Any:
         return sorted(obj)
     if isinstance(obj, dict):
         return {k: _make_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, list | tuple):
         return [_make_serializable(item) for item in obj]
     if hasattr(obj, "model_dump"):
         return _make_serializable(obj.model_dump())
@@ -343,26 +343,25 @@ class AnalysisCache:
     # T4.4 — signature-based deduplication (cross-user cache sharing)
     # ─────────────────────────────────────────────────────────────────
 
-    def lookup_by_signature(self, signature: str) -> dict | None:
+    def resolve_signature(self, signature: str) -> tuple[str, dict] | None:
         """
-        Return the cached analysis result for ``signature`` (i.e. an
-        ``owner/name@sha`` string), or ``None`` if no prior user analyzed
-        that exact commit.
+        Return ``(repo_id, result)`` for the analysis indexed under
+        ``signature`` (i.e. an ``owner/name@sha`` string), or ``None`` if no
+        prior user analyzed that exact commit.
 
         Order: L1 in-memory → L2 Redis (read-only — we don't promote signature
         hits into other L1 entries since the ``repo_id`` linkage is the
         canonical index).
         """
         repo_id = self._signatures.get(signature)
-        if repo_id:
-            return self.get(repo_id)
+        if not repo_id:
+            repo_id = self._redis_get_signature(signature)
+            if not repo_id:
+                return None
+            self._signatures[signature] = repo_id
 
-        redis_repo_id = self._redis_get_signature(signature)
-        if redis_repo_id:
-            self._signatures[signature] = redis_repo_id
-            return self.get(redis_repo_id)
-
-        return None
+        result = self.get(repo_id)
+        return (repo_id, result) if result else None
 
     def register_signature(self, signature: str, repo_id: str) -> None:
         """

@@ -2,8 +2,6 @@ import asyncio
 import logging
 
 import aiohttp
-from google import genai
-from google.genai import types
 
 from rune.settings import settings
 
@@ -13,10 +11,6 @@ logger = logging.getLogger(__name__)
 CF_MODEL = "@cf/baai/bge-large-en-v1.5"
 CF_MAX_RETRIES = 6
 CF_INITIAL_BACKOFF = 2
-
-# Constants for Gemini
-GEMINI_MAX_RETRIES = 1  # Set to 1 to fail-fast and immediately trigger Cloudflare fallback
-GEMINI_INITIAL_BACKOFF = 0
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -53,69 +47,6 @@ async def close_cloudflare_session() -> None:
     if _cf_session is not None and not _cf_session.closed:
         await _cf_session.close()
     _cf_session = None
-
-
-class GeminiEmbedding:
-    """Gemini embedding provider configured to output 1024-d vectors."""
-
-    def __init__(self):
-        self.api_key = settings.gemini_api_key
-        self.model = settings.embedding_model
-        # Configure output dimensionality to match Cloudflare (1024)
-        self.config = types.EmbedContentConfig(output_dimensionality=1024)
-        self._client: genai.Client | None = None
-
-    def _get_client(self) -> genai.Client | None:
-        if not self.api_key:
-            return None
-        if self._client is not None:
-            return self._client
-        try:
-            self._client = genai.Client(api_key=self.api_key)
-            return self._client
-        except Exception as e:
-            logger.error(f"Error initializing GenAI client: {e}")
-            return None
-
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """
-        Embed a batch of texts using Gemini with exponential backoff on 429 errors.
-        """
-        client = self._get_client()
-        if not client:
-            raise ValueError("Gemini API key not configured")
-
-        backoff = GEMINI_INITIAL_BACKOFF
-
-        for attempt in range(1, GEMINI_MAX_RETRIES + 1):
-            try:
-                response = await asyncio.to_thread(
-                    client.models.embed_content,
-                    model=self.model,
-                    contents=texts,  # type: ignore[arg-type]
-                    config=self.config,
-                )
-                if not response.embeddings:
-                    raise ValueError("Gemini returned no embeddings")
-                return [e.values or [] for e in response.embeddings]
-
-            except Exception as e:
-                err_str = str(e)
-                is_rate_limit = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
-
-                if is_rate_limit and attempt < GEMINI_MAX_RETRIES:
-                    logger.warning(
-                        f"Gemini rate-limited (attempt {attempt}/{GEMINI_MAX_RETRIES}). "
-                        f"Waiting {backoff:.0f}s before retry…"
-                    )
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-                    continue
-                else:
-                    logger.error(f"Gemini embed failed permanently: {e}")
-                    raise
-
-        raise RuntimeError("Exhausted retries for Gemini embedding")
 
 
 class CloudflareEmbedding:
