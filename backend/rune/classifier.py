@@ -490,16 +490,6 @@ def classify_files(
             if source is not None:
                 metrics = file_complexity(source, rel_path)
 
-        # ── Importance score ──
-        importance = _compute_importance(
-            in_degree=in_degree,
-            out_degree=out_degree,
-            max_in=max_in,
-            role=role,
-            entry_score=entry_point_scores.get(rel_path, 0),
-            depth=rel_path.count("/"),
-        )
-
         profiles.append(
             FileProfile(
                 path=rel_path,
@@ -513,16 +503,34 @@ def classify_files(
                 used_by=list(used_by) if isinstance(used_by, list | set) else used_by,
                 in_degree=in_degree,
                 out_degree=out_degree,
-                importance_score=round(importance, 2),
+                importance_score=0.0,  # filled in below, once repo-wide maxima are known
                 tags=tags,
                 # Absent (not zero) when the file was never measured — a
                 # fabricated 1 is indistinguishable from a genuinely simple
                 # file, so consumers must be able to tell "no data" apart.
                 loc=metrics.get("loc"),
                 complexity=metrics.get("complexity"),
+                functions=metrics.get("functions"),
                 complexity_source=metrics.get("complexity_source"),
             )
         )
+
+    # ── Importance score ──
+    # Second pass: every term is relative to the repo's own maximum, which is
+    # only known once every file has been measured.
+    if profiles:
+        maxima = _importance_maxima(profiles)
+        for profile in profiles:
+            profile.importance_score = round(
+                _compute_importance(
+                    loc=profile.loc or 0,
+                    out_degree=profile.out_degree,
+                    in_degree=profile.in_degree,
+                    functions=profile.functions or 0,
+                    maxima=maxima,
+                ),
+                2,
+            )
 
     # Sort by importance (highest first)
     profiles.sort(key=lambda x: x.importance_score, reverse=True)
@@ -691,57 +699,48 @@ def _determine_role(
 # ─────────────────────────────────────────────
 
 
+#: The four measured quantities behind an importance score, in the order
+#: `_compute_importance` and `_importance_maxima` both use them: how much code
+#: the file holds, what it imports, what imports it, how many functions it
+#: defines. Equal quarter weights — no role bonuses, so the number is something
+#: a reader can recompute from the file itself rather than from our taxonomy.
+_IMPORTANCE_TERM_WEIGHT = 25.0
+
+
 def _compute_importance(
-    in_degree: int,
+    loc: int,
     out_degree: int,
-    max_in: int,
-    role: str,
-    entry_score: int,
-    depth: int,
+    in_degree: int,
+    functions: int,
+    maxima: tuple[int, int, int, int],
 ) -> float:
     """
     Compute a 0-100 importance score for a file.
     Higher = more important to understand the codebase.
+
+    Each term is scaled against the repo's own maximum, so the score answers
+    "how large a share of this repo's mass does this file carry" and stays
+    comparable across repos of wildly different sizes. A term whose maximum is
+    zero (no imports anywhere, nothing measured) contributes nothing rather
+    than dividing by zero.
     """
-    score = 0.0
+    # ponytail: max-normalised, so one 10k-line generated file flattens the LOC
+    # term for everyone else. Switch to percentile rank if that shows up.
+    return sum(
+        (value / maximum) * _IMPORTANCE_TERM_WEIGHT
+        for value, maximum in zip((loc, out_degree, in_degree, functions), maxima, strict=True)
+        if maximum > 0
+    )
 
-    # In-degree (being depended on) is the strongest signal
-    if max_in > 0:
-        score += (in_degree / max_in) * 40
 
-    # Out-degree (importing many things = orchestrator)
-    score += min(out_degree * 2, 20)
-
-    # Role bonuses
-    role_bonuses = {
-        "entry_point": 25,
-        "core_module": 20,
-        "orchestrator": 15,
-        "shared_utility": 15,
-        "router": 12,
-        "config": 8,
-        "type_definition": 8,
-        "barrel": 5,
-        "internal_helper": 5,
-        "ml_model": 18,
-        "ml_training": 12,
-        "ml_pipeline": 10,
-        "test": 3,
-        "build": 2,
-        "documentation": 1,
-        "data": 2,
-        "leaf": 1,
-    }
-    score += role_bonuses.get(role, 0)
-
-    # Entry point boost
-    score += entry_score * 2
-
-    # Root-level files slightly more important
-    if depth == 0:
-        score += 3
-
-    return min(score, 100.0)
+def _importance_maxima(profiles: list[FileProfile]) -> tuple[int, int, int, int]:
+    """Repo-wide maximum of each importance term. Unmeasured files count as 0."""
+    return (
+        max((p.loc or 0) for p in profiles),
+        max(p.out_degree for p in profiles),
+        max(p.in_degree for p in profiles),
+        max((p.functions or 0) for p in profiles),
+    )
 
 
 # ─────────────────────────────────────────────

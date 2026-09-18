@@ -74,9 +74,18 @@ both `:root` and `.dark`; the accessor layer is `lib/viz/tokens.ts`.
 - **Node chips sit on `hsl(var(--card))` with a coloured border and label**, not
   on a tinted fill. Tinted fills were the dark slabs that made three charts
   unreadable in light mode.
-- One deliberate exception: `NeuralNetworkViz`'s `CATEGORY_COLORS`. It is a
-  genuine categorical palette encoding layer type, with base/top/side face
-  shading for the isometric render, and it reads correctly on both themes.
+- One deliberate exception: `NeuralNetworkViz`. As of 2026-08-14 it does not
+  follow the theme **at all** — every chart above this line does, this is the
+  one that opts out. The figure always draws on its own near-white paper panel,
+  in both themes, because the PlotNeuralNet-style references it targets are
+  ink-on-paper and a figure that renders differently on screen than exported is
+  not something a researcher can screenshot straight into a slide. Its ink
+  (`NN_PAPER_INK` — surface, border, ink, dim ink, faint ink) is concrete hex,
+  not tokens, and so is `CATEGORY_COLORS`, its categorical layer-type palette
+  with base/top/side face shading for the isometric render. Both need to pass
+  contrast on the paper ground only, not on a dark card — this chart never
+  draws on one. Do not "fix" its colors back to `cssVar()`/`inkVar()` calls to
+  match the rest of the suite.
 
 ---
 

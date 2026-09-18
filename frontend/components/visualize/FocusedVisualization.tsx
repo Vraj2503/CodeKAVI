@@ -5,7 +5,7 @@ import { useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, RefreshCw, Telescope, X } from "lucide-react";
+import { Loader2, AlertCircle, Network, RefreshCw, Telescope, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
@@ -113,12 +113,22 @@ function EmptyViz({
   return (
     <div className="w-full h-full flex flex-col items-center justify-center p-10 text-center">
       <div className="w-20 h-20 rounded-full flex items-center justify-center bg-muted text-muted-foreground mb-6">
-        <AlertCircle size={40} aria-hidden="true" />
+        {isNN ? (
+          <Network size={40} aria-hidden="true" />
+        ) : (
+          <AlertCircle size={40} aria-hidden="true" />
+        )}
       </div>
       <h3 className="text-xl font-bold text-foreground mb-3">{heading}</h3>
       <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
         {body}
       </p>
+      {isNN && (
+        <p className="mt-3 max-w-md text-xs leading-relaxed text-muted-foreground/80">
+          Nor are models built entirely at runtime from a config file, since
+          there is no architecture in the source to read.
+        </p>
+      )}
       <Link
         href={`?type=${suggestion.type}`}
         className="mt-8 inline-flex items-center gap-2 rounded-xl border border-border bg-muted px-6 py-3 text-sm font-semibold transition-colors hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

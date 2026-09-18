@@ -630,7 +630,10 @@ class ExplanationOrchestrator:
             children.append(
                 {
                     "name": os.path.basename(fp.get("path", "")),
-                    "value": fp.get("importance_score", 1),
+                    # Floor at 1: importance is a 0-100 normalised score, and a
+                    # file that scores 0 would otherwise get a zero-area tile
+                    # that renders as nothing at all.
+                    "value": fp.get("importance_score") or 1,
                 }
             )
         return {"name": "Complexity", "children": children}
