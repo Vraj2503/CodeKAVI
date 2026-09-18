@@ -33,7 +33,8 @@ from rune.graph import (
     export_graph_json,
     export_mermaid,
 )
-from rune.indexer import index_repository
+from rune.index_status import NOT_CONFIGURED, PENDING, make_status, resolve_index_status
+from rune.indexer import index_repository_and_record
 from rune.limiter import per_minute
 from rune.logging_config import repo_id_ctx
 from rune.nn_extractor import extract_all_models, select_nn_candidates
@@ -339,8 +340,9 @@ async def analyze(
     # clone dir + L2 Redis index are aligned via the signature.
     signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
     if signature:
-        deduped = await _run_sync(cache.lookup_by_signature, signature)
-        if deduped:
+        resolved = await _run_sync(cache.resolve_signature, signature)
+        if resolved:
+            indexed_repo_id, deduped = resolved
             logger.info(
                 f"T4.4 commit-cache hit for {signature}; reusing cached repo result "
                 f"(repo_name={deduped.get('repo_name', '')})."
@@ -351,7 +353,26 @@ async def analyze(
             # write, this fell back to ``repo_id`` and re-pointed the shared
             # signature index at a repo_id whose result was never cached —
             # an ownership-transfer that broke dedup for every later caller.
-            await _run_sync(cache.register_signature, signature, deduped.get("_origin_repo_id", repo_id))
+            origin_repo_id = deduped.get("_origin_repo_id", indexed_repo_id)
+            await _run_sync(cache.register_signature, signature, origin_repo_id)
+
+            # This request's repo_id has no analysis or vectors of its own.
+            # Save the shared analysis under it, owned by this user, pointing
+            # ``vector_repo_id`` at the analysis whose vectors hold the code.
+            # Without this, every later call on this repo_id misses the cache,
+            # re-analyzes from disk, and chat has nothing to search. Saved
+            # before responding (not as a background task) so an immediate
+            # follow-up can't trigger that re-analysis and lose the pointer.
+            dedup_result = {k: v for k, v in deduped.items() if k not in ("index_status", "_analysis_version")}
+            dedup_result.update(
+                repo_name=clone_info["repo_name"],
+                owner=clone_info["owner"],
+                owner_user_id=user_id,
+                _origin_repo_id=origin_repo_id,
+                vector_repo_id=deduped.get("vector_repo_id") or indexed_repo_id,
+            )
+            await _run_sync(save_analysis, repo_id, clone_info["clone_path"], dedup_result, cache)
+            shared_index_status = await resolve_index_status(cache, dedup_result, repo_id)
             repo_data_for_response = deduped.get("repo_data", {}) or {
                 "total_files": 0,
                 "total_size": 0,
@@ -378,6 +399,7 @@ async def analyze(
                 "cycles": {"has_cycles": False, "cycles": []},
                 "mermaid": {"file_level": "", "module_level": ""},
                 "nn_models": deduped.get("nn_models", []),
+                "index_status": shared_index_status,
             }
 
     try:
@@ -454,6 +476,13 @@ async def analyze(
         mermaid = pipeline_result.mermaid
         nn_models = pipeline_result.nn_models
 
+        # L-15: gate on the credentials indexing actually uses (Cloudflare
+        # embeddings + Zilliz), not gemini_api_key — otherwise we schedule an
+        # index task that is guaranteed to no-op when Cloudflare creds are unset.
+        indexing_enabled = bool(
+            settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri
+        )
+
         # Store session and results in 3-tier cache (memory + Redis + Supabase)
         result_data = {
             "repo_name": clone_info["repo_name"],
@@ -482,6 +511,9 @@ async def analyze(
                 **{path: fp.change_type for path, fp in fingerprints.items()},
                 **{path: "DELETED" for path in deleted_paths},
             },
+            # Replaced with the outcome when the index job finishes; a job that
+            # never gets to run leaves "pending" behind (see index_status.py).
+            "index_status": make_status(PENDING if indexing_enabled else NOT_CONFIGURED),
         }
         # H-02: route through the task registry so shutdown can wait for this
         # to actually finish before draining the executors it runs on.
@@ -496,12 +528,13 @@ async def analyze(
             await _run_sync(cache.register_signature, signature, repo_id)
 
         # Index repository for RAG in the background (prevents proxy timeouts)
-        # L-15: gate on the credentials indexing actually uses (Cloudflare
-        # embeddings + Zilliz), not gemini_api_key — otherwise we schedule an
-        # index task that is guaranteed to no-op when Cloudflare creds are unset.
-        if settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri:
+        if indexing_enabled:
             background_tasks.add_task(
-                task_registry.wrap(index_repository), repo_id, file_profiles_dicts, clone_info["clone_path"]
+                task_registry.wrap(index_repository_and_record),
+                repo_id,
+                file_profiles_dicts,
+                clone_info["clone_path"],
+                cache,
             )
 
         final_result = {
@@ -519,6 +552,7 @@ async def analyze(
             "cycles": cycles_data,
             "mermaid": mermaid,
             "nn_models": nn_models,
+            "index_status": result_data["index_status"],
         }
         return final_result
     finally:
@@ -722,6 +756,11 @@ async def analyze_stream(
             selected_files = pipeline_result.selected_files
             nn_models = pipeline_result.nn_models
 
+            # L-15: gate on the credentials indexing actually uses.
+            indexing_enabled = bool(
+                settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri
+            )
+
             # Store session and results in 3-tier cache
             stream_result_data = {
                 "repo_name": clone_info["repo_name"],
@@ -743,6 +782,8 @@ async def analyze_stream(
                     **{path: fp.change_type for path, fp in fingerprints.items()},
                     **{path: "DELETED" for path in deleted_paths},
                 },
+                # See non-streaming /analyze.
+                "index_status": make_status(PENDING if indexing_enabled else NOT_CONFIGURED),
             }
             # H-02: route through the task registry so shutdown can wait for
             # this to actually finish before draining the executors it runs on.
@@ -752,10 +793,13 @@ async def analyze_stream(
             )
 
             # Stage 7: Indexing (embedding) — move to background task
-            # L-15: gate on the credentials indexing actually uses.
-            if settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri:
+            if indexing_enabled:
                 background_tasks.add_task(
-                    task_registry.wrap(index_repository), repo_id, file_profiles, clone_info["clone_path"]
+                    task_registry.wrap(index_repository_and_record),
+                    repo_id,
+                    file_profiles,
+                    clone_info["clone_path"],
+                    cache,
                 )
                 yield _sse_event("indexing", 90, "Creating embeddings for RAG in background…", seq=_next_seq(seq_box))
 
@@ -780,6 +824,7 @@ async def analyze_stream(
                 "cycles": cycles_data,
                 "mermaid": mermaid_code,
                 "nn_models": nn_models,
+                "index_status": stream_result_data["index_status"],
             }
             # T2.4 — final event carries seq + total_events so the client can
             # verify completeness. Replaces the previous bare "data: [DONE]\n\n"
@@ -886,6 +931,7 @@ async def restore_repo(
         "graph": graph_json,
         "module_graph": module_graph,
         "nn_models": result.get("nn_models", []),
+        "index_status": await resolve_index_status(cache, result, repo_id),
     }
 
     response_bytes = json.dumps(response_data, separators=(",", ":")).encode("utf-8")

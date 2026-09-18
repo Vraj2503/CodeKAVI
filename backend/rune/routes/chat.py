@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.exceptions import RateLimitError
+from rune.index_status import chat_unavailable_message, resolve_index_status, vector_repo_id
 from rune.limiter import per_minute
 from rune.llm import get_provider
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
@@ -144,25 +145,31 @@ async def chat_repo(
         query_lower = body.query.lower()
         is_technical = any(kw in query_lower for kw in _TECHNICAL_KEYWORDS)
 
-        # 2. Retrieve Context from Zilliz (network I/O, now natively async)
+        # 2. Retrieve Context from Zilliz (network I/O, now natively async).
+        # A deduplicated analysis searches the vectors it shares with its origin.
+        search_repo_id = vector_repo_id(result, repo_id)
         if is_technical:
             results = await zilliz_client.search(
                 body.query,
-                repo_id,
+                search_repo_id,
                 limit=8,
                 layer_filter="exclude_frontend",
             )
         else:
             results = await zilliz_client.search(
                 body.query,
-                repo_id,
+                search_repo_id,
                 limit=5,
             )
 
         if not results:
+            # Say why there's nothing to search (still indexing, failed, ...)
+            # instead of a generic "ensure the repository was indexed".
+            index_status = await resolve_index_status(cache, result, repo_id)
             return {
                 "success": False,
-                "error": "No relevant code context found. Ensure the repository was fully indexed.",
+                "error": chat_unavailable_message(index_status),
+                "index_status": index_status,
             }
 
         context_blocks = []

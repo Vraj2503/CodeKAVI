@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.graph_assembler import assemble_graph
+from rune.index_status import vector_repo_id
 from rune.limiter import per_minute
 from rune.quota import get_token_tracker
 from rune.routes._errors import internal_error
@@ -94,7 +95,7 @@ async def get_repo_question_tour(
 
     try:
         graph = await run_sync(assemble_graph, result)
-        search_results = await zilliz_client.search(q, repo_id, limit=8)
+        search_results = await zilliz_client.search(q, vector_repo_id(result, repo_id), limit=8)
         payload = assemble_question_tour(graph, search_results)
     except Exception as e:
         raise internal_error(e, context="get_repo_question_tour: assembly failed") from e
@@ -178,12 +179,12 @@ async def get_repo_tour_node_narration(
 
     # _load_repo asserts ownership; narration falls back to null (frontend
     # keeps its static facts) rather than a hard error on any downstream miss.
-    await _load_repo(repo_id, cache, user_id)
+    result, _ = await _load_repo(repo_id, cache, user_id)
 
     narration = None
     if zilliz_client.uri and zilliz_client.token:
         try:
-            results = await zilliz_client.search(node_id, repo_id, limit=8)
+            results = await zilliz_client.search(node_id, vector_repo_id(result, repo_id), limit=8)
             chunks = [r for r in results if r.get("file_path") == node_id][:3]
             if chunks:
                 from rune.llm import get_provider
