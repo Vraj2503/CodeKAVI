@@ -28,3 +28,29 @@ const LAYER_COLOR_VARS: Record<string, string> = Object.fromEntries(
 export function layerColor(layerId: string | null): string {
   return (layerId && LAYER_COLOR_VARS[layerId]) || "var(--muted-foreground)";
 }
+
+// Mirrors backend rune/graph.py's ROLE_TO_LAYER — classifier roles (finer-
+// grained than layers) collapse onto the same 9 layer ids/colors above.
+const ROLE_TO_LAYER: Record<string, string> = {
+  entry_point: "routes",
+  router: "routes",
+  orchestrator: "services",
+  core_module: "services",
+  ml_pipeline: "services",
+  ml_training: "services",
+  ml_model: "models",
+  type_definition: "models",
+  data: "database",
+  shared_utility: "utils",
+  internal_helper: "utils",
+  config: "config",
+  test: "tests",
+  barrel: "other",
+  leaf: "other",
+  build: "other",
+  documentation: "other",
+};
+
+export function layerColorForRole(role: string | null): string {
+  return layerColor(role ? (ROLE_TO_LAYER[role] ?? "other") : null);
+}

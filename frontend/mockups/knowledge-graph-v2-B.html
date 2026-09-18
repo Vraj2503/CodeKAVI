@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup B: Organic Knowledge Graph with Concept Overlay</title>
+<style>
+  :root {
+    --background: 40 30% 96.5%;
+    --foreground: 24 14% 10%;
+    --card: 42 42% 99%;
+    --card-foreground: 24 14% 10%;
+    --muted: 38 20% 92.5%;
+    --muted-foreground: 28 7% 42%;
+    --border: 33 16% 86%;
+    --signal: 26 90% 46%;
+    --destructive: 0 68% 45%;
+    --success: 148 55% 32%;
+    
+    --viz-cat-1: 212 88% 45%;
+    --viz-cat-2: 129 54% 30%;
+    --viz-cat-3: 266 60% 52%;
+    
+    --viz-surface: 42 42% 99%;
+    --viz-ink: 24 14% 10%;
+    --viz-ink-dim: 28 7% 42%;
+    --viz-edge: 33 16% 86%;
+    
+    --radius: 0.5rem;
+  }
+  
+  html[data-theme="dark"] {
+    --background: 30 9% 6%;
+    --foreground: 40 18% 94%;
+    --card: 30 8% 9%;
+    --card-foreground: 40 18% 94%;
+    --muted: 30 6% 14%;
+    --muted-foreground: 36 8% 62%;
+    --border: 32 7% 19%;
+    --signal: 34 96% 56%;
+    --destructive: 2 72% 58%;
+    --success: 148 52% 52%;
+    
+    --viz-cat-1: 212 100% 67%;
+    --viz-cat-2: 129 49% 49%;
+    --viz-cat-3: 266 100% 77%;
+    
+    --viz-surface: 30 8% 9%;
+    --viz-ink: 40 18% 94%;
+    --viz-ink-dim: 36 8% 62%;
+    --viz-edge: 32 7% 19%;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .caption-block {
+    padding: 1rem;
+    background: hsl(var(--card));
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .caption-block h1 { margin: 0 0 0.5rem 0; font-size: 1.25rem; }
+  .caption-block p { margin: 0.25rem 0; font-size: 0.875rem; color: hsl(var(--muted-foreground)); }
+  
+  .banner {
+    background: hsl(var(--muted));
+    padding: 0.5rem 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .resolution-chart {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .donut {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: conic-gradient(hsl(var(--signal)) 29%, hsl(var(--border)) 0);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut::before {
+    content: "";
+    width: 16px;
+    height: 16px;
+    background: hsl(var(--muted));
+    border-radius: 50%;
+  }
+  .donut-label { position: absolute; font-size: 0.6rem; font-weight: bold; }
+
+  .main-content {
+    flex: 1;
+    display: flex;
+    position: relative;
+  }
+  
+  .graph-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  canvas:active { cursor: grabbing; }
+
+  /* Overlay UI */
+  .toolbar {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    gap: 0.5rem;
+  }
+  button {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--border));
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  button:hover { background: hsl(var(--muted)); }
+
+  .legend {
+    position: absolute;
+    bottom: 1rem;
+    left: 1rem;
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: blur(8px);
+    border: 1px solid hsl(var(--border));
+    padding: 1rem;
+    border-radius: var(--radius);
+    font-size: 0.75rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .legend-item:last-child { margin-bottom: 0; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+
+  .tooltip {
+    position: absolute;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    padding: 1rem;
+    border-radius: var(--radius);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+    width: 300px;
+    font-size: 0.75rem;
+  }
+  .tooltip.visible { opacity: 1; }
+  
+  .tooltip-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; align-items: flex-start;}
+  .tooltip-title { font-weight: bold; font-size: 0.875rem; }
+  .tooltip-meta { color: hsl(var(--muted-foreground)); margin-bottom: 0.5rem; }
+  
+  .badge {
+    padding: 0.125rem 0.25rem;
+    border-radius: 2px;
+    font-size: 0.65rem;
+    font-weight: bold;
+    background: hsl(var(--muted));
+    color: hsl(var(--foreground));
+  }
+
+  .importance-bar {
+    height: 4px;
+    background: hsl(var(--border));
+    border-radius: 2px;
+    margin-bottom: 0.5rem;
+    overflow: hidden;
+  }
+  .importance-fill {
+    height: 100%;
+    background: hsl(var(--signal));
+  }
+  
+  .effects-container { display: flex; gap: 0.25rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  .effect-pill {
+    padding: 0.125rem 0.375rem;
+    border-radius: 8px;
+    font-size: 0.6rem;
+    background: hsl(var(--muted));
+  }
+
+  .detail-panel {
+    width: 320px;
+    background: hsl(var(--card));
+    border-left: 1px solid hsl(var(--border));
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 5;
+  }
+  .detail-panel.open { transform: translateX(0); }
+  
+  .detail-header { padding: 1rem; border-bottom: 1px solid hsl(var(--border)); display: flex; justify-content: space-between;}
+  .detail-content { padding: 1rem; overflow-y: auto; flex: 1; font-size: 0.875rem; }
+  .close-btn { background: none; border: none; cursor: pointer; color: hsl(var(--muted-foreground)); padding: 0; }
+  .close-btn:hover { color: hsl(var(--foreground)); }
+
+</style>
+</head>
+<body>
+
+<div class="caption-block">
+  <h1>Mockup B: Organic Knowledge Graph with Concept Overlay</h1>
+  <p>Light background, labeled edges, optional LLM-generated concept layer.</p>
+  <p>Prioritizes: Edge readability (labeled), concept overlay, clean aesthetics.</p>
+  <p>React Flow: Concept overlay would need a custom group/annotation node. Symbol layout needs external force sim.</p>
+</div>
+
+<div class="banner">
+  <div>150 symbols &middot; 120 edges &middot; 38 files</div>
+  <div class="resolution-chart">
+    <span>Resolution: </span>
+    <div class="donut"><span class="donut-label">29%</span></div>
+  </div>
+  <div style="color: hsl(var(--destructive))">488 symbols hidden (low connectivity)</div>
+</div>
+
+<div class="main-content">
+  <div class="graph-container">
+    <canvas id="graphCanvas"></canvas>
+    
+    <div class="toolbar">
+      <button id="toggleConceptsBtn">Hide Concepts</button>
+      <button id="toggleThemeBtn">Dark Mode</button>
+    </div>
+    
+    <div class="legend">
+      <div class="legend-item"><div class="dot" style="background: hsl(var(--viz-cat-1))"></div> Function</div>
+      <div class="legend-item"><div class="dot" style="background: hsl(var(--viz-cat-2))"></div> Class</div>
+      <div class="legend-item"><div class="dot" style="background: hsl(var(--viz-cat-3))"></div> Method</div>
+      <div style="margin: 0.5rem 0; border-top: 1px solid hsl(var(--border))"></div>
+      <div class="legend-item">
+        <svg width="24" height="12"><path d="M0,6 L24,6" stroke="hsl(var(--viz-ink-dim))" stroke-width="1"/></svg>
+        Calls
+      </div>
+      <div class="legend-item">
+        <svg width="24" height="12"><path d="M0,6 L24,6" stroke="hsl(var(--viz-cat-2))" stroke-width="2" stroke-dasharray="4,2"/></svg>
+        Inherits
+      </div>
+      <div id="legendConcept" class="legend-item">
+        <div style="width: 16px; height: 12px; background: hsl(var(--signal)/0.12); border: 1px solid hsl(var(--signal)); border-radius: 2px;"></div>
+        Concept Entity
+      </div>
+    </div>
+    
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+  
+  <div class="detail-panel" id="detailPanel">
+    <div class="detail-header">
+      <div style="font-weight: bold" id="dpTitle">Node Details</div>
+      <button class="close-btn" onclick="document.getElementById('detailPanel').classList.remove('open')">✕</button>
+    </div>
+    <div class="detail-content" id="dpContent"></div>
+  </div>
+</div>
+
+<script>
+  // Data Generation
+  const nodeTypes = ['function', 'class', 'method'];
+  const files = ['orchestrator.py', 'analyzer.py', 'symbol_graph.py', 'cache.py', 'routes/analyze.py', 'routes/visualize.py', 'traverser.py', 'utils.py'];
+  const symbols = [
+    'run_analysis', '_build_treemap_tree', 'run_sync', 'AnalyzerPipeline', 'classify_files',
+    'build_symbol_graph', 'CacheStore', 'get', 'set', 'analyze_route', 'visualize_route',
+    'traverse_directory', 'parse_ast', 'resolve_imports', 'extract_classes', 'extract_functions'
+  ];
+  
+  const nodes = [];
+  for(let i=0; i<60; i++) {
+    const type = nodeTypes[Math.floor(Math.random() * 3)];
+    const file = files[Math.floor(Math.random() * files.length)];
+    const sym = symbols[Math.floor(Math.random() * symbols.length)] + (i > 15 ? `_${i}` : '');
+    nodes.push({
+      id: `n${i}`,
+      label: sym,
+      type: type,
+      file: file,
+      line: Math.floor(Math.random() * 500) + 1,
+      importance: 3.0 + Math.random() * 49.71,
+      role: 'leaf',
+      doc: 'Analyzes the given directory and produces a graph.',
+      signature: 'def ' + sym + '(path: str, options: dict) -> Result:',
+      effects: ['filesystem', 'network'],
+      external_calls: ['os.walk', 'json.dumps'],
+      x: Math.random() * 800,
+      y: Math.random() * 600,
+      vx: 0, vy: 0
+    });
+  }
+  
+  const edges = [];
+  for(let i=0; i<75; i++) {
+    const s = Math.floor(Math.random() * nodes.length);
+    let t = Math.floor(Math.random() * nodes.length);
+    while(t === s) t = Math.floor(Math.random() * nodes.length);
+    const isInherits = i < 3;
+    edges.push({
+      sourceIdx: s, targetIdx: t,
+      source: nodes[s], target: nodes[t],
+      label: isInherits ? 'inherits' : 'calls'
+    });
+  }
+
+  // Concepts
+  const concepts = [
+    { id: 'c1', label: 'Analysis Pipeline', desc: 'Core orchestration and classification', nodes: [0, 3, 4] },
+    { id: 'c2', label: 'Symbol Graph', desc: 'Builds and maintains symbol relations', nodes: [5, 12, 13] },
+    { id: 'c3', label: 'Caching Layer', desc: 'Stores intermediate parsing results', nodes: [6, 7, 8] },
+    { id: 'c4', label: 'API Routes', desc: 'HTTP endpoints for visualization', nodes: [9, 10] },
+    { id: 'c5', label: 'Code Traversal', desc: 'Walks filesystem and reads files', nodes: [11] }
+  ];
+  const conceptEdges = [
+    { source: 'c1', target: 'c2', label: 'produces' },
+    { source: 'c1', target: 'c3', label: 'uses' },
+    { source: 'c4', target: 'c1', label: 'triggers' },
+    { source: 'c5', target: 'c1', label: 'feeds' }
+  ];
+
+  // Force Layout Simulation
+  function runSimulation() {
+    const k = 120; // ideal distance
+    const gravity = 0.03;
+    const center = {x: 0, y: 0};
+    
+    for (let iter=0; iter<400; iter++) {
+      // Repulsion
+      for (let i=0; i<nodes.length; i++) {
+        for (let j=i+1; j<nodes.length; j++) {
+          let dx = nodes[i].x - nodes[j].x;
+          let dy = nodes[i].y - nodes[j].y;
+          let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+          if (dist < 400) {
+            let force = (k * k) / dist;
+            let fx = (dx/dist)*force;
+            let fy = (dy/dist)*force;
+            nodes[i].vx += fx * 0.1;
+            nodes[i].vy += fy * 0.1;
+            nodes[j].vx -= fx * 0.1;
+            nodes[j].vy -= fy * 0.1;
+          }
+        }
+      }
+      // Attraction
+      for (let e of edges) {
+        let dx = e.target.x - e.source.x;
+        let dy = e.target.y - e.source.y;
+        let dist = Math.sqrt(dx*dx + dy*dy) || 1;
+        let force = dist / (k*0.5);
+        let fx = (dx/dist)*force;
+        let fy = (dy/dist)*force;
+        e.source.vx += fx * 0.2;
+        e.source.vy += fy * 0.2;
+        e.target.vx -= fx * 0.2;
+        e.target.vy -= fy * 0.2;
+      }
+      // Gravity & Friction
+      let bounds = {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity};
+      for (let n of nodes) {
+        n.vx += (center.x - n.x) * gravity;
+        n.vy += (center.y - n.y) * gravity;
+        n.vx *= 0.6;
+        n.vy *= 0.6;
+        n.x += n.vx;
+        n.y += n.vy;
+        if(n.x < bounds.minX) bounds.minX = n.x;
+        if(n.x > bounds.maxX) bounds.maxX = n.x;
+        if(n.y < bounds.minY) bounds.minY = n.y;
+        if(n.y > bounds.maxY) bounds.maxY = n.y;
+      }
+    }
+  }
+  
+  runSimulation();
+  
+  // Update concept positions
+  function updateConcepts() {
+    concepts.forEach(c => {
+      let sumX = 0, sumY = 0, count = 0;
+      c.nodes.forEach(ni => {
+        if(nodes[ni]) { sumX += nodes[ni].x; sumY += nodes[ni].y; count++; }
+      });
+      if(count > 0) { c.x = sumX/count; c.y = sumY/count; }
+      else { c.x = 0; c.y = 0; }
+    });
+  }
+  updateConcepts();
+
+  // Rendering
+  const canvas = document.getElementById('graphCanvas');
+  const ctx = canvas.getContext('2d');
+  let width, height;
+  let transform = { x: 0, y: 0, k: 0.6 };
+  let showConcepts = true;
+  let hoveredNode = null;
+  let hoveredEdge = null;
+  
+  function resize() {
+    width = canvas.parentElement.clientWidth;
+    height = canvas.parentElement.clientHeight;
+    canvas.width = width * window.devicePixelRatio;
+    canvas.height = height * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    transform.x = width / 2;
+    transform.y = height / 2;
+    draw();
+  }
+  window.addEventListener('resize', resize);
+  
+  function getCSSColor(name) {
+    const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    if(val.startsWith('hsl')) return val; // fallback
+    return `hsl(${val})`;
+  }
+  
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    ctx.translate(transform.x, transform.y);
+    ctx.scale(transform.k, transform.k);
+    
+    // Helper colors
+    const bg = getCSSColor('--background');
+    const fg = getCSSColor('--foreground');
+    const muted = getCSSColor('--muted-foreground');
+    const border = getCSSColor('--border');
+    const signal = getCSSColor('--signal');
+    
+    const colors = {
+      'function': getCSSColor('--viz-cat-1'),
+      'class': getCSSColor('--viz-cat-2'),
+      'method': getCSSColor('--viz-cat-3')
+    };
+
+    // Draw Concepts Layer
+    if(showConcepts) {
+      // Concept Edges
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = `hsl(26 90% 46% / 0.5)`;
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      
+      conceptEdges.forEach(ce => {
+        const s = concepts.find(c => c.id === ce.source);
+        const t = concepts.find(c => c.id === ce.target);
+        if(s && t) {
+          ctx.beginPath();
+          ctx.moveTo(s.x, s.y);
+          ctx.lineTo(t.x, t.y);
+          ctx.stroke();
+          
+          const mx = (s.x + t.x) / 2;
+          const my = (s.y + t.y) / 2;
+          const angle = Math.atan2(t.y - s.y, t.x - s.x);
+          
+          ctx.save();
+          ctx.translate(mx, my);
+          ctx.rotate(angle > Math.PI/2 || angle < -Math.PI/2 ? angle + Math.PI : angle);
+          ctx.fillStyle = bg;
+          const m = ctx.measureText(ce.label);
+          ctx.fillRect(-m.width/2 - 4, -8, m.width + 8, 16);
+          ctx.fillStyle = signal;
+          ctx.fillText(ce.label, 0, 0);
+          ctx.restore();
+        }
+      });
+      
+      // Concept Rects
+      concepts.forEach(c => {
+        const w = 180;
+        const h = 60;
+        ctx.fillStyle = `hsl(26 90% 46% / 0.12)`;
+        ctx.strokeStyle = signal;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(c.x - w/2, c.y - h/2, w, h, 8);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.fillStyle = fg;
+        ctx.font = "bold 14px sans-serif";
+        ctx.fillText(c.label, c.x, c.y - 8);
+        
+        ctx.fillStyle = muted;
+        ctx.font = "10px sans-serif";
+        ctx.fillText(c.desc, c.x, c.y + 12);
+        
+        // Dashed lines to grounding nodes
+        ctx.strokeStyle = `hsl(26 90% 46% / 0.4)`;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        c.nodes.forEach(ni => {
+          if(nodes[ni]) {
+            ctx.beginPath();
+            ctx.moveTo(c.x, c.y + h/2);
+            ctx.lineTo(nodes[ni].x, nodes[ni].y);
+            ctx.stroke();
+          }
+        });
+        ctx.setLineDash([]);
+      });
+    }
+
+    // Draw Edges (Symbols)
+    edges.forEach(e => {
+      const isHovered = hoveredEdge === e || hoveredNode === e.source || hoveredNode === e.target;
+      const isInherits = e.label === 'inherits';
+      
+      ctx.beginPath();
+      ctx.moveTo(e.source.x, e.source.y);
+      // Bezier curve
+      const cp1x = e.source.x + (e.target.x - e.source.x) * 0.3;
+      const cp1y = e.source.y;
+      const cp2x = e.target.x - (e.target.x - e.source.x) * 0.3;
+      const cp2y = e.target.y;
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, e.target.x, e.target.y);
+      
+      if(isHovered) {
+        ctx.strokeStyle = signal;
+        ctx.lineWidth = isInherits ? 3 : 2;
+      } else {
+        ctx.strokeStyle = isInherits ? `hsl(129 54% 30% / 0.6)` : `hsl(28 7% 42% / 0.4)`;
+        ctx.lineWidth = isInherits ? 2 : 1;
+      }
+      if(isInherits) ctx.setLineDash([4, 2]);
+      else ctx.setLineDash([]);
+      
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Edge Label
+      const t = 0.5;
+      const bx = (1-t)*(1-t)*(1-t)*e.source.x + 3*(1-t)*(1-t)*t*cp1x + 3*(1-t)*t*t*cp2x + t*t*t*e.target.x;
+      const by = (1-t)*(1-t)*(1-t)*e.source.y + 3*(1-t)*(1-t)*t*cp1y + 3*(1-t)*t*t*cp2y + t*t*t*e.target.y;
+      const dx = 3*(1-t)*(1-t)*(cp1x - e.source.x) + 6*(1-t)*t*(cp2x - cp1x) + 3*t*t*(e.target.x - cp2x);
+      const dy = 3*(1-t)*(1-t)*(cp1y - e.source.y) + 6*(1-t)*t*(cp2y - cp1y) + 3*t*t*(e.target.y - cp2y);
+      const angle = Math.atan2(dy, dx);
+      
+      ctx.save();
+      ctx.translate(bx, by);
+      ctx.rotate(angle > Math.PI/2 || angle < -Math.PI/2 ? angle + Math.PI : angle);
+      
+      ctx.font = "10px sans-serif";
+      const metrics = ctx.measureText(e.label);
+      ctx.fillStyle = bg;
+      ctx.fillRect(-metrics.width/2 - 2, -6, metrics.width + 4, 12);
+      ctx.fillStyle = isHovered ? signal : muted;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(e.label, 0, 0);
+      ctx.restore();
+    });
+
+    // Draw Nodes
+    nodes.forEach(n => {
+      const radius = 10 + (n.importance / 52.71) * 20;
+      n.radius = radius; // store for hit test
+      
+      // Outer glow if hovered
+      if(hoveredNode === n) {
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, radius + 4, 0, Math.PI*2);
+        ctx.fillStyle = signal;
+        ctx.fill();
+      }
+      
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, radius, 0, Math.PI*2);
+      ctx.fillStyle = colors[n.type];
+      ctx.fill();
+      ctx.strokeStyle = getCSSColor('--background');
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      
+      // Badge inside
+      ctx.fillStyle = '#fff';
+      ctx.font = "bold 9px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const short = n.type === 'function' ? 'FN' : (n.type === 'class' ? 'CL' : 'MT');
+      ctx.fillText(short, n.x, n.y);
+      
+      // Label below
+      ctx.fillStyle = fg;
+      ctx.font = "11px sans-serif";
+      ctx.fillText(n.label, n.x, n.y + radius + 10);
+    });
+
+    ctx.restore();
+  }
+
+  // Interactivity
+  let isDragging = false;
+  let dragStart = {x:0, y:0};
+  let transStart = {x:0, y:0};
+
+  canvas.addEventListener('mousedown', e => {
+    isDragging = true;
+    dragStart = {x: e.clientX, y: e.clientY};
+    transStart = {x: transform.x, y: transform.y};
+  });
+  window.addEventListener('mouseup', () => { isDragging = false; });
+  window.addEventListener('mousemove', e => {
+    if(isDragging) {
+      transform.x = transStart.x + (e.clientX - dragStart.x);
+      transform.y = transStart.y + (e.clientY - dragStart.y);
+      draw();
+    } else {
+      // Hit testing
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left - transform.x) / transform.k;
+      const my = (e.clientY - rect.top - transform.y) / transform.k;
+      
+      let hit = null;
+      for(let i=nodes.length-1; i>=0; i--) {
+        const n = nodes[i];
+        const dx = mx - n.x;
+        const dy = my - n.y;
+        if(dx*dx + dy*dy <= n.radius*n.radius) { hit = n; break; }
+      }
+      
+      if(hit !== hoveredNode) {
+        hoveredNode = hit;
+        draw();
+        updateTooltip(e.clientX, e.clientY);
+      } else if(hit) {
+        updateTooltip(e.clientX, e.clientY);
+      }
+    }
+  });
+  
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const zoom = Math.exp(-e.deltaY * 0.001);
+    transform.k *= zoom;
+    draw();
+  }, {passive: false});
+
+  canvas.addEventListener('click', e => {
+    if(hoveredNode) {
+      openDetail(hoveredNode);
+    }
+  });
+
+  const tooltip = document.getElementById('tooltip');
+  function updateTooltip(x, y) {
+    if(!hoveredNode) {
+      tooltip.classList.remove('visible');
+      return;
+    }
+    const n = hoveredNode;
+    const pct = Math.round((n.importance / 52.71) * 100);
+    tooltip.innerHTML = `
+      <div class="tooltip-header">
+        <div>
+          <div class="tooltip-title">${n.label}</div>
+          <div class="tooltip-meta">${n.file}:${n.line}</div>
+        </div>
+        <span class="badge">${n.role}</span>
+      </div>
+      <div style="font-size: 0.7rem; margin-bottom: 2px">Importance (${pct}%)</div>
+      <div class="importance-bar"><div class="importance-fill" style="width: ${pct}%"></div></div>
+      <div style="margin-bottom: 0.5rem; color: hsl(var(--muted-foreground))">${n.doc}</div>
+      <code style="display:block; background: hsl(var(--muted)); padding: 4px; border-radius: 4px; font-size: 0.7rem;">${n.signature}</code>
+      <div class="effects-container">
+        ${n.effects.map(ef => `<span class="effect-pill">${ef}</span>`).join('')}
+      </div>
+    `;
+    tooltip.style.left = (x + 15) + 'px';
+    tooltip.style.top = (y + 15) + 'px';
+    tooltip.classList.add('visible');
+  }
+
+  function openDetail(n) {
+    document.getElementById('dpTitle').innerText = n.label;
+    const callers = edges.filter(e => e.target === n).map(e => e.source.label);
+    const callees = edges.filter(e => e.source === n).map(e => e.target.label);
+    
+    document.getElementById('dpContent').innerHTML = `
+      <p><strong>Type:</strong> ${n.type}</p>
+      <p><strong>Location:</strong> ${n.file}:${n.line}</p>
+      <p><strong>Role:</strong> ${n.role}</p>
+      <p><strong>Documentation:</strong><br>${n.doc}</p>
+      <hr style="border:0; border-top:1px solid hsl(var(--border)); margin: 1rem 0;">
+      <h4>Callers (${callers.length})</h4>
+      <ul style="padding-left: 1.2rem">
+        ${callers.map(c => `<li>${c}</li>`).join('') || '<li>None</li>'}
+      </ul>
+      <h4>Callees (${callees.length})</h4>
+      <ul style="padding-left: 1.2rem">
+        ${callees.map(c => `<li>${c}</li>`).join('') || '<li>None</li>'}
+      </ul>
+    `;
+    document.getElementById('detailPanel').classList.add('open');
+  }
+
+  // Toggles
+  document.getElementById('toggleConceptsBtn').addEventListener('click', (e) => {
+    showConcepts = !showConcepts;
+    e.target.innerText = showConcepts ? 'Hide Concepts' : 'Show Concepts';
+    document.getElementById('legendConcept').style.display = showConcepts ? 'flex' : 'none';
+    draw();
+  });
+
+  let isDark = false;
+  document.getElementById('toggleThemeBtn').addEventListener('click', (e) => {
+    isDark = !isDark;
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    e.target.innerText = isDark ? 'Light Mode' : 'Dark Mode';
+    draw(); // Redraw with new colors
+  });
+
+  setTimeout(resize, 100);
+</script>
+</body>
+</html>

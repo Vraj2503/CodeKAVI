@@ -371,3 +371,40 @@ Rules:
 - For web apps: Client Request -> Routing -> Authentication -> Business Logic -> Data Access -> Response
 - Maximum 15 nodes, 25 edges
 - source_files must reference actual file paths from the provided file roles"""
+
+
+# ─────────────────────────────────────────────
+# Knowledge graph prompt (per-symbol descriptions)
+# ─────────────────────────────────────────────
+
+SYSTEM_KNOWLEDGE_ANALYST = (
+    "You are Rune, an expert code analyst writing one-line purpose "
+    "descriptions for the most important functions and classes in a "
+    "codebase. Return ONLY valid JSON, no prose.\n\n" + UNTRUSTED_CODE_DISCLAIMER
+)
+
+
+def build_knowledge_prompt(digest_chunk: dict) -> str:
+    """
+    Build the user prompt for one evidence chunk from `concept_graph.build_evidence_digest`.
+    Plain string, paired with SYSTEM_KNOWLEDGE_ANALYST — same calling style as
+    build_dataflow_prompt above.
+    """
+    symbol_lines = "\n".join(f"  - {line}" for line in digest_chunk.get("symbols", [])) or "  (none)"
+
+    return f"""These are important functions and classes in a codebase, with their
+documentation, signatures, external calls and detected side effects.
+
+{symbol_lines}
+
+Write a 1-2 sentence purpose description for each symbol and return a JSON object:
+{{
+  "descriptions": [
+    {{"symbol_id": "exact path::name copied VERBATIM from the list above", "text": "1-2 sentence purpose, grounded in the evidence above"}}
+  ]
+}}
+
+Rules:
+- `symbol_id` MUST be copied VERBATIM from the list above; ids not in the list are discarded.
+- One entry per symbol in the list above.
+- Ground the description in the evidence shown (doc, signature, calls, effects) — don't invent behavior."""

@@ -566,7 +566,7 @@ class GroqProvider:
 
     def available_models(self) -> list[str]:
         """Return list of supported models."""
-        return ["llama-3.3-70b-versatile"]
+        return ["openai/gpt-oss-120b"]
 
 
 # ─────────────────────────────────────────────

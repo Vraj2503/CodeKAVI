@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mockup C: File × File Adjacency Heatmap</title>
+  <style>
+    :root {
+      --background: 40 30% 96.5%;
+      --foreground: 24 14% 10%;
+      --card: 42 42% 99%;
+      --card-foreground: 24 14% 10%;
+      --muted: 38 20% 92.5%;
+      --muted-foreground: 28 7% 42%;
+      --border: 33 16% 86%;
+      --signal: 26 90% 46%;
+      --destructive: 0 68% 45%;
+      --success: 148 55% 32%;
+      --viz-highlight: 26 90% 46%;
+      --viz-cat-1: 212 88% 45%;    /* blue */
+      --viz-cat-2: 129 54% 30%;    /* green */
+      --viz-cat-3: 266 60% 52%;    /* purple */
+      --viz-cat-4: 26 84% 42%;     /* orange */
+      --viz-cat-5: 328 66% 46%;    /* pink */
+      --viz-cat-6: 209 84% 42%;    /* sky blue */
+      --viz-cat-7: 126 50% 29%;    /* teal-green */
+      --viz-cat-8: 267 52% 50%;    /* violet */
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 42 42% 99%;
+      --viz-ink: 24 14% 10%;
+      --viz-ink-dim: 28 7% 42%;
+      --viz-edge: 33 16% 86%;
+      --radius: 0.5rem;
+      
+      --viz-seq-from: 212 50% 90%;
+      --viz-seq-to: 212 88% 45%;
+    }
+
+    [data-theme="dark"] {
+      --background: 30 9% 6%;
+      --foreground: 40 18% 94%;
+      --card: 30 8% 9%;
+      --card-foreground: 40 18% 94%;
+      --muted: 30 6% 14%;
+      --muted-foreground: 36 8% 62%;
+      --border: 32 7% 19%;
+      --signal: 34 96% 56%;
+      --destructive: 2 72% 58%;
+      --success: 148 52% 52%;
+      --viz-highlight: 34 96% 56%;
+      --viz-cat-1: 212 100% 67%;
+      --viz-cat-2: 129 49% 49%;
+      --viz-cat-3: 266 100% 77%;
+      --viz-cat-4: 26 85% 59%;
+      --viz-cat-5: 328 89% 72%;
+      --viz-cat-6: 209 100% 74%;
+      --viz-cat-7: 126 50% 45%;
+      --viz-cat-8: 267 80% 70%;
+      --viz-cat-ink: 0 0% 100%;
+      --viz-surface: 30 8% 9%;
+      --viz-ink: 40 18% 94%;
+      --viz-ink-dim: 36 8% 62%;
+      --viz-edge: 32 7% 19%;
+      
+      --viz-seq-from: 212 40% 20%;
+      --viz-seq-to: 212 100% 67%;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: hsl(var(--background));
+      color: hsl(var(--foreground));
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid hsl(var(--border));
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: hsl(var(--card));
+    }
+
+    .title-area h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .title-area p {
+      font-size: 0.875rem;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .resolution-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      background-color: hsl(var(--muted));
+      padding: 0.25rem 0.75rem;
+      border-radius: 1rem;
+    }
+
+    .donut-chart {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: conic-gradient(hsl(var(--signal)) 29%, hsl(var(--border)) 0);
+    }
+
+    .theme-toggle, .mode-toggle {
+      background: hsl(var(--muted));
+      border: 1px solid hsl(var(--border));
+      color: hsl(var(--foreground));
+      padding: 0.5rem 1rem;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .theme-toggle:hover, .mode-toggle:hover {
+      background: hsl(var(--border));
+    }
+
+    main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .content-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem;
+      overflow: auto;
+    }
+
+    .matrix-container {
+      position: relative;
+      margin-top: 120px;
+      margin-left: 180px;
+      margin-bottom: 2rem;
+      display: inline-block;
+    }
+
+    .matrix-grid {
+      display: grid;
+      grid-template-columns: repeat(38, 16px);
+      grid-template-rows: repeat(38, 16px);
+      gap: 1px;
+      background-color: hsl(var(--border) / 0.3);
+      border: 1px solid hsl(var(--border));
+      position: relative;
+    }
+    
+    .cell {
+      background-color: hsl(var(--viz-surface));
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+      transition: opacity 0.1s;
+    }
+    
+    .cell:hover {
+      opacity: 0.8;
+      outline: 2px solid hsl(var(--viz-highlight));
+      z-index: 10;
+    }
+    
+    .cell.diagonal {
+      outline: 1px solid hsl(var(--muted-foreground) / 0.5);
+      outline-offset: -1px;
+    }
+    
+    .cell.selected {
+      outline: 2px solid hsl(var(--viz-highlight));
+      z-index: 10;
+    }
+
+    .row-labels {
+      position: absolute;
+      top: 0;
+      left: -180px;
+      width: 170px;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .col-labels {
+      position: absolute;
+      top: -120px;
+      left: 0;
+      height: 110px;
+      display: flex;
+      gap: 1px;
+    }
+
+    .row-label, .col-label {
+      font-size: 10px;
+      color: hsl(var(--muted-foreground));
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: monospace;
+    }
+
+    .row-label {
+      height: 16px;
+      line-height: 16px;
+      text-align: right;
+      padding-right: 8px;
+    }
+
+    .col-label {
+      width: 16px;
+      transform: rotate(-45deg);
+      transform-origin: bottom left;
+      display: flex;
+      align-items: flex-end;
+      padding-left: 16px;
+      margin-left: 8px;
+    }
+
+    /* Group separators */
+    .group-divider-v {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background-color: hsl(var(--muted-foreground) / 0.4);
+      z-index: 5;
+    }
+    
+    .group-divider-h {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background-color: hsl(var(--muted-foreground) / 0.4);
+      z-index: 5;
+    }
+
+    .tooltip {
+      position: absolute;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      padding: 0.5rem 0.75rem;
+      border-radius: var(--radius);
+      font-size: 0.75rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 100;
+      white-space: nowrap;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    }
+
+    .legend-area {
+      margin-top: 2rem;
+      margin-left: 180px;
+      max-width: 600px;
+    }
+
+    .legend-ramp {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .ramp-bar {
+      height: 12px;
+      width: 200px;
+      background: linear-gradient(to right, hsl(var(--viz-surface)), hsl(var(--viz-seq-to)));
+      border: 1px solid hsl(var(--border));
+      border-radius: 2px;
+    }
+    
+    .legend-labels {
+      font-size: 0.75rem;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .legend-note {
+      font-size: 0.75rem;
+      color: hsl(var(--muted-foreground));
+      margin-top: 0.5rem;
+      line-height: 1.4;
+    }
+
+    .side-panel {
+      width: 360px;
+      border-left: 1px solid hsl(var(--border));
+      background-color: hsl(var(--card));
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.3s ease;
+      position: absolute;
+      right: 0;
+      top: 73px;
+      bottom: 0;
+      box-shadow: -4px 0 15px rgba(0,0,0,0.05);
+      z-index: 50;
+    }
+
+    .side-panel.open {
+      transform: translateX(0);
+      position: relative;
+      top: 0;
+      box-shadow: none;
+    }
+
+    .panel-header {
+      padding: 1.5rem;
+      border-bottom: 1px solid hsl(var(--border));
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .panel-subtitle {
+      font-size: 0.875rem;
+      color: hsl(var(--muted-foreground));
+      font-family: monospace;
+      word-break: break-all;
+    }
+
+    .close-btn {
+      background: none;
+      border: none;
+      color: hsl(var(--muted-foreground));
+      cursor: pointer;
+      font-size: 1.25rem;
+      padding: 0.25rem;
+    }
+
+    .close-btn:hover {
+      color: hsl(var(--foreground));
+    }
+
+    .panel-content {
+      padding: 1.5rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    
+    .edge-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    
+    .edge-item {
+      padding: 1rem;
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      background-color: hsl(var(--background));
+    }
+    
+    .edge-symbol {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+    }
+    
+    .edge-direction {
+      color: hsl(var(--muted-foreground));
+      margin: 0.5rem 0;
+      font-size: 0.75rem;
+      padding-left: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .symbol-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      border-radius: 3px;
+      color: white;
+      font-weight: bold;
+    }
+    
+    .icon-func { background-color: hsl(var(--viz-cat-3)); }
+    .icon-class { background-color: hsl(var(--viz-cat-1)); }
+    .icon-method { background-color: hsl(var(--viz-cat-4)); }
+    
+    .importance-badge {
+      margin-left: auto;
+      font-size: 0.75rem;
+      background: hsl(var(--muted));
+      padding: 0.125rem 0.375rem;
+      border-radius: 1rem;
+      color: hsl(var(--muted-foreground));
+    }
+
+    .caption-block {
+      margin-top: 3rem;
+      padding: 1.5rem;
+      background-color: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      border-left: 4px solid hsl(var(--viz-cat-4));
+      max-width: 800px;
+      margin-left: 180px;
+    }
+    
+    .caption-block h3 {
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .caption-block p {
+      font-size: 0.875rem;
+      color: hsl(var(--muted-foreground));
+      line-height: 1.5;
+      margin-bottom: 0.75rem;
+    }
+    
+    .caption-block ul {
+      font-size: 0.875rem;
+      color: hsl(var(--muted-foreground));
+      padding-left: 1.5rem;
+      margin-bottom: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="title-area">
+      <h1>CodeKavi Knowledge Graph</h1>
+      <p id="header-stats">38 files · 150 symbols shown · 120 edges</p>
+    </div>
+    <div class="controls">
+      <div class="resolution-badge">
+        <div class="donut-chart"></div>
+        29% resolved
+      </div>
+      <button class="mode-toggle" id="modeToggle">Show all 657 symbols</button>
+      <button class="theme-toggle" id="themeToggle">Dark Mode</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="content-area">
+      
+      <div class="matrix-container" id="matrixContainer">
+        <!-- Generated by JS -->
+      </div>
+      
+      <div class="legend-area">
+        <div class="legend-ramp">
+          <span class="legend-labels">0 calls</span>
+          <div class="ramp-bar"></div>
+          <span class="legend-labels" id="legendMax">12 calls</span>
+        </div>
+        <div class="legend-note">
+          Cell color shows number of symbol-to-symbol calls between files. Diagonal cells with outlines represent internal calls.<br>
+          <strong>Note:</strong> 71% of call sites could not be resolved to definitions. Actual coupling may be higher than shown.
+        </div>
+      </div>
+      
+      <div class="caption-block">
+        <h3>Mockup C: File × File Adjacency Heatmap</h3>
+        <p>This is a DEPARTURE from ArchitectureGraph. React Flow renders node-link graphs; this is a heatmap + drill-down panel. It would need d3 or raw canvas/SVG, similar to the existing treemap and heatmap components in the codebase. The trade-off: it handles density better than any node-link layout at the cost of not showing the graph shape (paths, centrality). Consider it a complementary view, not a replacement.</p>
+        <p><strong>Which Problems It Prioritizes:</strong></p>
+        <ul>
+          <li><strong>Problem 1 (Layout):</strong> Eliminates it entirely. A 38×38 matrix is dense but has no layout problem — every file gets one row and one column, period. No overlapping, no edge crossings.</li>
+          <li><strong>Problem 3 (Truncation):</strong> The matrix can show ALL 657 symbols' relationships (the hidden 488 too) because cell values are just counts. The drill-down shows the top-150 detail. Makes the full/truncated distinction natural.</li>
+          <li><strong>Problem 2 (Resolution):</strong> Natural place for it — the diagonal band of the matrix. Self-calls within a file plus the unresolved calls create a natural "darkness along the diagonal" that the legend explains.</li>
+        </ul>
+      </div>
+      
+    </div>
+
+    <div class="side-panel" id="sidePanel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title" id="panelTitle">analyzer/pipeline.py</h2>
+          <div class="panel-subtitle" id="panelSubtitle">to graph/builder.py (8 calls)</div>
+        </div>
+        <button class="close-btn" id="closePanel">&times;</button>
+      </div>
+      <div class="panel-content" id="panelContent">
+        <!-- Generated by JS -->
+      </div>
+    </div>
+  </main>
+  
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    // Theme toggle
+    const themeToggle = document.getElementById('themeToggle');
+    let isDark = false;
+    themeToggle.addEventListener('click', () => {
+      isDark = !isDark;
+      document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+      themeToggle.textContent = isDark ? 'Light Mode' : 'Dark Mode';
+    });
+
+    // Data generation
+    const files = [
+      'codekavi/analyzer/pipeline.py', 'codekavi/analyzer/ast_visitor.py', 'codekavi/analyzer/import_resolver.py', 'codekavi/analyzer/utils.py',
+      'codekavi/graph/builder.py', 'codekavi/graph/pagerank.py', 'codekavi/graph/serializer.py', 'codekavi/graph/types.py',
+      'codekavi/classifier/role_classifier.py', 'codekavi/classifier/heuristics.py', 'codekavi/classifier/patterns.py',
+      'codekavi/indexer/vector_store.py', 'codekavi/indexer/embeddings.py', 'codekavi/indexer/chunker.py',
+      'codekavi/routes/analyze.py', 'codekavi/routes/visualize.py', 'codekavi/routes/report.py', 'codekavi/routes/api.py',
+      'codekavi/models/repository.py', 'codekavi/models/symbol.py', 'codekavi/models/edge.py', 'codekavi/models/base.py',
+      'codekavi/utils/cache.py', 'codekavi/utils/fs.py', 'codekavi/utils/hashing.py', 'codekavi/utils/logger.py',
+      'codekavi/nn_extractor.py', 'codekavi/cloner.py', 'codekavi/config.py', 'codekavi/main.py', 'codekavi/cli.py',
+      'tests/test_analyzer.py', 'tests/test_graph.py', 'tests/test_classifier.py', 'tests/test_indexer.py', 'tests/test_routes.py', 'tests/conftest.py', 'tests/test_utils.py'
+    ];
+    
+    // Group files by directory for dividers
+    const groups = [];
+    let currentDir = '';
+    files.forEach((f, i) => {
+      const dir = f.split('/').slice(0, -1).join('/');
+      if (dir !== currentDir) {
+        if (i > 0) groups.push(i);
+        currentDir = dir;
+      }
+    });
+
+    const N = 38;
+    const matrixTop150 = Array(N).fill().map(() => Array(N).fill(0));
+    const matrixFull = Array(N).fill().map(() => Array(N).fill(0));
+    const edgesData = {}; // Key: "i,j", Value: array of edge objects
+
+    // Populate matrices with realistic-looking counts
+    let totalEdges150 = 0;
+    
+    // Self calls (diagonal)
+    for (let i = 0; i < N; i++) {
+      let count = Math.floor(Math.random() * 4);
+      if (files[i].includes('models')) count += 2;
+      matrixTop150[i][i] = count;
+      matrixFull[i][i] = count + Math.floor(Math.random() * 10);
+      totalEdges150 += count;
+    }
+    
+    // Hot pairs
+    const hotPairs = [
+      [0, 4], [0, 8], [14, 0], [15, 4], [16, 5], [4, 18], [4, 19], [4, 20], [8, 19],
+      [11, 12], [26, 1], [27, 23], [29, 0], [30, 29], [31, 0], [32, 4], [33, 8]
+    ];
+    
+    hotPairs.forEach(([i, j]) => {
+      let count = 3 + Math.floor(Math.random() * 6); // 3-8
+      matrixTop150[i][j] = count;
+      matrixFull[i][j] = count + Math.floor(Math.random() * 15);
+      totalEdges150 += count;
+      
+      // Generate realistic symbols for these hot pairs
+      edgesData[`${i},${j}`] = [];
+      for (let k = 0; k < count; k++) {
+        const kinds = ['func', 'method', 'class'];
+        const srcKind = kinds[Math.floor(Math.random() * kinds.length)];
+        const tgtKind = kinds[Math.floor(Math.random() * kinds.length)];
+        
+        let srcName, tgtName;
+        
+        if (files[i].includes('pipeline')) srcName = k === 0 ? 'AnalyzerPipeline' : `_step_${k}`;
+        else if (files[i].includes('routes')) srcName = `handle_${files[j].split('/').pop().replace('.py', '')}_request`;
+        else srcName = `process_${k}`;
+        
+        if (files[j].includes('builder')) tgtName = k === 0 ? 'GraphBuilder' : `add_node`;
+        else if (files[j].includes('models')) tgtName = 'Symbol';
+        else tgtName = `execute_${k}`;
+        
+        edgesData[`${i},${j}`].push({
+          src: srcName,
+          srcKind: srcKind,
+          srcImp: (10 + Math.random() * 40).toFixed(2),
+          tgt: tgtName,
+          tgtKind: tgtKind,
+          tgtImp: (10 + Math.random() * 40).toFixed(2),
+          type: srcKind === 'class' && tgtKind === 'class' && Math.random() > 0.8 ? 'inherits' : 'calls'
+        });
+      }
+    });
+    
+    // Random sparse edges to reach ~120
+    while (totalEdges150 < 120) {
+      const i = Math.floor(Math.random() * N);
+      const j = Math.floor(Math.random() * N);
+      if (matrixTop150[i][j] === 0 && i !== j) {
+        matrixTop150[i][j] = 1;
+        matrixFull[i][j] = 1 + Math.floor(Math.random() * 5);
+        totalEdges150 += 1;
+        
+        if (!edgesData[`${i},${j}`]) edgesData[`${i},${j}`] = [];
+        edgesData[`${i},${j}`].push({
+          src: 'helper_func', srcKind: 'func', srcImp: (3 + Math.random() * 10).toFixed(2),
+          tgt: 'util_func', tgtKind: 'func', tgtImp: (3 + Math.random() * 10).toFixed(2),
+          type: 'calls'
+        });
+      }
+    }
+    
+    // Fill full matrix with background noise
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        if (Math.random() > 0.8 && matrixFull[i][j] === 0) {
+          matrixFull[i][j] = 1 + Math.floor(Math.random() * 4);
+        }
+      }
+    }
+
+    let isFullMode = false;
+    let selectedCell = null;
+    const modeToggle = document.getElementById('modeToggle');
+    const headerStats = document.getElementById('header-stats');
+    
+    function renderMatrix() {
+      const container = document.getElementById('matrixContainer');
+      container.innerHTML = '';
+      
+      const matrix = isFullMode ? matrixFull : matrixTop150;
+      let maxVal = 0;
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          if (matrix[i][j] > maxVal) maxVal = matrix[i][j];
+        }
+      }
+      
+      document.getElementById('legendMax').textContent = `${maxVal} calls`;
+      
+      const grid = document.createElement('div');
+      grid.className = 'matrix-grid';
+      
+      // Add row labels
+      const rowLabels = document.createElement('div');
+      rowLabels.className = 'row-labels';
+      files.forEach(f => {
+        const el = document.createElement('div');
+        el.className = 'row-label';
+        el.textContent = f.split('/').pop();
+        el.title = f;
+        rowLabels.appendChild(el);
+      });
+      grid.appendChild(rowLabels);
+      
+      // Add col labels
+      const colLabels = document.createElement('div');
+      colLabels.className = 'col-labels';
+      files.forEach(f => {
+        const el = document.createElement('div');
+        el.className = 'col-label';
+        el.textContent = f.split('/').pop();
+        el.title = f;
+        colLabels.appendChild(el);
+      });
+      grid.appendChild(colLabels);
+      
+      // Add dividers
+      groups.forEach(idx => {
+        const hDiv = document.createElement('div');
+        hDiv.className = 'group-divider-h';
+        hDiv.style.top = `${idx * 17 - 1}px`; // 16px + 1px gap
+        grid.appendChild(hDiv);
+        
+        const vDiv = document.createElement('div');
+        vDiv.className = 'group-divider-v';
+        vDiv.style.left = `${idx * 17 - 1}px`;
+        grid.appendChild(vDiv);
+      });
+      
+      // Add cells
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          const val = matrix[i][j];
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          if (i === j) cell.classList.add('diagonal');
+          
+          if (selectedCell && selectedCell.i === i && selectedCell.j === j) {
+            cell.classList.add('selected');
+          }
+          
+          cell.style.backgroundColor = val > 0 ? `hsl(var(--viz-cat-1) / ${0.1 + (val/maxVal)*0.9})` : 'hsl(var(--viz-surface))';
+          
+          cell.addEventListener('mouseenter', (e) => showTooltip(e, i, j, val));
+          cell.addEventListener('mouseleave', hideTooltip);
+          cell.addEventListener('click', () => selectCell(i, j, val, cell));
+          
+          grid.appendChild(cell);
+        }
+      }
+      
+      container.appendChild(grid);
+    }
+    
+    const tooltip = document.getElementById('tooltip');
+    
+    function showTooltip(e, i, j, val) {
+      const src = files[i].split('/').pop();
+      const tgt = files[j].split('/').pop();
+      tooltip.textContent = `${src} → ${tgt}: ${val} call${val !== 1 ? 's' : ''}`;
+      tooltip.style.opacity = '1';
+      tooltip.style.left = `${e.pageX + 10}px`;
+      tooltip.style.top = `${e.pageY + 10}px`;
+    }
+    
+    function hideTooltip() {
+      tooltip.style.opacity = '0';
+    }
+    
+    const sidePanel = document.getElementById('sidePanel');
+    const panelContent = document.getElementById('panelContent');
+    const closePanelBtn = document.getElementById('closePanel');
+    
+    function selectCell(i, j, val, cellElement) {
+      if (val === 0 && !edgesData[`${i},${j}`]) return;
+      
+      // Update visual selection
+      document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+      cellElement.classList.add('selected');
+      selectedCell = {i, j};
+      
+      // Populate panel
+      document.getElementById('panelTitle').textContent = files[i];
+      document.getElementById('panelSubtitle').textContent = `to ${files[j]} (${val} calls shown)`;
+      
+      panelContent.innerHTML = '';
+      const list = document.createElement('div');
+      list.className = 'edge-list';
+      
+      const edges = edgesData[`${i},${j}`] || [];
+      const displayEdges = isFullMode ? Array(val).fill().map((_, idx) => edges[idx % edges.length] || {
+        src: `symbol_${idx}`, srcKind: 'func', srcImp: '5.00', tgt: `target_${idx}`, tgtKind: 'func', tgtImp: '5.00', type: 'calls'
+      }) : edges;
+      
+      if (displayEdges.length === 0) {
+        list.innerHTML = `<p style="color: hsl(var(--muted-foreground)); font-size: 0.875rem;">No detailed edge data available in this mockup.</p>`;
+      } else {
+        displayEdges.forEach(e => {
+          const item = document.createElement('div');
+          item.className = 'edge-item';
+          
+          const getIconLetter = (k) => k === 'class' ? 'C' : (k === 'method' ? 'M' : 'F');
+          
+          item.innerHTML = `
+            <div class="edge-symbol">
+              <span class="symbol-icon icon-${e.srcKind}">${getIconLetter(e.srcKind)}</span>
+              ${e.src}
+              <span class="importance-badge">${e.srcImp}</span>
+            </div>
+            <div class="edge-direction">
+              ↓ ${e.type}
+            </div>
+            <div class="edge-symbol">
+              <span class="symbol-icon icon-${e.tgtKind}">${getIconLetter(e.tgtKind)}</span>
+              ${e.tgt}
+              <span class="importance-badge">${e.tgtImp}</span>
+            </div>
+          `;
+          list.appendChild(item);
+        });
+      }
+      
+      panelContent.appendChild(list);
+      
+      // Open panel
+      sidePanel.classList.add('open');
+      document.querySelector('.content-area').style.marginRight = '360px'; // Prevent overlap
+    }
+    
+    closePanelBtn.addEventListener('click', () => {
+      sidePanel.classList.remove('open');
+      document.querySelector('.content-area').style.marginRight = '0';
+      document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+      selectedCell = null;
+    });
+    
+    modeToggle.addEventListener('click', () => {
+      isFullMode = !isFullMode;
+      modeToggle.textContent = isFullMode ? 'Show top 150' : 'Show all 657 symbols';
+      headerStats.textContent = isFullMode 
+        ? '38 files · 657 symbols shown · 524 edges' 
+        : '38 files · 150 symbols shown · 120 edges';
+      
+      if (selectedCell) {
+        // re-render panel if open
+        const {i, j} = selectedCell;
+        const matrix = isFullMode ? matrixFull : matrixTop150;
+        selectCell(i, j, matrix[i][j], document.createElement('div')); // fake element just for refresh, won't update UI perfectly but fine for mockup
+      }
+      renderMatrix();
+    });
+    
+    // Initial render
+    renderMatrix();
+
+  </script>
+</body>
+</html>

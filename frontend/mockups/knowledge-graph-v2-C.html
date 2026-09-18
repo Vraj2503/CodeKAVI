@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup C: Radial Hub-and-Spoke Explorer</title>
+<style>
+  :root {
+    --background: 40 30% 96.5%;
+    --foreground: 24 14% 10%;
+    --card: 42 42% 99%;
+    --card-foreground: 24 14% 10%;
+    --muted: 38 20% 92.5%;
+    --muted-foreground: 28 7% 42%;
+    --border: 33 16% 86%;
+    --signal: 26 90% 46%;
+    --destructive: 0 68% 45%;
+    --success: 148 55% 32%;
+    --viz-highlight: 26 90% 46%;
+    --viz-cat-1: 212 88% 45%;    /* blue (leaf) */
+    --viz-cat-2: 129 54% 30%;    /* green (internal_helper) */
+    --viz-cat-3: 266 60% 52%;    /* purple (shared_utility) */
+    --viz-cat-4: 26 84% 42%;     /* orange (core_module) */
+    --viz-cat-5: 328 66% 46%;    /* pink (test) */
+    --viz-cat-6: 209 84% 42%;    /* sky blue */
+    --viz-cat-7: 126 50% 29%;    /* teal-green */
+    --viz-cat-8: 267 52% 50%;    /* violet */
+    --viz-cat-ink: 0 0% 100%;
+    --viz-surface: 42 42% 99%;
+    --viz-ink: 24 14% 10%;
+    --viz-ink-dim: 28 7% 42%;
+    --viz-edge: 33 16% 86%;
+    --radius: 0.5rem;
+  }
+
+  [data-theme='dark'] {
+    --background: 30 9% 6%;
+    --foreground: 40 18% 94%;
+    --card: 30 8% 9%;
+    --card-foreground: 40 18% 94%;
+    --muted: 30 6% 14%;
+    --muted-foreground: 36 8% 62%;
+    --border: 32 7% 19%;
+    --signal: 34 96% 56%;
+    --destructive: 2 72% 58%;
+    --success: 148 52% 52%;
+    --viz-highlight: 34 96% 56%;
+    --viz-cat-1: 212 100% 67%;
+    --viz-cat-2: 129 49% 49%;
+    --viz-cat-3: 266 100% 77%;
+    --viz-cat-4: 26 85% 59%;
+    --viz-cat-5: 328 89% 72%;
+    --viz-cat-6: 209 100% 74%;
+    --viz-cat-7: 126 50% 45%;
+    --viz-cat-8: 267 80% 70%;
+    --viz-cat-ink: 0 0% 100%;
+    --viz-surface: 30 8% 9%;
+    --viz-ink: 40 18% 94%;
+    --viz-ink-dim: 36 8% 62%;
+    --viz-edge: 32 7% 19%;
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Header / Toolbar */
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid hsl(var(--border));
+    background-color: hsl(var(--card));
+    z-index: 10;
+  }
+
+  .caption-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .caption-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+  .caption-subtitle {
+    font-size: 0.85rem;
+    color: hsl(var(--muted-foreground));
+    max-width: 600px;
+    line-height: 1.4;
+  }
+  
+  .controls {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+  button {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+  }
+  button:hover {
+    background: hsl(var(--muted));
+  }
+
+  /* Main container */
+  main {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Breadcrumb Navigation */
+  .breadcrumb {
+    position: absolute;
+    top: 1rem;
+    left: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    z-index: 5;
+    background: hsl(var(--card) / 0.8);
+    backdrop-filter: blur(4px);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    border: 1px solid hsl(var(--border));
+  }
+  .breadcrumb-item {
+    cursor: pointer;
+    color: hsl(var(--muted-foreground));
+    transition: color 0.2s;
+  }
+  .breadcrumb-item:hover {
+    color: hsl(var(--foreground));
+  }
+  .breadcrumb-item.active {
+    color: hsl(var(--foreground));
+    font-weight: 600;
+  }
+  .breadcrumb-separator {
+    color: hsl(var(--muted-foreground));
+  }
+  .back-button {
+    background: none;
+    border: none;
+    padding: 0;
+    color: hsl(var(--signal));
+    font-weight: 500;
+    margin-right: 0.5rem;
+  }
+
+  /* SVG Graph Area */
+  svg {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  svg:active {
+    cursor: grabbing;
+  }
+
+  /* Central node pulsing */
+  @keyframes pulse {
+    0% { filter: drop-shadow(0 0 5px hsl(var(--viz-highlight) / 0.2)); }
+    50% { filter: drop-shadow(0 0 20px hsl(var(--viz-highlight) / 0.8)); }
+    100% { filter: drop-shadow(0 0 5px hsl(var(--viz-highlight) / 0.2)); }
+  }
+  .node.center .node-circle {
+    animation: pulse 4s infinite;
+  }
+
+  .node {
+    cursor: pointer;
+    transition: transform 0.4s ease-out;
+  }
+  .node:hover .node-circle {
+    stroke: hsl(var(--viz-ink));
+    stroke-width: 2;
+  }
+  .node-label {
+    fill: hsl(var(--viz-ink));
+    font-size: 12px;
+    font-family: inherit;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .center-label {
+    fill: hsl(var(--viz-cat-ink));
+    font-weight: bold;
+    font-size: 14px;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .edge {
+    fill: none;
+    transition: opacity 0.4s ease-out;
+  }
+  .edge-label {
+    fill: hsl(var(--viz-ink-dim));
+    font-size: 10px;
+    font-weight: 500;
+    text-anchor: middle;
+    pointer-events: none;
+    background: hsl(var(--background));
+  }
+
+  .file-sector-line {
+    stroke: hsl(var(--border) / 0.5);
+    stroke-dasharray: 4 4;
+    stroke-width: 1;
+  }
+  .file-sector-label {
+    fill: hsl(var(--muted-foreground));
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .center-stats {
+    fill: hsl(var(--muted-foreground));
+    font-size: 12px;
+    text-anchor: middle;
+    pointer-events: none;
+    opacity: 0.7;
+  }
+
+  /* Tooltip */
+  #tooltip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    padding: 1rem;
+    border-radius: var(--radius);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 20;
+    max-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .tt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .tt-name { font-weight: 600; font-size: 1rem; word-break: break-all; }
+  .tt-type { font-size: 0.75rem; color: hsl(var(--muted-foreground)); font-family: monospace; }
+  .tt-file { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+  .tt-role {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 12px;
+    color: hsl(var(--viz-cat-ink));
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .tt-stats {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.8rem;
+    color: hsl(var(--viz-ink-dim));
+    margin-top: 0.25rem;
+  }
+  .tt-doc {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    border-top: 1px solid hsl(var(--border));
+    padding-top: 0.5rem;
+  }
+
+  /* Legend & Banners */
+  .legend {
+    position: absolute;
+    bottom: 50px;
+    left: 1.5rem;
+    background: hsl(var(--card) / 0.9);
+    backdrop-filter: blur(4px);
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-size: 0.8rem;
+    z-index: 10;
+  }
+  .legend h4 { margin: 0 0 0.5rem 0; font-size: 0.85rem; }
+  .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+  .legend-color { width: 12px; height: 12px; border-radius: 50%; }
+
+  .resolution-banner {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: hsl(var(--card));
+    border-top: 1px solid hsl(var(--border));
+    padding: 0.5rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    z-index: 10;
+  }
+  .res-bar-container {
+    width: 200px;
+    height: 6px;
+    background: hsl(var(--muted));
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0 1rem;
+  }
+  .res-bar-fill {
+    height: 100%;
+    background: hsl(var(--success));
+    width: 29%;
+  }
+  .res-stats { display: flex; align-items: center; }
+  .res-note { color: hsl(var(--muted-foreground)); font-size: 0.75rem; }
+
+  /* Empty State */
+  .empty-state {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 400px;
+    gap: 1rem;
+  }
+  .empty-state h2 { margin: 0; font-size: 1.5rem; }
+  .empty-state p { color: hsl(var(--muted-foreground)); line-height: 1.5; margin: 0; }
+  .empty-icon {
+    width: 64px;
+    height: 64px;
+    color: hsl(var(--muted-foreground));
+    opacity: 0.5;
+  }
+
+  body.is-empty svg { display: none; }
+  body.is-empty .empty-state { display: flex; }
+  body.is-empty .breadcrumb,
+  body.is-empty .legend,
+  body.is-empty .resolution-banner { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="caption-area">
+    <div class="caption-title">Mockup C: Radial Hub-and-Spoke Explorer</div>
+    <div class="caption-subtitle">
+      Centers on one symbol and shows what it connects to — answering "what runs when this is called".<br>
+      Prioritizes: Call-chain exploration, navigability, answering the core question.<br>
+      React Flow: Departure — needs radial positioning + recentering animation. Could use React Flow with precomputed absolute positions.
+    </div>
+  </div>
+  <div class="controls">
+    <button onclick="toggleTheme()">Toggle Dark Mode</button>
+    <button onclick="toggleEmpty()">Toggle Empty State</button>
+  </div>
+</header>
+
+<main>
+  <div class="breadcrumb" id="breadcrumb">
+    <button class="back-button" onclick="goBack()" style="display:none;" id="btn-back">← Back</button>
+    <span class="breadcrumb-item active">run_analysis</span>
+  </div>
+
+  <svg id="canvas" viewBox="-500 -500 1000 1000">
+    <defs>
+      <!-- Arrowheads for different colors -->
+      <marker id="arrow-core" viewBox="0 0 10 10" refX="25" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--viz-cat-4))" />
+      </marker>
+      <marker id="arrow-helper" viewBox="0 0 10 10" refX="20" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--viz-cat-2))" />
+      </marker>
+      <marker id="arrow-utility" viewBox="0 0 10 10" refX="20" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--viz-cat-3))" />
+      </marker>
+      <marker id="arrow-leaf" viewBox="0 0 10 10" refX="15" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--border))" />
+      </marker>
+      
+      <!-- Paths for edge labels -->
+      <g id="edge-paths"></g>
+    </defs>
+    
+    <g id="sectors"></g>
+    <g id="edges"></g>
+    <g id="nodes"></g>
+    <text class="center-stats" y="100">150 symbols · 29% resolved<br>488 hidden symbols</text>
+  </svg>
+
+  <div class="empty-state">
+    <svg class="empty-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+    </svg>
+    <h2>No Graph Data Available</h2>
+    <p>We couldn't build a knowledge graph for this workspace. This usually happens if the workspace is empty or doesn't contain recognized code files.</p>
+  </div>
+
+  <div class="legend">
+    <h4>Symbol Roles</h4>
+    <div class="legend-item"><div class="legend-color" style="background: hsl(var(--viz-cat-4))"></div> Core Module</div>
+    <div class="legend-item"><div class="legend-color" style="background: hsl(var(--viz-cat-2))"></div> Internal Helper</div>
+    <div class="legend-item"><div class="legend-color" style="background: hsl(var(--viz-cat-3))"></div> Shared Utility</div>
+    <div class="legend-item"><div class="legend-color" style="background: hsl(var(--viz-cat-1))"></div> Leaf</div>
+    <div class="legend-item"><div class="legend-color" style="background: hsl(var(--viz-cat-5))"></div> Test</div>
+    <h4 style="margin-top:0.75rem;">Topology</h4>
+    <div style="color:hsl(var(--muted-foreground)); font-size:0.75rem;">
+      Center = Current Focus<br>
+      Ring 1 = Direct connections<br>
+      Ring 2 = 2nd-degree connections
+    </div>
+  </div>
+
+  <div class="resolution-banner">
+    <div class="res-stats">
+      <strong>810 resolved</strong> &nbsp;·&nbsp; 1,997 unresolved
+      <div class="res-bar-container">
+        <div class="res-bar-fill"></div>
+      </div>
+      29% resolution rate
+    </div>
+    <div class="res-note">Name-based resolution, no type inference. Unresolved calls dropped.</div>
+  </div>
+
+  <div id="tooltip">
+    <div class="tt-header">
+      <div>
+        <div class="tt-name" id="tt-name">run_analysis</div>
+        <div class="tt-type" id="tt-type">FunctionDef</div>
+      </div>
+      <div class="tt-role" id="tt-role" style="background: hsl(var(--viz-cat-4))">core_module</div>
+    </div>
+    <div class="tt-file" id="tt-file">orchestrator.py:12-45</div>
+    <div class="tt-stats">
+      <span id="tt-imp">Imp: 52.71</span>
+      <span id="tt-deg">In: 0 | Out: 8</span>
+    </div>
+    <div class="tt-doc" id="tt-doc">Main orchestrator function that triggers directory traversal, AST parsing, and graph assembly.</div>
+  </div>
+
+</main>
+
+<script>
+  function toggleTheme() {
+    const isDark = document.body.getAttribute('data-theme') === 'dark';
+    document.body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  }
+
+  function toggleEmpty() {
+    document.body.classList.toggle('is-empty');
+  }
+
+  // --- Dummy Data Generation ---
+  const roles = {
+    core_module: { color: '--viz-cat-4', marker: 'url(#arrow-core)' },
+    internal_helper: { color: '--viz-cat-2', marker: 'url(#arrow-helper)' },
+    shared_utility: { color: '--viz-cat-3', marker: 'url(#arrow-utility)' },
+    leaf: { color: '--viz-cat-1', marker: 'url(#arrow-leaf)' },
+    test: { color: '--viz-cat-5', marker: 'url(#arrow-leaf)' }
+  };
+
+  const files = ['orchestrator.py', 'parser.py', 'graph_builder.py', 'utils.py', 'models.py', 'scoring.py'];
+  
+  // Center node
+  const nodes = [
+    { id: 'run_analysis', label: 'run_analysis', type: 'FunctionDef', file: 'orchestrator.py', line: '12-45', role: 'core_module', importance: 52.71, inDeg: 0, outDeg: 8, doc: 'Main orchestrator function that triggers directory traversal, AST parsing, and graph assembly.', ring: 0 }
+  ];
+
+  // Ring 1 nodes (8 nodes)
+  const ring1Names = ['classify_files', 'build_symbol_graph', 'traverse_directory', 'assemble_graph', 'compute_pagerank', 'CacheStore.get', 'setup_logger', '_init_state'];
+  ring1Names.forEach((name, i) => {
+    const file = files[i % files.length];
+    let role = 'internal_helper';
+    if(name.includes('CacheStore') || name.includes('logger')) role = 'shared_utility';
+    if(name.includes('build_symbol_graph') || name.includes('compute_pagerank')) role = 'core_module';
+    
+    nodes.push({
+      id: name, label: name, type: name.includes('.') ? 'MethodDef' : 'FunctionDef', file, line: '10-20', role, importance: 20 + Math.random()*15, inDeg: 1, outDeg: 3, doc: `Helper for ${name}.`, ring: 1
+    });
+  });
+
+  // Ring 2 nodes (41 nodes to make 50 total)
+  for(let i=0; i<41; i++) {
+    const file = files[i % files.length];
+    let role = 'leaf';
+    if(i%5===0) role = 'internal_helper';
+    nodes.push({
+      id: `node2_${i}`, label: i%3===0 ? `_resolve_${i}` : `normalize_${i}`, type: 'FunctionDef', file, line: '1-5', role, importance: 3 + Math.random()*5, inDeg: 1, outDeg: 0, doc: 'Low level utility function.', ring: 2
+    });
+  }
+
+  // Edges
+  const edges = [];
+  // Center to Ring 1
+  ring1Names.forEach(r1 => {
+    edges.push({ source: 'run_analysis', target: r1, label: r1==='CacheStore.get' ? 'inherits' : 'calls' });
+  });
+
+  // Ring 1 to Ring 2 (distribute 41 nodes among 8 ring 1 nodes)
+  for(let i=0; i<41; i++) {
+    const source = ring1Names[i % 8];
+    edges.push({ source, target: `node2_${i}`, label: 'calls' });
+  }
+  
+  // Add some cross edges
+  for(let i=0; i<8; i++) {
+    edges.push({ source: ring1Names[i], target: ring1Names[(i+1)%8], label: 'calls' });
+  }
+
+  // --- Rendering ---
+  const svgNodes = document.getElementById('nodes');
+  const svgEdges = document.getElementById('edges');
+  const svgSectors = document.getElementById('sectors');
+  
+  let currentCenterId = 'run_analysis';
+  let navHistory = ['run_analysis'];
+
+  function renderGraph(centerId) {
+    svgNodes.innerHTML = '';
+    svgEdges.innerHTML = '';
+    svgSectors.innerHTML = '';
+
+    // Simple Breadcrumb update
+    const bc = document.getElementById('breadcrumb');
+    let bcHtml = `<button class="back-button" onclick="goBack()" style="${navHistory.length > 1 ? '' : 'display:none;'}">← Back</button>`;
+    navHistory.forEach((id, idx) => {
+      if(idx > 0) bcHtml += `<span class="breadcrumb-separator">/</span>`;
+      bcHtml += `<span class="breadcrumb-item ${idx === navHistory.length-1 ? 'active' : ''}" onclick="goToHistory(${idx})">${id}</span>`;
+    });
+    bc.innerHTML = bcHtml;
+
+    // Relayout based on centerId (simulated)
+    // Find neighbors of centerId
+    const cNode = nodes.find(n => n.id === centerId);
+    
+    // In a real app we'd do a BFS, here we just fake the rings
+    let r0 = [cNode];
+    let r1 = [];
+    let r2 = [];
+    
+    // Find outgoing edges from center
+    const outEdges = edges.filter(e => e.source === centerId);
+    const inEdges = edges.filter(e => e.target === centerId);
+    
+    outEdges.forEach(e => {
+      const n = nodes.find(x => x.id === e.target);
+      if(n && !r1.includes(n)) r1.push(n);
+    });
+    inEdges.forEach(e => {
+      const n = nodes.find(x => x.id === e.source);
+      if(n && !r1.includes(n)) r1.push(n);
+    });
+    
+    if(r1.length === 0) {
+      // If it's a leaf, just show it and its parents in r1 for visualization
+      const pEdges = edges.filter(e => e.target === centerId);
+      pEdges.forEach(e => {
+        const n = nodes.find(x => x.id === e.source);
+        if(n && !r1.includes(n)) r1.push(n);
+      });
+    }
+
+    // Assign positions
+    cNode.x = 0; cNode.y = 0;
+    
+    // Group r1 by file for sectors
+    const filesInR1 = [...new Set(r1.map(n => n.file))];
+    const anglePerFile = (Math.PI * 2) / Math.max(1, filesInR1.length);
+    
+    // Draw sectors
+    filesInR1.forEach((f, i) => {
+      const startAngle = i * anglePerFile;
+      const endAngle = (i+1) * anglePerFile;
+      const midAngle = startAngle + anglePerFile/2;
+      
+      const rOuter = 450;
+      const x1 = Math.cos(startAngle) * rOuter;
+      const y1 = Math.sin(startAngle) * rOuter;
+      
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', 0); line.setAttribute('y1', 0);
+      line.setAttribute('x2', x1); line.setAttribute('y2', y1);
+      line.setAttribute('class', 'file-sector-line');
+      svgSectors.appendChild(line);
+      
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      const tx = Math.cos(midAngle) * 420;
+      const ty = Math.sin(midAngle) * 420;
+      text.setAttribute('x', tx); text.setAttribute('y', ty);
+      text.setAttribute('class', 'file-sector-label');
+      text.setAttribute('text-anchor', 'middle');
+      // Rotate text
+      const deg = midAngle * (180/Math.PI);
+      text.setAttribute('transform', `rotate(${deg > 90 && deg < 270 ? deg + 180 : deg}, ${tx}, ${ty})`);
+      text.textContent = f;
+      svgSectors.appendChild(text);
+    });
+
+    r1.forEach((n, i) => {
+      const fileIdx = filesInR1.indexOf(n.file);
+      const nodesInFile = r1.filter(x => x.file === n.file);
+      const idxInFile = nodesInFile.indexOf(n);
+      
+      const baseAngle = fileIdx * anglePerFile;
+      const spread = anglePerFile * 0.8;
+      let angle = baseAngle + (anglePerFile/2);
+      if(nodesInFile.length > 1) {
+        angle = baseAngle + (anglePerFile - spread)/2 + (spread / (nodesInFile.length-1)) * idxInFile;
+      }
+      
+      const radius = 200;
+      n.x = Math.cos(angle) * radius;
+      n.y = Math.sin(angle) * radius;
+    });
+
+    // Dummy positions for R2 just to show them around R1
+    r1.forEach(r1n => {
+      const r1Edges = edges.filter(e => e.source === r1n.id && e.target !== centerId);
+      const r2Nodes = r1Edges.map(e => nodes.find(x => x.id === e.target)).filter(x=>x);
+      
+      const baseAngle = Math.atan2(r1n.y, r1n.x);
+      r2Nodes.forEach((n, j) => {
+        if(!r2.includes(n)) {
+          const a = baseAngle + (j - (r2Nodes.length-1)/2) * 0.15;
+          const r = 380;
+          n.x = Math.cos(a) * r;
+          n.y = Math.sin(a) * r;
+          r2.push(n);
+        }
+      });
+    });
+
+    const displayNodes = [cNode, ...r1, ...r2];
+    
+    // Draw edges
+    edges.forEach(e => {
+      const s = displayNodes.find(n => n.id === e.source);
+      const t = displayNodes.find(n => n.id === e.target);
+      if(s && t) {
+        const isCenterEdge = s.id === centerId || t.id === centerId;
+        
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        
+        // Curve
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const dr = Math.sqrt(dx * dx + dy * dy);
+        const d = `M ${s.x},${s.y} A ${dr},${dr} 0 0,1 ${t.x},${t.y}`;
+        
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'edge');
+        
+        if(isCenterEdge) {
+          path.setAttribute('stroke', `hsl(var(${roles[t.role].color}))`);
+          path.setAttribute('stroke-width', '2.5');
+          path.setAttribute('marker-end', roles[t.role].marker);
+          
+          // Add text path for label
+          const pathId = `p_${s.id}_${t.id}`;
+          path.setAttribute('id', pathId);
+          
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('class', 'edge-label');
+          text.setAttribute('dy', '-5');
+          const textPath = document.createElementNS('http://www.w3.org/2000/svg', 'textPath');
+          textPath.setAttribute('href', `#${pathId}`);
+          textPath.setAttribute('startOffset', '50%');
+          textPath.textContent = e.label;
+          text.appendChild(textPath);
+          svgEdges.appendChild(path);
+          svgEdges.appendChild(text);
+        } else {
+          path.setAttribute('stroke', `hsl(var(--viz-edge))`);
+          path.setAttribute('stroke-width', '1.2');
+          path.setAttribute('marker-end', 'url(#arrow-leaf)');
+          svgEdges.appendChild(path);
+        }
+      }
+    });
+
+    // Draw nodes
+    displayNodes.forEach(n => {
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('class', `node ${n.id === centerId ? 'center' : ''}`);
+      g.setAttribute('transform', `translate(${n.x}, ${n.y})`);
+      
+      const isCenter = n.id === centerId;
+      const isR1 = r1.includes(n);
+      
+      let radius = 16;
+      if(isCenter) radius = 80;
+      else if(isR1) radius = 30 + (n.importance / 50) * 20; // 30-50px
+      else radius = 16 + (n.importance / 50) * 14; // 16-30px
+      
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', radius);
+      circle.setAttribute('fill', `hsl(var(--viz-surface))`);
+      circle.setAttribute('stroke', `hsl(var(${roles[n.role].color}))`);
+      circle.setAttribute('stroke-width', isCenter ? '4' : '2');
+      circle.setAttribute('class', 'node-circle');
+      if(isCenter) {
+        circle.setAttribute('fill', `hsl(var(${roles[n.role].color}))`);
+      }
+      
+      g.appendChild(circle);
+
+      // Label
+      if(isCenter) {
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('class', 'center-label');
+        text.setAttribute('dy', '5');
+        text.textContent = n.label;
+        g.appendChild(text);
+      } else if (isR1) {
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('class', 'node-label');
+        text.setAttribute('dy', radius + 15);
+        text.textContent = n.label;
+        g.appendChild(text);
+      }
+
+      // Interaction
+      g.addEventListener('mouseenter', (e) => showTooltip(e, n));
+      g.addEventListener('mouseleave', hideTooltip);
+      g.addEventListener('click', () => {
+        if(n.id !== currentCenterId) {
+          hideTooltip();
+          currentCenterId = n.id;
+          navHistory.push(n.id);
+          renderGraph(n.id);
+        }
+      });
+
+      svgNodes.appendChild(g);
+    });
+  }
+
+  function goBack() {
+    if(navHistory.length > 1) {
+      navHistory.pop();
+      currentCenterId = navHistory[navHistory.length - 1];
+      renderGraph(currentCenterId);
+    }
+  }
+
+  function goToHistory(idx) {
+    if(idx < navHistory.length - 1) {
+      navHistory = navHistory.slice(0, idx + 1);
+      currentCenterId = navHistory[navHistory.length - 1];
+      renderGraph(currentCenterId);
+    }
+  }
+
+  const tooltip = document.getElementById('tooltip');
+  function showTooltip(e, n) {
+    document.getElementById('tt-name').textContent = n.label;
+    document.getElementById('tt-type').textContent = n.type;
+    document.getElementById('tt-file').textContent = `${n.file}:${n.line}`;
+    document.getElementById('tt-role').textContent = n.role.replace('_', ' ');
+    document.getElementById('tt-role').style.background = `hsl(var(${roles[n.role].color}))`;
+    document.getElementById('tt-imp').textContent = `Imp: ${n.importance.toFixed(2)}`;
+    document.getElementById('tt-deg').textContent = `In: ${n.inDeg} | Out: ${n.outDeg}`;
+    document.getElementById('tt-doc').textContent = n.doc;
+
+    tooltip.style.opacity = 1;
+    tooltip.style.left = (e.clientX + 15) + 'px';
+    tooltip.style.top = (e.clientY + 15) + 'px';
+  }
+  function hideTooltip() {
+    tooltip.style.opacity = 0;
+  }
+
+  // Panning Support
+  const canvas = document.getElementById('canvas');
+  let isDragging = false;
+  let startX, startY;
+  let viewBox = {x: -500, y: -500, w: 1000, h: 1000};
+  
+  canvas.addEventListener('mousedown', e => {
+    if(e.target.closest('.node')) return; // let node click handle
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+  window.addEventListener('mousemove', e => {
+    if(!isDragging) return;
+    const dx = (startX - e.clientX) * (viewBox.w / canvas.clientWidth);
+    const dy = (startY - e.clientY) * (viewBox.h / canvas.clientHeight);
+    canvas.setAttribute('viewBox', `${viewBox.x + dx} ${viewBox.y + dy} ${viewBox.w} ${viewBox.h}`);
+  });
+  window.addEventListener('mouseup', e => {
+    if(isDragging) {
+      const dx = (startX - e.clientX) * (viewBox.w / canvas.clientWidth);
+      const dy = (startY - e.clientY) * (viewBox.h / canvas.clientHeight);
+      viewBox.x += dx;
+      viewBox.y += dy;
+      isDragging = false;
+    }
+  });
+
+  // Init
+  renderGraph(currentCenterId);
+
+</script>
+</body>
+</html>

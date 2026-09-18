@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CodeKavi Knowledge Graph - Inline Expansion</title>
+<style>
+  :root {
+    --background: 30 9% 6%;
+    --foreground: 40 18% 94%;
+    --card: 30 8% 9%;
+    --muted: 30 6% 14%;
+    --muted-foreground: 36 8% 62%;
+    --border: 32 7% 19%;
+    --signal: 34 96% 56%;
+    --destructive: 2 72% 58%;
+    --success: 148 52% 52%;
+    --viz-cat-1: 212 100% 67%;
+    --viz-cat-2: 129 49% 49%;
+    --viz-cat-3: 266 100% 77%;
+    --viz-cat-4: 26 85% 59%;
+    --viz-cat-5: 328 89% 72%;
+    --viz-cat-6: 209 100% 74%;
+    --viz-cat-7: 126 50% 45%;
+    --viz-cat-8: 267 80% 70%;
+    --viz-edge: 32 7% 19%;
+    --radius: 0.5rem;
+    
+    --role-core_module: var(--viz-cat-1);
+    --role-shared_utility: var(--viz-cat-2);
+    --role-internal_helper: var(--viz-cat-3);
+    --role-leaf: var(--viz-cat-4);
+    --role-test: var(--viz-cat-5);
+    --role-orchestrator: var(--viz-cat-6);
+    --role-entry_point: var(--viz-cat-7);
+    --role-router: var(--viz-cat-8);
+    --role-config: 0 0% 50%;
+  }
+  
+  body {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  
+  header {
+    padding: 1rem 2rem;
+    border-bottom: 1px solid hsl(var(--border));
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: hsl(var(--background));
+    z-index: 100;
+  }
+  
+  .status-bar {
+    font-size: 0.875rem;
+    color: hsl(var(--muted-foreground));
+    cursor: help;
+    position: relative;
+  }
+  
+  .status-bar:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    padding: 0.5rem;
+    border-radius: var(--radius);
+    width: 250px;
+    z-index: 1000;
+    color: hsl(var(--foreground));
+    white-space: pre-wrap;
+    margin-top: 0.5rem;
+  }
+  
+  .controls button {
+    background: hsl(var(--card));
+    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--border));
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+  }
+  
+  .controls button.active {
+    background: hsl(var(--signal) / 0.1);
+    border-color: hsl(var(--signal));
+    color: hsl(var(--signal));
+    box-shadow: 0 0 10px hsl(var(--signal) / 0.2);
+  }
+  
+  .controls button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .main-area {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+  }
+  
+  .scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2rem;
+    position: relative;
+  }
+  
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.5rem;
+    position: relative;
+    z-index: 10;
+    grid-auto-flow: dense;
+  }
+  
+  .card {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 400ms ease-out;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    z-index: 1;
+  }
+  
+  .card:hover {
+    border-color: hsl(var(--muted-foreground));
+    transform: translateY(-2px);
+  }
+  
+  .card.expanded {
+    grid-column: span 3;
+    grid-row: span 2;
+    min-height: 400px;
+    border-color: hsl(var(--signal));
+    cursor: default;
+    z-index: 20;
+    transform: none;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+  
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.5rem;
+  }
+  
+  .card-title {
+    font-weight: 600;
+    word-break: break-all;
+  }
+  
+  .card.expanded .card-title {
+    cursor: pointer;
+  }
+  
+  .card.expanded .card-title:hover {
+    text-decoration: underline;
+  }
+  
+  .role-badge {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 1rem;
+    text-transform: uppercase;
+    font-weight: bold;
+    color: hsl(var(--background));
+  }
+  
+  .importance-bar {
+    height: 4px;
+    background: hsl(var(--muted));
+    border-radius: 2px;
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+    width: 100%;
+  }
+  
+  .importance-fill {
+    height: 100%;
+    background: hsl(var(--signal));
+  }
+  
+  .card-meta {
+    font-size: 0.75rem;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 0.5rem;
+  }
+  
+  .top-symbols {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+  }
+  
+  .pill {
+    background: hsl(var(--muted));
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+  }
+  
+  .effects {
+    display: flex;
+    gap: 0.25rem;
+    margin-top: auto;
+  }
+  
+  .effect-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-block;
+    opacity: 0.8;
+  }
+  
+  .effect-filesystem { background: #3b82f6; }
+  .effect-network { background: #f97316; }
+  .effect-cache { background: #a855f7; }
+  .effect-llm { background: #22c55e; }
+  .effect-db { background: #ef4444; }
+  .effect-subprocess { background: #eab308; }
+  .effect-concurrency { background: #14b8a6; }
+  
+  /* Expanded State */
+  .internal-canvas {
+    display: none;
+    flex: 1;
+    background: hsl(var(--background));
+    border-radius: var(--radius);
+    margin-top: 1rem;
+    position: relative;
+    border: 1px solid hsl(var(--border));
+    overflow: hidden;
+  }
+  
+  .card.expanded .internal-canvas {
+    display: block;
+  }
+  
+  .symbol-node {
+    position: absolute;
+    background: hsl(var(--muted));
+    border: 1px solid hsl(var(--border));
+    padding: 0.25rem 0.5rem;
+    border-radius: 1rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    z-index: 2;
+    transition: border-color 0.2s;
+  }
+  
+  .symbol-node:hover, .symbol-node.selected {
+    border-color: hsl(var(--signal));
+    background: hsl(var(--card));
+  }
+  
+  .symbol-badge {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+  }
+  .type-function { background: #a855f7; }
+  .type-class { background: #3b82f6; }
+  .type-method { background: #14b8a6; }
+  
+  .internal-edges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  }
+  
+  /* More Files Section */
+  .more-section {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px dashed hsl(var(--border));
+  }
+  
+  .more-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  
+  .search-bar {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
+    padding: 0.5rem;
+    border-radius: var(--radius);
+    width: 250px;
+  }
+  
+  .mini-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem;
+  }
+  
+  .mini-card {
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    opacity: 0.7;
+  }
+  
+  .mini-card:hover {
+    opacity: 1;
+    border-color: hsl(var(--muted-foreground));
+  }
+  
+  .mini-card .card-title {
+    font-size: 0.75rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .add-btn {
+    background: none;
+    border: none;
+    color: hsl(var(--signal));
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+  }
+  
+  /* Inspector Panel */
+  .inspector {
+    width: 360px;
+    background: hsl(var(--card));
+    border-left: 1px solid hsl(var(--border));
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 300ms ease;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+  }
+  
+  .inspector.open {
+    transform: translateX(0);
+    position: static;
+  }
+  
+  .inspector-header {
+    padding: 1rem;
+    border-bottom: 1px solid hsl(var(--border));
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  
+  .inspector-close {
+    background: none;
+    border: none;
+    color: hsl(var(--muted-foreground));
+    cursor: pointer;
+    font-size: 1.5rem;
+  }
+  
+  .inspector-content {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1;
+  }
+  
+  .inspector h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.25rem;
+    word-break: break-all;
+  }
+  
+  .meta-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  
+  .badge {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 1rem;
+    background: hsl(var(--muted));
+  }
+  
+  .badge.http { background: hsl(var(--viz-cat-4) / 0.2); color: hsl(var(--viz-cat-4)); }
+  .badge.async { background: hsl(var(--viz-cat-1) / 0.2); color: hsl(var(--viz-cat-1)); }
+  
+  .code-block {
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    font-family: monospace;
+    font-size: 0.8rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  
+  .docstring {
+    font-size: 0.9rem;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 1rem;
+    font-style: italic;
+  }
+  
+  .section-title {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    margin: 1rem 0 0.5rem 0;
+    font-weight: 600;
+  }
+  
+  ul.call-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-family: monospace;
+    font-size: 0.8rem;
+  }
+  
+  ul.call-list li {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  
+  /* Concept Overlay */
+  .concept-hull {
+    position: absolute;
+    pointer-events: none;
+    z-index: 5;
+    border-radius: 20px;
+    opacity: 0.15;
+    transition: opacity 0.3s;
+  }
+  .concept-label {
+    position: absolute;
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    pointer-events: auto;
+    cursor: pointer;
+    z-index: 6;
+    border: 1px solid;
+    transform: translate(-50%, -50%);
+  }
+  
+  /* SVG Edges */
+  #global-edges {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+  }
+  
+  .edge-path {
+    fill: none;
+    stroke: hsl(var(--viz-edge));
+    transition: stroke 0.2s, stroke-width 0.2s;
+  }
+  
+  .edge-path.highlighted {
+    stroke: hsl(var(--signal));
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<!-- SCRIPT_PLACEHOLDER -->
+<script>
+// v3-shared-data.js — Shared realistic fake data for all v3 Knowledge Graph mockups.
+// Embed this DATA object at the top of each HTML file's <script> tag.
+// All field names match the real API contract exactly.
+
+const DATA = {
+
+// ═══════════════════════════════════════════════════════════════════
+// OVERVIEW TIER — groups (files) and group_edges (inter-file calls)
+// ═══════════════════════════════════════════════════════════════════
+
+groups: [
+  // ── Drawn groups (25) ──
+  {id:"rune/analyzer.py",label:"analyzer.py",file:"rune/analyzer.py",role:"core_module",importance:92.1,symbol_count:15,top_symbols:["AnalysisEngine","run_analysis","build_call_graph"],effects:["filesystem","cache"],routes:[],drawn:true},
+  {id:"rune/cache.py",label:"cache.py",file:"rune/cache.py",role:"core_module",importance:87.4,symbol_count:8,top_symbols:["AnalysisCache","get_cache","invalidate"],effects:["cache","network"],routes:[],drawn:true},
+  {id:"rune/graph.py",label:"graph.py",file:"rune/graph.py",role:"core_module",importance:84.7,symbol_count:10,top_symbols:["SymbolGraph","compute_pagerank","resolve_edges"],effects:["cache"],routes:[],drawn:true},
+  {id:"rune/classifier.py",label:"classifier.py",file:"rune/classifier.py",role:"core_module",importance:78.3,symbol_count:7,top_symbols:["classify_role","RoleClassifier","score_centrality"],effects:["llm"],routes:[],drawn:true},
+  {id:"rune/traversal.py",label:"traversal.py",file:"rune/traversal.py",role:"core_module",importance:75.6,symbol_count:6,top_symbols:["walk_ast","ASTVisitor","collect_imports"],effects:["filesystem"],routes:[],drawn:true},
+  {id:"rune/indexer.py",label:"indexer.py",file:"rune/indexer.py",role:"core_module",importance:71.2,symbol_count:5,top_symbols:["SymbolIndex","build_index","lookup"],effects:["cache","db"],routes:[],drawn:true},
+  {id:"rune/routes/analyze.py",label:"analyze.py",file:"rune/routes/analyze.py",role:"router",importance:68.5,symbol_count:4,top_symbols:["analyze_endpoint","stream_results","validate_repo"],effects:["network","filesystem"],routes:["POST /analyze","POST /analyze/stream"],drawn:true},
+  {id:"rune/routes/visualize.py",label:"visualize.py",file:"rune/routes/visualize.py",role:"router",importance:52.3,symbol_count:4,top_symbols:["get_knowledge","get_dependency","get_file_tree"],effects:["network","cache"],routes:["GET /visualize/knowledge","GET /visualize/dependency"],drawn:true},
+  {id:"rune/routes/health.py",label:"health.py",file:"rune/routes/health.py",role:"router",importance:22.1,symbol_count:2,top_symbols:["health_check","readiness"],effects:["network"],routes:["GET /health"],drawn:true},
+  {id:"rune/models.py",label:"models.py",file:"rune/models.py",role:"shared_utility",importance:65.8,symbol_count:8,top_symbols:["Repository","SymbolNode","EdgeRecord"],effects:[],routes:[],drawn:true},
+  {id:"rune/utils.py",label:"utils.py",file:"rune/utils.py",role:"shared_utility",importance:58.4,symbol_count:5,top_symbols:["hash_content","normalize_path","timer"],effects:["filesystem"],routes:[],drawn:true},
+  {id:"rune/schema.py",label:"schema.py",file:"rune/schema.py",role:"shared_utility",importance:45.2,symbol_count:4,top_symbols:["RepoSchema","SymbolSchema","validate_payload"],effects:[],routes:[],drawn:true},
+  {id:"rune/exceptions.py",label:"exceptions.py",file:"rune/exceptions.py",role:"shared_utility",importance:32.6,symbol_count:3,top_symbols:["AnalysisError","ParseError","QuotaExceeded"],effects:[],routes:[],drawn:true},
+  {id:"rune/parsers/python_parser.py",label:"python_parser.py",file:"rune/parsers/python_parser.py",role:"internal_helper",importance:61.3,symbol_count:5,top_symbols:["PythonParser","parse_module","extract_decorators"],effects:["filesystem"],routes:[],drawn:true},
+  {id:"rune/parsers/js_parser.py",label:"js_parser.py",file:"rune/parsers/js_parser.py",role:"internal_helper",importance:42.7,symbol_count:4,top_symbols:["JSParser","parse_module","extract_exports"],effects:["filesystem"],routes:[],drawn:true},
+  {id:"rune/parsers/tree_sitter.py",label:"tree_sitter.py",file:"rune/parsers/tree_sitter.py",role:"internal_helper",importance:55.1,symbol_count:4,top_symbols:["TreeSitterWrapper","parse_source","get_node_text"],effects:["subprocess"],routes:[],drawn:true},
+  {id:"rune/parsers/base_parser.py",label:"base_parser.py",file:"rune/parsers/base_parser.py",role:"internal_helper",importance:48.9,symbol_count:3,top_symbols:["BaseParser","parse","get_symbols"],effects:[],routes:[],drawn:true},
+  {id:"rune/llm/client.py",label:"client.py",file:"rune/llm/client.py",role:"orchestrator",importance:63.7,symbol_count:5,top_symbols:["LLMClient","generate","batch_embed"],effects:["network","llm"],routes:[],drawn:true},
+  {id:"rune/llm/prompts.py",label:"prompts.py",file:"rune/llm/prompts.py",role:"internal_helper",importance:38.4,symbol_count:3,top_symbols:["build_prompt","CLASSIFY_TEMPLATE","CONCEPT_TEMPLATE"],effects:[],routes:[],drawn:true},
+  {id:"rune/llm/embeddings.py",label:"embeddings.py",file:"rune/llm/embeddings.py",role:"internal_helper",importance:44.8,symbol_count:4,top_symbols:["embed_symbols","EmbeddingStore","cosine_sim"],effects:["network","llm","cache"],routes:[],drawn:true},
+  {id:"rune/storage/redis_store.py",label:"redis_store.py",file:"rune/storage/redis_store.py",role:"leaf",importance:36.5,symbol_count:3,top_symbols:["RedisStore","connect","flush"],effects:["network","cache"],routes:[],drawn:true},
+  {id:"rune/storage/git_ops.py",label:"git_ops.py",file:"rune/storage/git_ops.py",role:"leaf",importance:41.2,symbol_count:4,top_symbols:["clone_repo","get_diff","list_files"],effects:["filesystem","subprocess"],routes:[],drawn:true},
+  {id:"rune/main.py",label:"main.py",file:"rune/main.py",role:"entry_point",importance:50.8,symbol_count:3,top_symbols:["main","create_app","setup_logging"],effects:["filesystem","network"],routes:[],drawn:true},
+  {id:"rune/cli.py",label:"cli.py",file:"rune/cli.py",role:"entry_point",importance:46.3,symbol_count:3,top_symbols:["cli","analyze_cmd","serve_cmd"],effects:["filesystem","network"],routes:[],drawn:true},
+  {id:"rune/config.py",label:"config.py",file:"rune/config.py",role:"config",importance:34.7,symbol_count:3,top_symbols:["Settings","load_config","DEFAULTS"],effects:["filesystem"],routes:[],drawn:true},
+  // ── Non-drawn groups (20) ──
+  {id:"rune/routes/auth.py",label:"auth.py",file:"rune/routes/auth.py",role:"router",importance:18.3,symbol_count:3,top_symbols:["verify_token","require_auth"],effects:["network"],routes:["POST /auth/verify"],drawn:false},
+  {id:"rune/routes/repos.py",label:"repos.py",file:"rune/routes/repos.py",role:"router",importance:15.7,symbol_count:2,top_symbols:["list_repos","delete_repo"],effects:["network","db"],routes:["GET /repos"],drawn:false},
+  {id:"rune/middleware.py",label:"middleware.py",file:"rune/middleware.py",role:"shared_utility",importance:14.2,symbol_count:3,top_symbols:["cors_middleware","rate_limiter"],effects:["network"],routes:[],drawn:false},
+  {id:"rune/quota.py",label:"quota.py",file:"rune/quota.py",role:"internal_helper",importance:12.8,symbol_count:2,top_symbols:["check_quota","QuotaManager"],effects:["db","cache"],routes:[],drawn:false},
+  {id:"rune/parsers/go_parser.py",label:"go_parser.py",file:"rune/parsers/go_parser.py",role:"internal_helper",importance:11.4,symbol_count:3,top_symbols:["GoParser","parse_package"],effects:["filesystem"],routes:[],drawn:false},
+  {id:"rune/parsers/ruby_parser.py",label:"ruby_parser.py",file:"rune/parsers/ruby_parser.py",role:"internal_helper",importance:9.6,symbol_count:2,top_symbols:["RubyParser","parse_file"],effects:["filesystem"],routes:[],drawn:false},
+  {id:"rune/parsers/java_parser.py",label:"java_parser.py",file:"rune/parsers/java_parser.py",role:"internal_helper",importance:10.2,symbol_count:3,top_symbols:["JavaParser","parse_class"],effects:["filesystem"],routes:[],drawn:false},
+  {id:"rune/formatters/html.py",label:"html.py",file:"rune/formatters/html.py",role:"leaf",importance:8.1,symbol_count:2,top_symbols:["render_html","HTMLFormatter"],effects:[],routes:[],drawn:false},
+  {id:"rune/formatters/json.py",label:"json.py",file:"rune/formatters/json.py",role:"leaf",importance:7.5,symbol_count:2,top_symbols:["render_json","JSONFormatter"],effects:[],routes:[],drawn:false},
+  {id:"rune/formatters/markdown.py",label:"markdown.py",file:"rune/formatters/markdown.py",role:"leaf",importance:6.9,symbol_count:2,top_symbols:["render_markdown"],effects:[],routes:[],drawn:false},
+  {id:"rune/migrations/001_init.py",label:"001_init.py",file:"rune/migrations/001_init.py",role:"config",importance:5.2,symbol_count:2,top_symbols:["upgrade","downgrade"],effects:["db"],routes:[],drawn:false},
+  {id:"rune/migrations/002_add_cache.py",label:"002_add_cache.py",file:"rune/migrations/002_add_cache.py",role:"config",importance:4.8,symbol_count:2,top_symbols:["upgrade","downgrade"],effects:["db"],routes:[],drawn:false},
+  {id:"rune/tests/test_analyzer.py",label:"test_analyzer.py",file:"rune/tests/test_analyzer.py",role:"test",importance:6.4,symbol_count:4,top_symbols:["TestAnalysisEngine","test_run"],effects:[],routes:[],drawn:false},
+  {id:"rune/tests/test_cache.py",label:"test_cache.py",file:"rune/tests/test_cache.py",role:"test",importance:5.8,symbol_count:3,top_symbols:["TestCache","test_invalidate"],effects:[],routes:[],drawn:false},
+  {id:"rune/tests/test_graph.py",label:"test_graph.py",file:"rune/tests/test_graph.py",role:"test",importance:5.1,symbol_count:3,top_symbols:["TestGraph","test_pagerank"],effects:[],routes:[],drawn:false},
+  {id:"rune/tests/test_parser.py",label:"test_parser.py",file:"rune/tests/test_parser.py",role:"test",importance:4.5,symbol_count:2,top_symbols:["TestPythonParser"],effects:[],routes:[],drawn:false},
+  {id:"rune/tests/test_routes.py",label:"test_routes.py",file:"rune/tests/test_routes.py",role:"test",importance:4.2,symbol_count:3,top_symbols:["TestAnalyzeRoute","test_stream"],effects:[],routes:[],drawn:false},
+  {id:"rune/tests/conftest.py",label:"conftest.py",file:"rune/tests/conftest.py",role:"test",importance:3.8,symbol_count:2,top_symbols:["app_fixture","db_fixture"],effects:[],routes:[],drawn:false},
+  {id:"rune/logging_config.py",label:"logging_config.py",file:"rune/logging_config.py",role:"config",importance:3.1,symbol_count:1,top_symbols:["configure_logging"],effects:["filesystem"],routes:[],drawn:false},
+  {id:"rune/__init__.py",label:"__init__.py",file:"rune/__init__.py",role:"config",importance:2.4,symbol_count:1,top_symbols:["__version__"],effects:[],routes:[],drawn:false},
+],
+
+group_edges: [
+  // Entry points → core
+  {source:"rune/main.py",target:"rune/analyzer.py",weight:8},
+  {source:"rune/main.py",target:"rune/config.py",weight:3},
+  {source:"rune/main.py",target:"rune/cache.py",weight:2},
+  {source:"rune/cli.py",target:"rune/main.py",weight:4},
+  {source:"rune/cli.py",target:"rune/config.py",weight:3},
+  {source:"rune/cli.py",target:"rune/analyzer.py",weight:2},
+  // Routes → core
+  {source:"rune/routes/analyze.py",target:"rune/analyzer.py",weight:12},
+  {source:"rune/routes/analyze.py",target:"rune/cache.py",weight:7},
+  {source:"rune/routes/analyze.py",target:"rune/models.py",weight:4},
+  {source:"rune/routes/analyze.py",target:"rune/schema.py",weight:3},
+  {source:"rune/routes/analyze.py",target:"rune/exceptions.py",weight:2},
+  {source:"rune/routes/visualize.py",target:"rune/graph.py",weight:9},
+  {source:"rune/routes/visualize.py",target:"rune/cache.py",weight:5},
+  {source:"rune/routes/visualize.py",target:"rune/models.py",weight:3},
+  {source:"rune/routes/visualize.py",target:"rune/classifier.py",weight:2},
+  {source:"rune/routes/health.py",target:"rune/cache.py",weight:1},
+  {source:"rune/routes/health.py",target:"rune/config.py",weight:1},
+  // Analyzer → everything
+  {source:"rune/analyzer.py",target:"rune/cache.py",weight:9},
+  {source:"rune/analyzer.py",target:"rune/graph.py",weight:11},
+  {source:"rune/analyzer.py",target:"rune/classifier.py",weight:6},
+  {source:"rune/analyzer.py",target:"rune/traversal.py",weight:14},
+  {source:"rune/analyzer.py",target:"rune/indexer.py",weight:5},
+  {source:"rune/analyzer.py",target:"rune/models.py",weight:8},
+  {source:"rune/analyzer.py",target:"rune/utils.py",weight:6},
+  {source:"rune/analyzer.py",target:"rune/exceptions.py",weight:3},
+  {source:"rune/analyzer.py",target:"rune/config.py",weight:2},
+  {source:"rune/analyzer.py",target:"rune/parsers/python_parser.py",weight:7},
+  {source:"rune/analyzer.py",target:"rune/parsers/js_parser.py",weight:4},
+  {source:"rune/analyzer.py",target:"rune/parsers/tree_sitter.py",weight:3},
+  {source:"rune/analyzer.py",target:"rune/llm/client.py",weight:5},
+  {source:"rune/analyzer.py",target:"rune/storage/git_ops.py",weight:6},
+  // Graph → helpers
+  {source:"rune/graph.py",target:"rune/models.py",weight:7},
+  {source:"rune/graph.py",target:"rune/utils.py",weight:4},
+  {source:"rune/graph.py",target:"rune/classifier.py",weight:5},
+  {source:"rune/graph.py",target:"rune/indexer.py",weight:3},
+  {source:"rune/graph.py",target:"rune/exceptions.py",weight:2},
+  // Classifier → helpers
+  {source:"rune/classifier.py",target:"rune/graph.py",weight:4},
+  {source:"rune/classifier.py",target:"rune/models.py",weight:5},
+  {source:"rune/classifier.py",target:"rune/llm/client.py",weight:6},
+  {source:"rune/classifier.py",target:"rune/llm/prompts.py",weight:3},
+  {source:"rune/classifier.py",target:"rune/utils.py",weight:2},
+  // Traversal → parsers
+  {source:"rune/traversal.py",target:"rune/parsers/python_parser.py",weight:8},
+  {source:"rune/traversal.py",target:"rune/parsers/js_parser.py",weight:5},
+  {source:"rune/traversal.py",target:"rune/parsers/tree_sitter.py",weight:6},
+  {source:"rune/traversal.py",target:"rune/parsers/base_parser.py",weight:4},
+  {source:"rune/traversal.py",target:"rune/models.py",weight:3},
+  {source:"rune/traversal.py",target:"rune/utils.py",weight:5},
+  // Indexer
+  {source:"rune/indexer.py",target:"rune/cache.py",weight:6},
+  {source:"rune/indexer.py",target:"rune/models.py",weight:4},
+  {source:"rune/indexer.py",target:"rune/storage/redis_store.py",weight:5},
+  {source:"rune/indexer.py",target:"rune/utils.py",weight:2},
+  // Cache → storage
+  {source:"rune/cache.py",target:"rune/storage/redis_store.py",weight:8},
+  {source:"rune/cache.py",target:"rune/models.py",weight:3},
+  {source:"rune/cache.py",target:"rune/config.py",weight:2},
+  {source:"rune/cache.py",target:"rune/utils.py",weight:3},
+  {source:"rune/cache.py",target:"rune/exceptions.py",weight:1},
+  // Parsers cross-calls
+  {source:"rune/parsers/python_parser.py",target:"rune/parsers/base_parser.py",weight:6},
+  {source:"rune/parsers/python_parser.py",target:"rune/parsers/tree_sitter.py",weight:4},
+  {source:"rune/parsers/python_parser.py",target:"rune/models.py",weight:3},
+  {source:"rune/parsers/js_parser.py",target:"rune/parsers/base_parser.py",weight:5},
+  {source:"rune/parsers/js_parser.py",target:"rune/parsers/tree_sitter.py",weight:3},
+  {source:"rune/parsers/js_parser.py",target:"rune/models.py",weight:2},
+  {source:"rune/parsers/tree_sitter.py",target:"rune/parsers/base_parser.py",weight:3},
+  {source:"rune/parsers/tree_sitter.py",target:"rune/utils.py",weight:2},
+  // LLM
+  {source:"rune/llm/client.py",target:"rune/llm/prompts.py",weight:5},
+  {source:"rune/llm/client.py",target:"rune/llm/embeddings.py",weight:4},
+  {source:"rune/llm/client.py",target:"rune/config.py",weight:3},
+  {source:"rune/llm/client.py",target:"rune/exceptions.py",weight:2},
+  {source:"rune/llm/client.py",target:"rune/cache.py",weight:3},
+  {source:"rune/llm/embeddings.py",target:"rune/cache.py",weight:4},
+  {source:"rune/llm/embeddings.py",target:"rune/models.py",weight:2},
+  {source:"rune/llm/embeddings.py",target:"rune/storage/redis_store.py",weight:3},
+  // Storage
+  {source:"rune/storage/redis_store.py",target:"rune/config.py",weight:3},
+  {source:"rune/storage/redis_store.py",target:"rune/exceptions.py",weight:1},
+  {source:"rune/storage/git_ops.py",target:"rune/config.py",weight:2},
+  {source:"rune/storage/git_ops.py",target:"rune/utils.py",weight:3},
+  {source:"rune/storage/git_ops.py",target:"rune/exceptions.py",weight:1},
+  // Schema / utils / models cross-usage
+  {source:"rune/schema.py",target:"rune/models.py",weight:6},
+  {source:"rune/schema.py",target:"rune/exceptions.py",weight:2},
+  {source:"rune/utils.py",target:"rune/config.py",weight:2},
+  {source:"rune/utils.py",target:"rune/exceptions.py",weight:1},
+  {source:"rune/models.py",target:"rune/exceptions.py",weight:2},
+  {source:"rune/models.py",target:"rune/utils.py",weight:3},
+  // Misc
+  {source:"rune/config.py",target:"rune/exceptions.py",weight:1},
+  {source:"rune/indexer.py",target:"rune/graph.py",weight:3},
+  {source:"rune/indexer.py",target:"rune/exceptions.py",weight:1},
+],
+
+// ═══════════════════════════════════════════════════════════════════
+// DRILL-DOWN TIER — individual symbols and call/inherit edges
+// ═══════════════════════════════════════════════════════════════════
+
+nodes: [
+  // ── rune/analyzer.py (15 symbols) ──
+  {id:"rune/analyzer.py::AnalysisEngine",label:"AnalysisEngine",type:"class",file:"rune/analyzer.py",line:28,loc:340,doc:"Central engine orchestrating multi-file repo analysis.",signature:"(repo: Repository, config: Settings)",is_async:false,http:null,external_calls:["json.dumps","hashlib.sha256"],effects:["filesystem","cache"],in_degree:12,out_degree:8,role:"core_module",importance:92.1},
+  {id:"rune/analyzer.py::run_analysis",label:"run_analysis",type:"method",file:"rune/analyzer.py",line:45,loc:85,doc:"Run full analysis pipeline on a cloned repository.",signature:"(self, repo_path: Path, depth: int = 3) -> AnalysisResult",is_async:true,http:null,external_calls:["asyncio.gather","time.monotonic"],effects:["filesystem","cache"],in_degree:9,out_degree:6,role:"core_module",importance:88.5},
+  {id:"rune/analyzer.py::analyze_file",label:"analyze_file",type:"method",file:"rune/analyzer.py",line:132,loc:42,doc:"Parse a single source file and extract symbols.",signature:"(self, path: Path) -> list[SymbolNode]",is_async:false,http:null,external_calls:["os.path.splitext"],effects:["filesystem"],in_degree:4,out_degree:5,role:"core_module",importance:72.3},
+  {id:"rune/analyzer.py::merge_results",label:"merge_results",type:"method",file:"rune/analyzer.py",line:176,loc:28,doc:"Combine per-file results into a unified analysis.",signature:"(self, results: list[AnalysisResult]) -> AnalysisResult",is_async:false,http:null,external_calls:["itertools.chain"],effects:[],in_degree:3,out_degree:2,role:"core_module",importance:54.2},
+  {id:"rune/analyzer.py::validate_input",label:"validate_input",type:"function",file:"rune/analyzer.py",line:206,loc:15,doc:"Validate repo URL or path before analysis begins.",signature:"(source: str) -> tuple[str, str]",is_async:false,http:null,external_calls:["urllib.parse.urlparse"],effects:[],in_degree:5,out_degree:1,role:"core_module",importance:41.8},
+  {id:"rune/analyzer.py::create_snapshot",label:"create_snapshot",type:"function",file:"rune/analyzer.py",line:223,loc:22,doc:"Snapshot current analysis state for incremental updates.",signature:"(result: AnalysisResult, cache: AnalysisCache) -> str",is_async:false,http:null,external_calls:["json.dumps","gzip.compress"],effects:["filesystem","cache"],in_degree:2,out_degree:3,role:"core_module",importance:35.6},
+  {id:"rune/analyzer.py::AnalysisResult",label:"AnalysisResult",type:"class",file:"rune/analyzer.py",line:247,loc:95,doc:"Immutable container for completed analysis output.",signature:"(symbols: list, edges: list, metadata: dict)",is_async:false,http:null,external_calls:[],effects:[],in_degree:7,out_degree:3,role:"core_module",importance:67.4},
+  {id:"rune/analyzer.py::to_dict",label:"to_dict",type:"method",file:"rune/analyzer.py",line:260,loc:12,doc:null,signature:"(self) -> dict",is_async:false,http:null,external_calls:["json.dumps"],effects:[],in_degree:6,out_degree:0,role:"core_module",importance:28.9},
+  {id:"rune/analyzer.py::from_cache",label:"from_cache",type:"method",file:"rune/analyzer.py",line:274,loc:18,doc:"Reconstruct an AnalysisResult from cache bytes.",signature:"(cls, data: bytes) -> AnalysisResult",is_async:false,http:null,external_calls:["json.loads","gzip.decompress"],effects:["cache"],in_degree:4,out_degree:2,role:"core_module",importance:38.1},
+  {id:"rune/analyzer.py::SymbolExtractor",label:"SymbolExtractor",type:"class",file:"rune/analyzer.py",line:294,loc:120,doc:"Walks parsed AST to extract function, class, and method nodes.",signature:"(language: str, config: Settings)",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:5,role:"core_module",importance:61.7},
+  {id:"rune/analyzer.py::extract_symbols",label:"extract_symbols",type:"method",file:"rune/analyzer.py",line:310,loc:45,doc:"Extract all symbol definitions from parsed AST.",signature:"(self, tree: Tree) -> list[SymbolNode]",is_async:false,http:null,external_calls:[],effects:[],in_degree:6,out_degree:4,role:"core_module",importance:58.3},
+  {id:"rune/analyzer.py::resolve_references",label:"resolve_references",type:"method",file:"rune/analyzer.py",line:357,loc:52,doc:"Match call sites to their definitions across files.",signature:"(self, symbols: list[SymbolNode], index: SymbolIndex) -> list[EdgeRecord]",is_async:false,http:null,external_calls:[],effects:[],in_degree:2,out_degree:6,role:"core_module",importance:64.9},
+  {id:"rune/analyzer.py::build_call_graph",label:"build_call_graph",type:"function",file:"rune/analyzer.py",line:411,loc:38,doc:"Construct the complete call graph from resolved references.",signature:"(symbols: list, edges: list) -> SymbolGraph",is_async:false,http:null,external_calls:[],effects:["cache"],in_degree:5,out_degree:4,role:"core_module",importance:76.2},
+  {id:"rune/analyzer.py::compute_importance",label:"compute_importance",type:"function",file:"rune/analyzer.py",line:451,loc:44,doc:"Run PageRank to assign importance scores to all symbols.",signature:"(graph: SymbolGraph, damping: float = 0.85) -> dict[str, float]",is_async:false,http:null,external_calls:["numpy.array","numpy.linalg.norm"],effects:[],in_degree:3,out_degree:3,role:"core_module",importance:69.8},
+  {id:"rune/analyzer.py::rank_symbols",label:"rank_symbols",type:"function",file:"rune/analyzer.py",line:497,loc:18,doc:null,signature:"(scores: dict[str, float], top_k: int = 25) -> list[str]",is_async:false,http:null,external_calls:["heapq.nlargest"],effects:[],in_degree:2,out_degree:2,role:"core_module",importance:31.4},
+
+  // ── rune/cache.py (8 symbols) ──
+  {id:"rune/cache.py::AnalysisCache",label:"AnalysisCache",type:"class",file:"rune/cache.py",line:41,loc:180,doc:"Redis-backed store for analysis results.",signature:"(redis_url: str, ttl: int = 3600)",is_async:false,http:null,external_calls:["json.loads","hgetall","setex"],effects:["cache","network"],in_degree:9,out_degree:4,role:"core_module",importance:87.4},
+  {id:"rune/cache.py::get_cache",label:"get_cache",type:"method",file:"rune/cache.py",line:78,loc:24,doc:"Retrieve cached analysis by repo hash.",signature:"(self, key: str) -> Optional[bytes]",is_async:true,http:null,external_calls:["redis.get"],effects:["cache"],in_degree:7,out_degree:2,role:"core_module",importance:74.1},
+  {id:"rune/cache.py::set_cache",label:"set_cache",type:"method",file:"rune/cache.py",line:104,loc:18,doc:"Store analysis result bytes with TTL.",signature:"(self, key: str, value: bytes) -> None",is_async:true,http:null,external_calls:["redis.setex"],effects:["cache"],in_degree:4,out_degree:1,role:"core_module",importance:62.5},
+  {id:"rune/cache.py::invalidate",label:"invalidate",type:"method",file:"rune/cache.py",line:124,loc:12,doc:"Remove a cached entry by key pattern.",signature:"(self, pattern: str) -> int",is_async:true,http:null,external_calls:["redis.delete","redis.scan_iter"],effects:["cache"],in_degree:3,out_degree:2,role:"core_module",importance:45.3},
+  {id:"rune/cache.py::CacheKey",label:"CacheKey",type:"class",file:"rune/cache.py",line:138,loc:32,doc:"Typed wrapper around cache key construction.",signature:"(repo_id: str, variant: str = 'full')",is_async:false,http:null,external_calls:[],effects:[],in_degree:5,out_degree:1,role:"core_module",importance:38.7},
+  {id:"rune/cache.py::build_key",label:"build_key",type:"function",file:"rune/cache.py",line:172,loc:8,doc:null,signature:"(repo_id: str, suffix: str) -> str",is_async:false,http:null,external_calls:["hashlib.md5"],effects:[],in_degree:6,out_degree:0,role:"core_module",importance:33.2},
+  {id:"rune/cache.py::warm_cache",label:"warm_cache",type:"function",file:"rune/cache.py",line:182,loc:26,doc:"Pre-populate cache for frequently accessed repos.",signature:"(cache: AnalysisCache, repo_ids: list[str]) -> None",is_async:true,http:null,external_calls:[],effects:["cache","network"],in_degree:1,out_degree:3,role:"core_module",importance:22.8},
+  {id:"rune/cache.py::cache_stats",label:"cache_stats",type:"function",file:"rune/cache.py",line:210,loc:14,doc:"Return hit/miss ratio and memory usage.",signature:"(cache: AnalysisCache) -> dict",is_async:false,http:null,external_calls:["redis.info"],effects:["cache"],in_degree:2,out_degree:1,role:"core_module",importance:18.4},
+
+  // ── rune/graph.py (10 symbols) ──
+  {id:"rune/graph.py::SymbolGraph",label:"SymbolGraph",type:"class",file:"rune/graph.py",line:15,loc:260,doc:"Directed graph of symbol-level call and inheritance relationships.",signature:"()",is_async:false,http:null,external_calls:[],effects:[],in_degree:8,out_degree:6,role:"core_module",importance:84.7},
+  {id:"rune/graph.py::add_node",label:"add_node",type:"method",file:"rune/graph.py",line:42,loc:12,doc:null,signature:"(self, node: SymbolNode) -> None",is_async:false,http:null,external_calls:[],effects:[],in_degree:5,out_degree:0,role:"core_module",importance:41.2},
+  {id:"rune/graph.py::add_edge",label:"add_edge",type:"method",file:"rune/graph.py",line:56,loc:16,doc:null,signature:"(self, source: str, target: str, label: str) -> None",is_async:false,http:null,external_calls:[],effects:[],in_degree:4,out_degree:0,role:"core_module",importance:39.8},
+  {id:"rune/graph.py::compute_pagerank",label:"compute_pagerank",type:"method",file:"rune/graph.py",line:74,loc:48,doc:"Iterative PageRank over the symbol graph.",signature:"(self, damping: float = 0.85, iterations: int = 100) -> dict[str, float]",is_async:false,http:null,external_calls:["numpy.zeros","numpy.abs"],effects:[],in_degree:6,out_degree:3,role:"core_module",importance:78.9},
+  {id:"rune/graph.py::resolve_edges",label:"resolve_edges",type:"function",file:"rune/graph.py",line:124,loc:36,doc:"Match unresolved call-site names to known symbol IDs.",signature:"(calls: list[dict], index: SymbolIndex) -> tuple[list, list]",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:4,role:"core_module",importance:71.5},
+  {id:"rune/graph.py::get_connected_components",label:"get_connected_components",type:"function",file:"rune/graph.py",line:162,loc:22,doc:"Find weakly connected components via BFS.",signature:"(graph: SymbolGraph) -> list[set[str]]",is_async:false,http:null,external_calls:["collections.deque"],effects:[],in_degree:2,out_degree:2,role:"core_module",importance:42.6},
+  {id:"rune/graph.py::filter_by_threshold",label:"filter_by_threshold",type:"function",file:"rune/graph.py",line:186,loc:14,doc:null,signature:"(graph: SymbolGraph, min_importance: float) -> SymbolGraph",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:1,role:"core_module",importance:36.3},
+  {id:"rune/graph.py::GraphNode",label:"GraphNode",type:"class",file:"rune/graph.py",line:202,loc:28,doc:"Internal graph node wrapper with adjacency lists.",signature:"(id: str, data: dict)",is_async:false,http:null,external_calls:[],effects:[],in_degree:4,out_degree:2,role:"core_module",importance:32.1},
+  {id:"rune/graph.py::serialize_graph",label:"serialize_graph",type:"function",file:"rune/graph.py",line:232,loc:20,doc:"Export graph to JSON-serializable dict.",signature:"(graph: SymbolGraph) -> dict",is_async:false,http:null,external_calls:["json.dumps"],effects:[],in_degree:5,out_degree:1,role:"core_module",importance:29.4},
+  {id:"rune/graph.py::collapse_to_groups",label:"collapse_to_groups",type:"function",file:"rune/graph.py",line:254,loc:32,doc:"Aggregate symbol-level edges into file-level group edges.",signature:"(graph: SymbolGraph) -> tuple[list, list]",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:3,role:"core_module",importance:65.7},
+
+  // ── rune/classifier.py (7 symbols) ──
+  {id:"rune/classifier.py::RoleClassifier",label:"RoleClassifier",type:"class",file:"rune/classifier.py",line:12,loc:145,doc:"Assigns architectural roles to symbols using heuristics and LLM.",signature:"(llm_client: Optional[LLMClient] = None)",is_async:false,http:null,external_calls:[],effects:["llm"],in_degree:4,out_degree:5,role:"core_module",importance:78.3},
+  {id:"rune/classifier.py::classify_role",label:"classify_role",type:"method",file:"rune/classifier.py",line:38,loc:42,doc:"Determine the role of a single symbol.",signature:"(self, symbol: SymbolNode, graph: SymbolGraph) -> str",is_async:false,http:null,external_calls:[],effects:[],in_degree:6,out_degree:3,role:"core_module",importance:72.1},
+  {id:"rune/classifier.py::score_centrality",label:"score_centrality",type:"function",file:"rune/classifier.py",line:82,loc:28,doc:"Betweenness centrality used as a classification signal.",signature:"(graph: SymbolGraph, node_id: str) -> float",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:2,role:"core_module",importance:55.6},
+  {id:"rune/classifier.py::detect_entry_points",label:"detect_entry_points",type:"function",file:"rune/classifier.py",line:112,loc:18,doc:"Identify symbols with zero in-degree or route decorators.",signature:"(graph: SymbolGraph) -> list[str]",is_async:false,http:null,external_calls:[],effects:[],in_degree:2,out_degree:2,role:"core_module",importance:48.4},
+  {id:"rune/classifier.py::apply_heuristics",label:"apply_heuristics",type:"function",file:"rune/classifier.py",line:132,loc:24,doc:null,signature:"(symbol: SymbolNode, metrics: dict) -> str",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:1,role:"core_module",importance:42.7},
+  {id:"rune/classifier.py::ClassificationResult",label:"ClassificationResult",type:"class",file:"rune/classifier.py",line:158,loc:22,doc:"Container for classification output with confidence.",signature:"(role: str, confidence: float, reasoning: str)",is_async:false,http:null,external_calls:[],effects:[],in_degree:4,out_degree:0,role:"core_module",importance:36.5},
+  {id:"rune/classifier.py::merge_classifications",label:"merge_classifications",type:"function",file:"rune/classifier.py",line:182,loc:16,doc:null,signature:"(results: list[ClassificationResult]) -> dict[str, str]",is_async:false,http:null,external_calls:[],effects:[],in_degree:2,out_degree:1,role:"core_module",importance:28.9},
+
+  // ── rune/models.py (8 symbols) ──
+  {id:"rune/models.py::Repository",label:"Repository",type:"class",file:"rune/models.py",line:8,loc:62,doc:"Core repository data model.",signature:"(url: str, branch: str, commit_sha: str)",is_async:false,http:null,external_calls:[],effects:[],in_degree:11,out_degree:2,role:"shared_utility",importance:65.8},
+  {id:"rune/models.py::SymbolNode",label:"SymbolNode",type:"class",file:"rune/models.py",line:72,loc:48,doc:"Represents a single code symbol (function, class, method).",signature:"(id: str, label: str, type: str, file: str, line: int)",is_async:false,http:null,external_calls:[],effects:[],in_degree:14,out_degree:1,role:"shared_utility",importance:61.2},
+  {id:"rune/models.py::EdgeRecord",label:"EdgeRecord",type:"class",file:"rune/models.py",line:122,loc:24,doc:null,signature:"(source: str, target: str, label: str)",is_async:false,http:null,external_calls:[],effects:[],in_degree:8,out_degree:0,role:"shared_utility",importance:44.7},
+  {id:"rune/models.py::GroupRecord",label:"GroupRecord",type:"class",file:"rune/models.py",line:148,loc:32,doc:"File-level group aggregation container.",signature:"(id: str, file: str, symbols: list[str])",is_async:false,http:null,external_calls:[],effects:[],in_degree:6,out_degree:1,role:"shared_utility",importance:39.3},
+  {id:"rune/models.py::serialize",label:"serialize",type:"function",file:"rune/models.py",line:182,loc:18,doc:null,signature:"(obj: Any) -> dict",is_async:false,http:null,external_calls:["json.dumps"],effects:[],in_degree:7,out_degree:0,role:"shared_utility",importance:34.8},
+  {id:"rune/models.py::from_dict",label:"from_dict",type:"function",file:"rune/models.py",line:202,loc:22,doc:"Reconstruct a model instance from a dictionary.",signature:"(cls: type, data: dict) -> Any",is_async:false,http:null,external_calls:[],effects:[],in_degree:5,out_degree:1,role:"shared_utility",importance:31.2},
+  {id:"rune/models.py::validate_model",label:"validate_model",type:"function",file:"rune/models.py",line:226,loc:14,doc:null,signature:"(instance: Any) -> bool",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:0,role:"shared_utility",importance:22.6},
+  {id:"rune/models.py::RepoMetadata",label:"RepoMetadata",type:"class",file:"rune/models.py",line:242,loc:28,doc:"Extended metadata about a repository (language breakdown, LOC).",signature:"(languages: dict, total_loc: int, file_count: int)",is_async:false,http:null,external_calls:[],effects:[],in_degree:4,out_degree:0,role:"shared_utility",importance:27.4},
+
+  // ── rune/routes/analyze.py (4 symbols) ──
+  {id:"rune/routes/analyze.py::analyze_endpoint",label:"analyze_endpoint",type:"function",file:"rune/routes/analyze.py",line:18,loc:32,doc:"HTTP handler for repo analysis requests.",signature:"(request: Request) -> JSONResponse",is_async:true,http:"POST /analyze",external_calls:["json.loads"],effects:["network","filesystem"],in_degree:1,out_degree:5,role:"router",importance:68.5},
+  {id:"rune/routes/analyze.py::stream_results",label:"stream_results",type:"function",file:"rune/routes/analyze.py",line:52,loc:44,doc:"SSE endpoint streaming analysis progress.",signature:"(request: Request) -> StreamingResponse",is_async:true,http:"POST /analyze/stream",external_calls:["asyncio.sleep"],effects:["network"],in_degree:1,out_degree:4,role:"router",importance:62.1},
+  {id:"rune/routes/analyze.py::validate_repo",label:"validate_repo",type:"function",file:"rune/routes/analyze.py",line:98,loc:16,doc:null,signature:"(url: str) -> bool",is_async:false,http:null,external_calls:["urllib.parse.urlparse"],effects:[],in_degree:2,out_degree:1,role:"router",importance:34.7},
+  {id:"rune/routes/analyze.py::format_response",label:"format_response",type:"function",file:"rune/routes/analyze.py",line:116,loc:10,doc:null,signature:"(result: AnalysisResult) -> dict",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:1,role:"router",importance:28.3},
+
+  // ── rune/traversal.py (6 symbols) ──
+  {id:"rune/traversal.py::walk_ast",label:"walk_ast",type:"function",file:"rune/traversal.py",line:14,loc:56,doc:"Recursively walk a parsed AST and yield symbol nodes.",signature:"(tree: Tree, file_path: str) -> Iterator[SymbolNode]",is_async:false,http:null,external_calls:[],effects:["filesystem"],in_degree:7,out_degree:3,role:"core_module",importance:75.6},
+  {id:"rune/traversal.py::ASTVisitor",label:"ASTVisitor",type:"class",file:"rune/traversal.py",line:72,loc:98,doc:"Stateful visitor pattern for AST traversal.",signature:"(language: str)",is_async:false,http:null,external_calls:[],effects:[],in_degree:4,out_degree:4,role:"core_module",importance:62.3},
+  {id:"rune/traversal.py::collect_imports",label:"collect_imports",type:"method",file:"rune/traversal.py",line:112,loc:22,doc:"Collect all import statements from a module.",signature:"(self, tree: Tree) -> list[str]",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:1,role:"core_module",importance:48.1},
+  {id:"rune/traversal.py::extract_calls",label:"extract_calls",type:"method",file:"rune/traversal.py",line:136,loc:34,doc:"Find all function/method call sites in an AST.",signature:"(self, tree: Tree) -> list[dict]",is_async:false,http:null,external_calls:[],effects:[],in_degree:3,out_degree:2,role:"core_module",importance:55.4},
+  {id:"rune/traversal.py::visit_function_def",label:"visit_function_def",type:"method",file:"rune/traversal.py",line:172,loc:18,doc:null,signature:"(self, node: ASTNode) -> SymbolNode",is_async:false,http:null,external_calls:[],effects:[],in_degree:2,out_degree:1,role:"core_module",importance:38.7},
+  {id:"rune/traversal.py::visit_class_def",label:"visit_class_def",type:"method",file:"rune/traversal.py",line:192,loc:20,doc:null,signature:"(self, node: ASTNode) -> SymbolNode",is_async:false,http:null,external_calls:[],effects:[],in_degree:2,out_degree:1,role:"core_module",importance:36.2},
+
+  // ── rune/utils.py (3 symbols) ──
+  {id:"rune/utils.py::hash_content",label:"hash_content",type:"function",file:"rune/utils.py",line:8,loc:10,doc:"SHA-256 hash of file content bytes.",signature:"(content: bytes) -> str",is_async:false,http:null,external_calls:["hashlib.sha256"],effects:[],in_degree:8,out_degree:0,role:"shared_utility",importance:58.4},
+  {id:"rune/utils.py::normalize_path",label:"normalize_path",type:"function",file:"rune/utils.py",line:20,loc:14,doc:"Normalize a file path relative to repo root.",signature:"(path: str, root: str) -> str",is_async:false,http:null,external_calls:["os.path.relpath","pathlib.PurePosixPath"],effects:[],in_degree:12,out_degree:0,role:"shared_utility",importance:52.1},
+  {id:"rune/utils.py::timer",label:"timer",type:"function",file:"rune/utils.py",line:36,loc:18,doc:"Context manager that logs elapsed wall-clock time.",signature:"(label: str) -> ContextManager",is_async:false,http:null,external_calls:["time.perf_counter","logging.info"],effects:[],in_degree:6,out_degree:0,role:"shared_utility",importance:34.9},
+],
+
+edges: [
+  // ── Intra-file: rune/analyzer.py ──
+  {source:"rune/analyzer.py::AnalysisEngine",target:"rune/analyzer.py::SymbolExtractor",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/analyzer.py::analyze_file",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/analyzer.py::merge_results",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/analyzer.py::validate_input",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/analyzer.py::build_call_graph",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/analyzer.py::create_snapshot",label:"calls"},
+  {source:"rune/analyzer.py::analyze_file",target:"rune/analyzer.py::SymbolExtractor",label:"calls"},
+  {source:"rune/analyzer.py::analyze_file",target:"rune/analyzer.py::extract_symbols",label:"calls"},
+  {source:"rune/analyzer.py::build_call_graph",target:"rune/analyzer.py::resolve_references",label:"calls"},
+  {source:"rune/analyzer.py::build_call_graph",target:"rune/analyzer.py::compute_importance",label:"calls"},
+  {source:"rune/analyzer.py::compute_importance",target:"rune/analyzer.py::rank_symbols",label:"calls"},
+  {source:"rune/analyzer.py::create_snapshot",target:"rune/analyzer.py::to_dict",label:"calls"},
+  {source:"rune/analyzer.py::from_cache",target:"rune/analyzer.py::AnalysisResult",label:"calls"},
+  {source:"rune/analyzer.py::merge_results",target:"rune/analyzer.py::AnalysisResult",label:"calls"},
+  {source:"rune/analyzer.py::extract_symbols",target:"rune/analyzer.py::resolve_references",label:"calls"},
+  {source:"rune/analyzer.py::AnalysisResult",target:"rune/analyzer.py::to_dict",label:"calls"},
+  // ── Intra-file: rune/cache.py ──
+  {source:"rune/cache.py::AnalysisCache",target:"rune/cache.py::CacheKey",label:"calls"},
+  {source:"rune/cache.py::get_cache",target:"rune/cache.py::build_key",label:"calls"},
+  {source:"rune/cache.py::set_cache",target:"rune/cache.py::build_key",label:"calls"},
+  {source:"rune/cache.py::invalidate",target:"rune/cache.py::build_key",label:"calls"},
+  {source:"rune/cache.py::warm_cache",target:"rune/cache.py::get_cache",label:"calls"},
+  {source:"rune/cache.py::warm_cache",target:"rune/cache.py::set_cache",label:"calls"},
+  {source:"rune/cache.py::cache_stats",target:"rune/cache.py::AnalysisCache",label:"calls"},
+  {source:"rune/cache.py::CacheKey",target:"rune/cache.py::build_key",label:"calls"},
+  // ── Intra-file: rune/graph.py ──
+  {source:"rune/graph.py::SymbolGraph",target:"rune/graph.py::GraphNode",label:"calls"},
+  {source:"rune/graph.py::SymbolGraph",target:"rune/graph.py::add_node",label:"calls"},
+  {source:"rune/graph.py::SymbolGraph",target:"rune/graph.py::add_edge",label:"calls"},
+  {source:"rune/graph.py::compute_pagerank",target:"rune/graph.py::GraphNode",label:"calls"},
+  {source:"rune/graph.py::resolve_edges",target:"rune/graph.py::add_edge",label:"calls"},
+  {source:"rune/graph.py::get_connected_components",target:"rune/graph.py::GraphNode",label:"calls"},
+  {source:"rune/graph.py::collapse_to_groups",target:"rune/graph.py::SymbolGraph",label:"calls"},
+  {source:"rune/graph.py::collapse_to_groups",target:"rune/graph.py::serialize_graph",label:"calls"},
+  {source:"rune/graph.py::filter_by_threshold",target:"rune/graph.py::SymbolGraph",label:"calls"},
+  // ── Intra-file: rune/classifier.py ──
+  {source:"rune/classifier.py::RoleClassifier",target:"rune/classifier.py::classify_role",label:"calls"},
+  {source:"rune/classifier.py::classify_role",target:"rune/classifier.py::score_centrality",label:"calls"},
+  {source:"rune/classifier.py::classify_role",target:"rune/classifier.py::apply_heuristics",label:"calls"},
+  {source:"rune/classifier.py::classify_role",target:"rune/classifier.py::ClassificationResult",label:"calls"},
+  {source:"rune/classifier.py::detect_entry_points",target:"rune/classifier.py::classify_role",label:"calls"},
+  {source:"rune/classifier.py::merge_classifications",target:"rune/classifier.py::ClassificationResult",label:"calls"},
+  // ── Intra-file: rune/traversal.py ──
+  {source:"rune/traversal.py::walk_ast",target:"rune/traversal.py::ASTVisitor",label:"calls"},
+  {source:"rune/traversal.py::ASTVisitor",target:"rune/traversal.py::visit_function_def",label:"calls"},
+  {source:"rune/traversal.py::ASTVisitor",target:"rune/traversal.py::visit_class_def",label:"calls"},
+  {source:"rune/traversal.py::collect_imports",target:"rune/traversal.py::ASTVisitor",label:"calls"},
+  {source:"rune/traversal.py::extract_calls",target:"rune/traversal.py::ASTVisitor",label:"calls"},
+  // ── Inter-file edges ──
+  // routes/analyze.py → analyzer
+  {source:"rune/routes/analyze.py::analyze_endpoint",target:"rune/analyzer.py::run_analysis",label:"calls"},
+  {source:"rune/routes/analyze.py::analyze_endpoint",target:"rune/analyzer.py::validate_input",label:"calls"},
+  {source:"rune/routes/analyze.py::analyze_endpoint",target:"rune/cache.py::get_cache",label:"calls"},
+  {source:"rune/routes/analyze.py::stream_results",target:"rune/analyzer.py::run_analysis",label:"calls"},
+  {source:"rune/routes/analyze.py::stream_results",target:"rune/cache.py::set_cache",label:"calls"},
+  {source:"rune/routes/analyze.py::format_response",target:"rune/analyzer.py::to_dict",label:"calls"},
+  {source:"rune/routes/analyze.py::validate_repo",target:"rune/utils.py::normalize_path",label:"calls"},
+  // analyzer → cache
+  {source:"rune/analyzer.py::run_analysis",target:"rune/cache.py::get_cache",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/cache.py::set_cache",label:"calls"},
+  {source:"rune/analyzer.py::create_snapshot",target:"rune/cache.py::set_cache",label:"calls"},
+  {source:"rune/analyzer.py::from_cache",target:"rune/cache.py::get_cache",label:"calls"},
+  // analyzer → graph
+  {source:"rune/analyzer.py::build_call_graph",target:"rune/graph.py::SymbolGraph",label:"calls"},
+  {source:"rune/analyzer.py::build_call_graph",target:"rune/graph.py::add_node",label:"calls"},
+  {source:"rune/analyzer.py::build_call_graph",target:"rune/graph.py::add_edge",label:"calls"},
+  {source:"rune/analyzer.py::compute_importance",target:"rune/graph.py::compute_pagerank",label:"calls"},
+  {source:"rune/analyzer.py::resolve_references",target:"rune/graph.py::resolve_edges",label:"calls"},
+  // analyzer → traversal
+  {source:"rune/analyzer.py::analyze_file",target:"rune/traversal.py::walk_ast",label:"calls"},
+  {source:"rune/analyzer.py::SymbolExtractor",target:"rune/traversal.py::ASTVisitor",label:"calls"},
+  {source:"rune/analyzer.py::extract_symbols",target:"rune/traversal.py::extract_calls",label:"calls"},
+  // analyzer → models
+  {source:"rune/analyzer.py::AnalysisResult",target:"rune/models.py::SymbolNode",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/models.py::Repository",label:"calls"},
+  {source:"rune/analyzer.py::to_dict",target:"rune/models.py::serialize",label:"calls"},
+  // analyzer → classifier
+  {source:"rune/analyzer.py::run_analysis",target:"rune/classifier.py::RoleClassifier",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/classifier.py::classify_role",label:"calls"},
+  // analyzer → utils
+  {source:"rune/analyzer.py::analyze_file",target:"rune/utils.py::normalize_path",label:"calls"},
+  {source:"rune/analyzer.py::run_analysis",target:"rune/utils.py::timer",label:"calls"},
+  {source:"rune/analyzer.py::create_snapshot",target:"rune/utils.py::hash_content",label:"calls"},
+  // graph → classifier
+  {source:"rune/graph.py::compute_pagerank",target:"rune/classifier.py::score_centrality",label:"calls"},
+  // graph → models
+  {source:"rune/graph.py::SymbolGraph",target:"rune/models.py::SymbolNode",label:"calls"},
+  {source:"rune/graph.py::SymbolGraph",target:"rune/models.py::EdgeRecord",label:"calls"},
+  {source:"rune/graph.py::serialize_graph",target:"rune/models.py::serialize",label:"calls"},
+  {source:"rune/graph.py::collapse_to_groups",target:"rune/models.py::GroupRecord",label:"calls"},
+  // classifier → graph
+  {source:"rune/classifier.py::score_centrality",target:"rune/graph.py::SymbolGraph",label:"calls"},
+  {source:"rune/classifier.py::detect_entry_points",target:"rune/graph.py::SymbolGraph",label:"calls"},
+  // classifier → models
+  {source:"rune/classifier.py::classify_role",target:"rune/models.py::SymbolNode",label:"calls"},
+  // traversal → models
+  {source:"rune/traversal.py::walk_ast",target:"rune/models.py::SymbolNode",label:"calls"},
+  {source:"rune/traversal.py::visit_function_def",target:"rune/models.py::SymbolNode",label:"calls"},
+  {source:"rune/traversal.py::visit_class_def",target:"rune/models.py::SymbolNode",label:"calls"},
+  // cache → models, utils
+  {source:"rune/cache.py::warm_cache",target:"rune/models.py::Repository",label:"calls"},
+  {source:"rune/cache.py::build_key",target:"rune/utils.py::hash_content",label:"calls"},
+  // Inheritance edges
+  {source:"rune/analyzer.py::SymbolExtractor",target:"rune/traversal.py::ASTVisitor",label:"inherits"},
+  {source:"rune/classifier.py::ClassificationResult",target:"rune/models.py::SymbolNode",label:"inherits"},
+  {source:"rune/graph.py::GraphNode",target:"rune/models.py::SymbolNode",label:"inherits"},
+],
+
+// ═══════════════════════════════════════════════════════════════════
+// OPTIONAL LLM OVERLAY — concepts grounded in real symbols
+// ═══════════════════════════════════════════════════════════════════
+
+concepts: {
+  entities: [
+    {id:"entity:analysis-pipeline",name:"Analysis Pipeline",summary:"Orchestrates the full repo analysis: clone, parse, resolve, rank, cache.",symbols:["rune/analyzer.py::AnalysisEngine","rune/analyzer.py::run_analysis","rune/analyzer.py::analyze_file","rune/analyzer.py::merge_results","rune/analyzer.py::create_snapshot"],files:["rune/analyzer.py","rune/traversal.py"]},
+    {id:"entity:caching-layer",name:"Caching Layer",summary:"Redis-backed persistence so a second visit costs nothing.",symbols:["rune/cache.py::AnalysisCache","rune/cache.py::get_cache","rune/cache.py::set_cache","rune/cache.py::warm_cache"],files:["rune/cache.py","rune/storage/redis_store.py"]},
+    {id:"entity:symbol-resolution",name:"Symbol Resolution",summary:"Matches call sites to definitions and builds the call graph.",symbols:["rune/graph.py::SymbolGraph","rune/graph.py::resolve_edges","rune/graph.py::compute_pagerank","rune/analyzer.py::resolve_references","rune/analyzer.py::build_call_graph"],files:["rune/graph.py","rune/analyzer.py","rune/indexer.py"]},
+    {id:"entity:code-parsing",name:"Code Parsing",summary:"Language-specific AST extraction via tree-sitter wrappers.",symbols:["rune/traversal.py::walk_ast","rune/traversal.py::ASTVisitor","rune/traversal.py::extract_calls"],files:["rune/traversal.py","rune/parsers/python_parser.py","rune/parsers/js_parser.py","rune/parsers/tree_sitter.py","rune/parsers/base_parser.py"]},
+    {id:"entity:api-surface",name:"API Surface",summary:"HTTP endpoints exposing analysis and visualization to clients.",symbols:["rune/routes/analyze.py::analyze_endpoint","rune/routes/analyze.py::stream_results"],files:["rune/routes/analyze.py","rune/routes/visualize.py","rune/routes/health.py"]},
+    {id:"entity:llm-integration",name:"LLM Integration",summary:"Optional AI enrichment: role classification and concept extraction.",symbols:["rune/classifier.py::RoleClassifier","rune/classifier.py::classify_role"],files:["rune/llm/client.py","rune/llm/prompts.py","rune/llm/embeddings.py","rune/classifier.py"]},
+    {id:"entity:data-models",name:"Data Models",summary:"Core domain types shared across the entire codebase.",symbols:["rune/models.py::Repository","rune/models.py::SymbolNode","rune/models.py::EdgeRecord","rune/models.py::GroupRecord"],files:["rune/models.py","rune/schema.py"]},
+    {id:"entity:repository-mgmt",name:"Repository Management",summary:"Git operations and storage for cloned source repositories.",symbols:["rune/utils.py::hash_content","rune/utils.py::normalize_path"],files:["rune/storage/git_ops.py","rune/storage/redis_store.py","rune/config.py"]},
+  ],
+  relations: [
+    {source:"entity:api-surface",target:"entity:analysis-pipeline",label:"triggers"},
+    {source:"entity:analysis-pipeline",target:"entity:code-parsing",label:"uses"},
+    {source:"entity:analysis-pipeline",target:"entity:symbol-resolution",label:"produces"},
+    {source:"entity:analysis-pipeline",target:"entity:caching-layer",label:"persists to"},
+    {source:"entity:code-parsing",target:"entity:data-models",label:"emits"},
+    {source:"entity:symbol-resolution",target:"entity:data-models",label:"consumes"},
+    {source:"entity:llm-integration",target:"entity:symbol-resolution",label:"enriches"},
+    {source:"entity:llm-integration",target:"entity:caching-layer",label:"caches in"},
+    {source:"entity:repository-mgmt",target:"entity:analysis-pipeline",label:"provides"},
+    {source:"entity:caching-layer",target:"entity:repository-mgmt",label:"delegates to"},
+  ],
+  metadata: {
+    is_llm_enriched: true,
+    chunks: 6,
+    dropped_ungrounded: 3,
+    fallback_reason: null
+  }
+},
+
+// ═══════════════════════════════════════════════════════════════════
+// METADATA & DIAGNOSTICS
+// ═══════════════════════════════════════════════════════════════════
+
+metadata: {
+  total_symbols: 665,
+  total_groups: 47,
+  drawn_groups: 25,
+  group_selection: "adaptive",
+  resolved_calls: 806,
+  unresolved_calls: 291,
+  is_truncated: true,
+  truncated_count: 515,
+  unsupported_languages: ["Go","Ruby"]
+},
+
+diagnostics: {
+  node_count: 150,
+  edge_count: 806,
+  group_count: 25,
+  group_edge_count: 88,
+  resolution_rate: 0.735,
+  unsupported_languages: ["Go","Ruby"]
+}
+
+};
+
+</script>
+
+<header>
+  <div class="status-bar" id="status-bar">
+    Loading...
+  </div>
+  <div class="controls">
+    <button id="concept-btn">✦ Concepts</button>
+  </div>
+</header>
+
+<div class="main-area">
+  <div class="scroll-container" id="scroll-container">
+    <svg id="global-edges"></svg>
+    <div id="concept-layer"></div>
+    
+    <div class="grid" id="main-grid"></div>
+    
+    <div class="more-section" id="more-section">
+      <div class="more-header">
+        <h3 id="more-title">More files</h3>
+        <input type="text" id="search-input" class="search-bar" placeholder="Search files...">
+      </div>
+      <div class="mini-grid" id="mini-grid"></div>
+    </div>
+  </div>
+  
+  <div class="inspector" id="inspector">
+    <div class="inspector-header">
+      <h2>Inspector</h2>
+      <button class="inspector-close" id="inspector-close">&times;</button>
+    </div>
+    <div class="inspector-content" id="inspector-content">
+      Select a symbol to inspect.
+    </div>
+  </div>
+</div>
+
+<script>
+// Will be replaced by inline data if needed, but for now we expect DATA to be defined.
+// In our generated python script, we inject the data properly.
+
+setTimeout(() => {
+  if (typeof DATA === 'undefined') {
+    console.error("DATA not loaded!");
+    return;
+  }
+  
+  const state = {
+    drawnGroups: DATA.groups.filter(g => g.drawn).sort((a,b) => b.importance - a.importance),
+    hiddenGroups: DATA.groups.filter(g => !g.drawn),
+    expandedGroupId: null,
+    conceptsActive: true, // Start active per requirement
+    selectedSymbolId: null
+  };
+  
+  const colors = [
+    'var(--viz-cat-1)', 'var(--viz-cat-2)', 'var(--viz-cat-3)', 
+    'var(--viz-cat-4)', 'var(--viz-cat-5)', 'var(--viz-cat-6)'
+  ];
+  
+  function getRoleColor(role) {
+    return `var(--role-${role}, var(--muted))`;
+  }
+  
+  function renderApp() {
+    renderStatusBar();
+    renderMainGrid();
+    renderMoreSection();
+    updateConceptsBtn();
+    
+    // Defer edge rendering to allow layout to settle
+    setTimeout(() => {
+      renderGlobalEdges();
+      renderConcepts();
+    }, 100);
+  }
+  
+  function renderStatusBar() {
+    const el = document.getElementById('status-bar');
+    const { metadata, diagnostics } = DATA;
+    el.textContent = `Showing ${state.drawnGroups.length} of ${metadata.total_groups} files · ${diagnostics.node_count} of ${metadata.total_symbols} symbols · ${(diagnostics.resolution_rate*100).toFixed(1)}% calls resolved · ${metadata.unsupported_languages.join(', ')} not parsed`;
+    
+    el.setAttribute('data-tooltip', JSON.stringify(diagnostics, null, 2));
+  }
+  
+  function createEffectIcons(effects) {
+    if (!effects) return '';
+    return effects.map(e => `<span class="effect-icon effect-${e}" title="${e}"></span>`).join('');
+  }
+  
+  function renderMainGrid() {
+    const grid = document.getElementById('main-grid');
+    grid.innerHTML = '';
+    
+    state.drawnGroups.forEach(g => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      if (state.expandedGroupId === g.id) card.classList.add('expanded');
+      card.id = `group-${g.id.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+      
+      const roleColor = getRoleColor(g.role);
+      
+      card.innerHTML = `
+        <div class="card-header" ${state.expandedGroupId === g.id ? 'onclick="collapseCard(event)"' : ''}>
+          <div class="card-title">${g.label}</div>
+          <div class="role-badge" style="background-color: hsl(${roleColor})">${g.role.replace('_',' ')}</div>
+        </div>
+        <div class="importance-bar"><div class="importance-fill" style="width: ${g.importance}%"></div></div>
+        <div class="card-meta">${g.symbol_count} symbols</div>
+        <div class="top-symbols">
+          ${(g.top_symbols||[]).slice(0,3).map(s => `<span class="pill">${s}</span>`).join('')}
+        </div>
+        <div class="effects">
+          ${createEffectIcons(g.effects)}
+        </div>
+        <div class="internal-canvas" id="canvas-${g.id.replace(/[^a-zA-Z0-9-]/g, '-')}">
+          <svg class="internal-edges"></svg>
+        </div>
+      `;
+      
+      if (state.expandedGroupId !== g.id) {
+        card.onclick = () => expandCard(g.id);
+        card.onmouseenter = () => highlightEdges(g.id);
+        card.onmouseleave = () => resetEdges();
+      }
+      
+      grid.appendChild(card);
+      
+      if (state.expandedGroupId === g.id) {
+        renderInternalCanvas(g);
+      }
+    });
+  }
+  
+  window.expandCard = (id) => {
+    state.expandedGroupId = id;
+    renderApp();
+  }
+  
+  window.collapseCard = (e) => {
+    e.stopPropagation();
+    state.expandedGroupId = null;
+    renderApp();
+  }
+  
+  function renderInternalCanvas(group) {
+    // Delay to let CSS transition finish layout before calculating positions
+    setTimeout(() => {
+      const canvasId = `canvas-${group.id.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      
+      const rect = canvas.getBoundingClientRect();
+      const width = rect.width;
+      const height = rect.height;
+      
+      const symbols = DATA.nodes.filter(n => n.file === group.file);
+      const svg = canvas.querySelector('svg');
+      
+      // Simple force-directed-like circular layout
+      const cx = width / 2;
+      const cy = height / 2;
+      const radius = Math.min(width, height) * 0.35;
+      
+      const nodePos = {};
+      
+      symbols.forEach((sym, i) => {
+        const angle = (i / symbols.length) * 2 * Math.PI;
+        const x = cx + radius * Math.cos(angle);
+        const y = cy + radius * Math.sin(angle);
+        nodePos[sym.id] = {x, y};
+        
+        const node = document.createElement('div');
+        node.className = 'symbol-node';
+        if (state.selectedSymbolId === sym.id) node.classList.add('selected');
+        node.style.left = `${x}px`;
+        node.style.top = `${y}px`;
+        node.innerHTML = `<span class="symbol-badge type-${sym.type}"></span>${sym.label}`;
+        
+        // Add subtle annotation for degree vs visible connections
+        const visibleConnections = DATA.edges.filter(e => e.source === sym.id || e.target === sym.id).length;
+        const totalConnections = sym.in_degree + sym.out_degree;
+        if (totalConnections > visibleConnections) {
+             node.title = `${totalConnections} total connections (${visibleConnections} shown)`;
+        }
+        
+        node.onclick = (e) => {
+          e.stopPropagation();
+          inspectSymbol(sym);
+          // Update selected style
+          canvas.querySelectorAll('.symbol-node').forEach(n => n.classList.remove('selected'));
+          node.classList.add('selected');
+        };
+        canvas.appendChild(node);
+      });
+      
+      // Draw internal edges
+      let edgesHtml = '';
+      DATA.edges.forEach(e => {
+        if (nodePos[e.source] && nodePos[e.target]) {
+          const s = nodePos[e.source];
+          const t = nodePos[e.target];
+          edgesHtml += `<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="hsl(var(--border))" stroke-width="1" />`;
+        }
+      });
+      svg.innerHTML = edgesHtml;
+    }, 450);
+  }
+  
+  function renderMoreSection() {
+    const grid = document.getElementById('mini-grid');
+    grid.innerHTML = '';
+    
+    document.getElementById('more-title').textContent = `${state.hiddenGroups.length} additional files not shown in overview`;
+    
+    const term = (document.getElementById('search-input').value || '').toLowerCase();
+    
+    state.hiddenGroups.filter(g => g.label.toLowerCase().includes(term)).forEach(g => {
+      const card = document.createElement('div');
+      card.className = 'mini-card';
+      const roleColor = getRoleColor(g.role);
+      
+      card.innerHTML = `
+        <div class="card-title" title="${g.file}">${g.label}</div>
+        <div style="display:flex; align-items:center; gap:0.5rem;">
+          <div class="role-badge" style="background-color: hsl(${roleColor})">${g.role.replace('_',' ')}</div>
+          <button class="add-btn" title="Add to overview">+</button>
+        </div>
+      `;
+      
+      card.querySelector('.add-btn').onclick = () => {
+        g.drawn = true;
+        state.drawnGroups.push(g);
+        state.drawnGroups.sort((a,b) => b.importance - a.importance);
+        state.hiddenGroups = state.hiddenGroups.filter(x => x.id !== g.id);
+        renderApp();
+      };
+      
+      grid.appendChild(card);
+    });
+  }
+  
+  document.getElementById('search-input').addEventListener('input', renderMoreSection);
+  
+  function renderGlobalEdges() {
+    const svg = document.getElementById('global-edges');
+    svg.innerHTML = '';
+    const container = document.getElementById('scroll-container');
+    const rects = {};
+    
+    state.drawnGroups.forEach(g => {
+      const el = document.getElementById(`group-${g.id.replace(/[^a-zA-Z0-9-]/g, '-')}`);
+      if (el) {
+        const r = el.getBoundingClientRect();
+        const cr = container.getBoundingClientRect();
+        rects[g.id] = {
+          x: r.left - cr.left + r.width/2 + container.scrollLeft,
+          y: r.top - cr.top + r.height/2 + container.scrollTop
+        };
+      }
+    });
+    
+    let html = '';
+    // Arrow marker
+    html += `
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--viz-edge))" />
+        </marker>
+        <marker id="arrow-highlight" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="hsl(var(--signal))" />
+        </marker>
+      </defs>
+    `;
+    
+    DATA.group_edges.forEach(e => {
+      if (rects[e.source] && rects[e.target]) {
+        const s = rects[e.source];
+        const t = rects[e.target];
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const curve = dist * 0.2;
+        
+        // A simple curved path
+        const d = `M ${s.x} ${s.y} Q ${s.x + curve} ${s.y - curve} ${t.x} ${t.y}`;
+        const width = Math.max(1, Math.min(5, e.weight / 2));
+        
+        html += `<path d="${d}" class="edge-path" data-source="${e.source}" data-target="${e.target}" stroke-width="${width}" marker-end="url(#arrow)" />`;
+      }
+    });
+    
+    svg.innerHTML = html;
+  }
+  
+  function highlightEdges(groupId) {
+    document.querySelectorAll('.edge-path').forEach(p => {
+      if (p.dataset.source === groupId || p.dataset.target === groupId) {
+        p.classList.add('highlighted');
+        p.setAttribute('marker-end', 'url(#arrow-highlight)');
+      } else {
+        p.style.opacity = '0.1';
+      }
+    });
+  }
+  
+  function resetEdges() {
+    document.querySelectorAll('.edge-path').forEach(p => {
+      p.classList.remove('highlighted');
+      p.style.opacity = '1';
+      p.setAttribute('marker-end', 'url(#arrow)');
+    });
+  }
+  
+  // Concept Overlay
+  document.getElementById('concept-btn').onclick = () => {
+    if (DATA.concepts.metadata.fallback_reason) return;
+    state.conceptsActive = !state.conceptsActive;
+    renderApp();
+  };
+  
+  function updateConceptsBtn() {
+    const btn = document.getElementById('concept-btn');
+    if (DATA.concepts.metadata.fallback_reason) {
+      btn.textContent = '✦ Concepts unavailable';
+      btn.disabled = true;
+      btn.title = DATA.concepts.metadata.fallback_reason;
+      btn.className = '';
+    } else if (state.conceptsActive) {
+      btn.textContent = '✦ Concepts (On)';
+      btn.className = 'active';
+      btn.title = 'Click to disable concept overlay';
+    } else {
+      btn.textContent = '✦ Enrich with AI';
+      btn.className = '';
+      btn.title = 'Uses LLM to identify high-level concepts. Billed.';
+    }
+  }
+  
+  function renderConcepts() {
+    const layer = document.getElementById('concept-layer');
+    layer.innerHTML = '';
+    if (!state.conceptsActive || DATA.concepts.metadata.fallback_reason) return;
+    
+    const container = document.getElementById('scroll-container');
+    const cr = container.getBoundingClientRect();
+    
+    DATA.concepts.entities.forEach((entity, idx) => {
+      // Find drawn groups that are in this concept
+      const memberGroups = entity.files.filter(f => state.drawnGroups.find(g => g.file === f));
+      if (memberGroups.length === 0) return;
+      
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      
+      memberGroups.forEach(f => {
+        const group = state.drawnGroups.find(g => g.file === f);
+        const el = document.getElementById(`group-${group.id.replace(/[^a-zA-Z0-9-]/g, '-')}`);
+        if (el) {
+          const r = el.getBoundingClientRect();
+          const x = r.left - cr.left + container.scrollLeft;
+          const y = r.top - cr.top + container.scrollTop;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x + r.width);
+          maxY = Math.max(maxY, y + r.height);
+        }
+      });
+      
+      if (minX === Infinity) return;
+      
+      const padding = 20;
+      minX -= padding; minY -= padding;
+      maxX += padding; maxY += padding;
+      
+      const color = colors[idx % colors.length];
+      
+      const hull = document.createElement('div');
+      hull.className = 'concept-hull';
+      hull.style.left = `${minX}px`;
+      hull.style.top = `${minY}px`;
+      hull.style.width = `${maxX - minX}px`;
+      hull.style.height = `${maxY - minY}px`;
+      hull.style.backgroundColor = `hsl(${color})`;
+      
+      const label = document.createElement('div');
+      label.className = 'concept-label';
+      label.style.left = `${minX + (maxX - minX)/2}px`;
+      label.style.top = `${minY}px`;
+      label.style.borderColor = `hsl(${color})`;
+      label.textContent = entity.name;
+      label.title = entity.summary;
+      
+      layer.appendChild(hull);
+      layer.appendChild(label);
+    });
+  }
+  
+  // Inspector
+  function inspectSymbol(sym) {
+    state.selectedSymbolId = sym.id;
+    const panel = document.getElementById('inspector');
+    const content = document.getElementById('inspector-content');
+    
+    let httpBadge = sym.http ? `<span class="badge http">${sym.http}</span>` : '';
+    let asyncBadge = sym.is_async ? `<span class="badge async">async</span>` : '';
+    let roleBadge = `<span class="badge" style="background-color: hsl(${getRoleColor(sym.role)})\">${sym.role.replace('_',' ')}</span>`;
+    
+    content.innerHTML = `
+      <h2 style="margin-top:0">${sym.label} <span class="badge" style="font-weight:normal">${sym.type}</span></h2>
+      <div class="docstring">${sym.file}:${sym.line}</div>
+      <div class="meta-row">${roleBadge} ${httpBadge} ${asyncBadge}</div>
+      
+      <div class="importance-bar"><div class="importance-fill" style="width: ${sym.importance}%"></div></div>
+      <div style="font-size:0.75rem; color:hsl(var(--muted-foreground)); margin-bottom:1rem;">Importance Score: ${sym.importance.toFixed(1)}</div>
+      
+      <div class="section-title">Signature</div>
+      <div class="code-block">${sym.label}${sym.signature || '()'}</div>
+      
+      ${sym.doc ? `<div class="section-title">Docstring</div><div class="docstring">${sym.doc}</div>` : ''}
+      
+      ${sym.effects && sym.effects.length ? `
+        <div class="section-title">Effects</div>
+        <div class="meta-row">
+          ${sym.effects.map(e => `<span class="badge" style="display:flex; align-items:center; gap:4px"><span class="effect-icon effect-${e}"></span>${e}</span>`).join('')}
+        </div>
+      ` : ''}
+      
+      ${sym.external_calls && sym.external_calls.length ? `
+        <div class="section-title">External Calls</div>
+        <ul class="call-list">
+          ${sym.external_calls.map(c => `<li>${c}</li>`).join('')}
+        </ul>
+      ` : ''}
+      
+      <div class="section-title">Callers (${sym.in_degree})</div>
+      <div class="section-title">Callees (${sym.out_degree})</div>
+    `;
+    
+    panel.classList.add('open');
+  }
+  
+  document.getElementById('inspector-close').onclick = () => {
+    document.getElementById('inspector').classList.remove('open');
+    state.selectedSymbolId = null;
+    const canvas = document.querySelector('.card.expanded .internal-canvas');
+    if (canvas) {
+        canvas.querySelectorAll('.symbol-node').forEach(n => n.classList.remove('selected'));
+    }
+  };
+  
+  // Setup resize observer to redraw edges
+  window.addEventListener('resize', () => {
+    renderGlobalEdges();
+    renderConcepts();
+  });
+  
+  renderApp();
+}, 100);
+</script>
+</body>
+</html>

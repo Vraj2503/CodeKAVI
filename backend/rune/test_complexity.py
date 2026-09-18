@@ -189,3 +189,107 @@ def test_branchy_file_outscores_a_longer_linear_one():
     assert linear_cx == 1
     assert branchy_cx == 41
     assert count_lines_of_code(long_linear) > count_lines_of_code(short_branchy)
+
+
+# ── Symbols ──
+
+
+def _symbols(source: str, path: str) -> dict[str, dict]:
+    return {s["name"]: s for s in file_complexity(source, path, with_symbols=True)["symbols"]}
+
+
+def test_symbols_are_off_by_default():
+    """The complexity callers must not pay for symbol extraction."""
+    assert "symbols" not in file_complexity("def f():\n    pass\n", "a.py")
+
+
+def test_python_symbols_carry_kind_bases_and_callees():
+    src = (
+        "class A(Base, mod.Other):\n    def m(self):\n        helper()\n        self.other()\ndef helper():\n    pass\n"
+    )
+    syms = _symbols(src, "a.py")
+
+    assert syms["A"]["kind"] == "class"
+    assert syms["A"]["bases"] == ["Base", "Other"]  # dotted base keeps its tail
+    assert syms["m"]["kind"] == "method"
+    assert syms["m"]["callees"] == ["helper", "other"]
+    assert syms["helper"]["kind"] == "function"
+    assert syms["m"]["line"] == 2
+
+
+def test_js_names_come_from_the_assignment_when_the_function_is_anonymous():
+    src = "const f = () => { g(); [1].map(v => h(v)); };\nclass A extends ns.Base {\n  m() { f(); }\n}\n"
+    syms = _symbols(src, "b.tsx")
+
+    assert set(syms) == {"f", "A", "m"}
+    # A call inside an unnamed callback belongs to the nearest named ancestor.
+    assert set(syms["f"]["callees"]) == {"g", "map", "h"}
+    assert syms["A"]["bases"] == ["Base"]
+    assert syms["m"]["kind"] == "method"
+
+
+def test_unparsed_files_report_no_symbols_rather_than_guessing():
+    assert file_complexity("func main() {}\n", "a.go", with_symbols=True)["symbols"] == []
+    assert file_complexity("", "a.py", with_symbols=True)["symbols"] == []
+
+
+def test_python_symbols_carry_doc_signature_decorators_and_async():
+    src = (
+        '@router.post("/analyze")\n'
+        "async def analyze(repo_id: str, deep: bool = False) -> dict:\n"
+        '    """Run the pipeline. A second sentence that is not a summary."""\n'
+        "    pass\n"
+    )
+    sym = _symbols(src, "a.py")["analyze"]
+
+    assert sym["doc"] == "Run the pipeline."  # first sentence only
+    assert sym["signature"] == "(repo_id: str, deep: bool = False) -> dict"
+    assert sym["decorators"] == ['@router.post("/analyze")']
+    assert sym["is_async"] is True
+
+
+def test_a_symbol_without_a_docstring_reports_none_not_empty_string():
+    """None means "the author wrote none"; "" would read as an empty summary."""
+    syms = _symbols("def f(x):\n    pass\n\n\nclass C:\n    pass\n", "a.py")
+
+    assert syms["f"]["doc"] is None
+    assert syms["f"]["is_async"] is False
+    assert syms["C"]["doc"] is None
+    assert syms["C"]["signature"] is None  # a class has no parameter list
+
+
+def test_js_docs_come_from_the_comment_above_the_symbol():
+    src = (
+        "/** Fetch the thing.\n * @param a ignored\n */\n"
+        "export const load = async (a: string): Promise<number> => { return 1; };\n"
+        "class A {\n"
+        "  /** A method. */\n"
+        "  @dec()\n"
+        "  m(x, y = 2) {}\n"
+        "}\n"
+    )
+    syms = _symbols(src, "a.ts")
+
+    # The comment sits three levels up from the arrow, above the declaration.
+    assert syms["load"]["doc"] == "Fetch the thing."  # `@param` lines are structure, not summary
+    assert syms["load"]["signature"] == "(a: string) -> Promise<number>"
+    assert syms["load"]["is_async"] is True
+    # A decorator sits between the doc and the method; both still land.
+    assert syms["m"]["doc"] == "A method."
+    assert syms["m"]["decorators"] == ["@dec()"]
+
+
+def test_a_long_docstring_is_capped():
+    src = 'def f():\n    """' + "word " * 200 + '"""\n    pass\n'
+    assert len(_symbols(src, "a.py")["f"]["doc"]) <= 200
+
+
+def test_symbol_extraction_does_not_move_the_counts():
+    """The regression that matters: widening the query must not shift any
+    complexity or function count, since importance_score weights functions."""
+    src = "class A:\n    def m(self):\n        if x and y:\n            f()\n"
+    plain = file_complexity(src, "a.py")
+    with_syms = file_complexity(src, "a.py", with_symbols=True)
+
+    assert plain["complexity"] == with_syms["complexity"] == 3
+    assert plain["functions"] == with_syms["functions"] == 1
