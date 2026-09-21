@@ -64,11 +64,10 @@ function renderViz(type: string, data: any) {
         return (
           <EmptyViz message="Not enough modular structure to generate an architecture graph." />
         );
-      if (hasEdgelessNodes(data))
-        return (
-          <EmptyViz message="Modules detected but no connections resolved. This project may use path aliases (@/, ~/) or only import external packages. Try the Dependency Graph for file-level detail." />
-        );
-      return <ArchitectureGraph nodes={data.nodes} edges={data.edges} />;
+      // A V2 diagram can honestly contain an isolated capability. It should
+      // still be rendered with its source evidence instead of treated as an
+      // error merely because there are no resolved runtime edges.
+      return <ArchitectureGraph data={data} />;
     case "flow_diagram":
       if (!data.nodes || data.nodes.length === 0)
         return <EmptyViz message="No entry points found to map data flow." />;

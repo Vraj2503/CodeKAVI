@@ -548,7 +548,7 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
       );
     case "architecture":
       return (
-        <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />
+        <ArchitectureGraph data={data} />
       );
     case "dataflow":
       return (
@@ -572,7 +572,6 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
 function hasUnresolvedEdges(type: VizType, data: any) {
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return !!data?.nodes?.length && !data?.edges?.length;
     default:
@@ -584,7 +583,6 @@ function isEmptyVisualization(type: VizType, data: any) {
   if (!data) return true;
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return (
         !data.nodes || data.nodes.length === 0 || hasUnresolvedEdges(type, data)

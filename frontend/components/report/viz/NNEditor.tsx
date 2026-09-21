@@ -246,7 +246,7 @@ export function NNEditor({
           <select
             value={paletteId}
             onChange={(e) => setPaletteId(e.target.value)}
-            className="h-7 rounded-full bg-transparent px-2 font-sans text-[12px] text-foreground outline-none"
+            className="h-7 rounded-full bg-transparent px-2 font-sans text-[12px] text-foreground outline-none [&>option]:bg-background"
           >
             {PALETTES.map((p) => (
               <option key={p.id} value={p.id}>
@@ -667,7 +667,7 @@ export function NNEditor({
 }
 
 const selectCls =
-  "h-7 rounded-full bg-transparent px-1 font-sans text-[12px] text-foreground outline-none";
+  "h-7 rounded-full bg-transparent px-1 font-sans text-[12px] text-foreground outline-none [&>option]:bg-background";
 
 /** Label + control in one capsule, so the bar reads as a row of settings. */
 function Field2({ label, children }: { label: string; children: React.ReactNode }) {
@@ -680,7 +680,7 @@ function Field2({ label, children }: { label: string; children: React.ReactNode 
 }
 
 const inputCls =
-  "w-full rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5 font-sans text-[12.5px] text-foreground outline-none transition-colors focus:border-signal";
+  "w-full rounded-lg border border-border/60 bg-background/60 px-2.5 py-1.5 font-sans text-[12.5px] text-foreground outline-none transition-colors focus:border-signal [&>option]:bg-background";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

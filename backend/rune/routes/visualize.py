@@ -7,7 +7,8 @@ NO LLM calls are made (except optionally for Mind Map).
 Endpoints:
     GET  /visualize/dependencies/{repo_id}  — Dependency graph (nodes + edges)
     GET  /visualize/complexity/{repo_id}    — Complexity treemap data
-    GET  /visualize/architecture/{repo_id}  — Module-level architecture graph
+    POST /visualize/architecture/{repo_id}  — Responsibility-level architecture graph (v2)
+    GET  /visualize/architecture/{repo_id}  — Legacy file-level architecture graph
     GET  /visualize/dataflow/{repo_id}      — Data flow diagram (entry-point graph)
     POST /visualize/mindmap/{repo_id}       — Mind map (static or LLM-enhanced)
     GET  /visualize/knowledge/{repo_id}     — Symbol-level graph (+ cached concept overlay)
@@ -35,6 +36,8 @@ from rune.routes.dependencies import get_cache
 from rune.session import ensure_repo_loaded
 from rune.settings import settings
 from rune.utils import run_sync
+from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
+from rune.architecture import build_architecture_manifest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -348,6 +351,32 @@ async def visualize_complexity(
 # ─────────────────────────────────────────
 # 3. Architecture Graph (NO LLM)
 # ─────────────────────────────────────────
+
+@router.post("/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))], response_model=ArchitectureResponse)
+async def visualize_architecture_v2(
+    request: Request,
+    repo_id: str,
+    body: ArchitectureRequest,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """
+    V2 Architecture endpoint: returns responsibility-focused components
+    and explicit technology models instead of file-level nodes.
+    """
+    result, _ = await _load_repo(repo_id, cache, user_id)
+
+    dep_data = result.get("dep_data", {})
+    file_profiles = result.get("file_profiles", [])
+
+    manifest = build_architecture_manifest(
+        repo_id=repo_id,
+        dep_data=dep_data,
+        file_profiles=file_profiles,
+        request_params=body
+    )
+
+    return ArchitectureResponse(data=manifest)
 
 
 @router.get("/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))])

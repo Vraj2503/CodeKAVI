@@ -57,6 +57,8 @@ import { useVizZoom } from "@/components/viz/useVizZoom";
 import { useReducedMotion } from "@/components/viz/useReducedMotion";
 import { NodeHandles } from "@/components/report/viz/dataflow/nodes/shared";
 import { assignClosestHandles } from "@/components/report/viz/dataflow/model";
+import { ArchitectureGraphV2 } from "@/components/report/viz/architecture/ArchitectureGraphV2";
+import type { ArchitectureGraphData } from "@/components/report/viz/architecture/types";
 
 interface Node {
   id: string;
@@ -71,8 +73,11 @@ interface Edge {
 }
 
 interface ArchitectureGraphProps {
-  nodes: Node[];
-  edges: Edge[];
+  /** architecture.v2 is the only production contract. Legacy fields remain
+   * temporarily so old cached report sections do not crash during migration. */
+  data?: ArchitectureGraphData;
+  nodes?: Node[];
+  edges?: Edge[];
 }
 
 /** ELK's box for a file card. The rendered card fills it exactly. */
@@ -364,7 +369,7 @@ export async function runLaneLayout(
 
 /* ── Chart ────────────────────────────────────────────────── */
 
-function ArchitectureGraphInner({ nodes, edges }: ArchitectureGraphProps) {
+function ArchitectureGraphInner({ nodes = [], edges = [] }: ArchitectureGraphProps) {
   const rf = useReactFlow();
   const canvas = useVizCanvas();
   const zoom = useVizZoom();
@@ -557,10 +562,10 @@ function ArchitectureGraphInner({ nodes, edges }: ArchitectureGraphProps) {
   );
 }
 
-export const ArchitectureGraph = forwardRef<
+const LegacyArchitectureGraph = forwardRef<
   HTMLDivElement,
   ArchitectureGraphProps
->(function ArchitectureGraph(props, ref) {
+>(function LegacyArchitectureGraph(props, ref) {
   const [el, setEl] = useState<HTMLDivElement | null>(null);
   useImperativeHandle(ref, () => el!, [el]);
   return (
@@ -569,6 +574,27 @@ export const ArchitectureGraph = forwardRef<
         <ArchitectureGraphInner {...props} />
       </ReactFlowProvider>
     </div>
+  );
+});
+
+export const ArchitectureGraph = forwardRef<
+  HTMLDivElement,
+  ArchitectureGraphProps
+>(function ArchitectureGraph(props, ref) {
+  if (props.data?.schema_version === "architecture.v2") {
+    return <ArchitectureGraphV2 data={props.data} />;
+  }
+  // Dev mocks and cached report sections can still carry the former graph
+  // shape during the migration window. Keep that data renderable until it is
+  // naturally replaced by an architecture.v2 response.
+  const legacyData = props.data as unknown as { nodes?: Node[]; edges?: Edge[] } | undefined;
+  return (
+    <LegacyArchitectureGraph
+      ref={ref}
+      {...props}
+      nodes={props.nodes ?? legacyData?.nodes ?? []}
+      edges={props.edges ?? legacyData?.edges ?? []}
+    />
   );
 });
 

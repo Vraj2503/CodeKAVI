@@ -745,7 +745,7 @@ export async function fetchVisualization(
   }
 
   const authHeaders = await getAuthHeaders();
-  const isPost = type === "mindmap";
+  const isPost = type === "mindmap" || type === "architecture";
   const vizPath = type === "neural_network" ? "nn" : type;
   const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}`;
 
@@ -756,7 +756,24 @@ export async function fetchVisualization(
       ...(isPost && { "Content-Type": "application/json" }),
     },
     ...(isPost && {
-      body: JSON.stringify({ use_llm: useLlm }),
+      body: JSON.stringify(
+        type === "architecture"
+          ? {
+              schema_version: "architecture.v2",
+              view: "overview",
+              detail: "standard",
+              include: { evidence: "inspector_only" },
+              layout: {
+                direction: "LR",
+                routing: "orthogonal",
+                max_nodes: 18,
+                max_edges: 26,
+                collapse_supporting_components: true,
+              },
+              enrichment: { mode: "static" },
+            }
+          : { use_llm: useLlm },
+      ),
     }),
     signal,
   });
@@ -937,6 +954,28 @@ export async function fetchTourNodeNarration(
 
   if (!res.ok) {
     return { narration: null };
+  }
+
+  return res.json();
+}
+export async function fetchArchitectureV2Graph(
+  repoId: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/visualize/architecture/${repoId}`, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (res.status === 202) throw new ApiError(202, "re-analyzing");
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "" }));
+    throw new ApiError(res.status, err.detail || "Architecture V2 request failed");
   }
 
   return res.json();
