@@ -68,6 +68,12 @@ export interface ArchitectureNodeData extends Record<string, unknown> {
   evidence: ArchitectureEvidence[];
 }
 
+export interface ArchitectureEdgeSection {
+  startPoint: { x: number; y: number };
+  endPoint: { x: number; y: number };
+  bendPoints?: { x: number; y: number }[];
+}
+
 export interface ArchitectureEdgeData extends Record<string, unknown> {
   id: string;
   source: string;
@@ -78,7 +84,7 @@ export interface ArchitectureEdgeData extends Record<string, unknown> {
   async?: boolean;
   confidence: number;
   evidence_count: number;
-  sections?: any[];
+  sections?: ArchitectureEdgeSection[];
 }
 
 export interface ArchitectureCollapsed {

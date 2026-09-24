@@ -183,14 +183,69 @@ def build_architecture_manifest(
         for node in hidden:
             by_group[node.group_id].append(node)
         collapsed = [ArchitectureCollapsed(id=_id("collapsed", group), label=f"+ {len(members)} supporting components", member_ids=[node.id for node in members], reason="overview_density_limit") for group, members in by_group.items()]
-    visible_edges = sorted((edge for edge in graph_edges if edge.source in visible_ids and edge.target in visible_ids), key=lambda edge: (-edge.evidence_count, edge.id))
-    excluded = max(0, len(visible_edges) - request.layout.max_edges)
+
+    # ── Re-route edges from collapsed/hidden members to visible siblings ──
+    # When max_nodes prunes a node, edges referencing it would be silently
+    # dropped.  Instead, re-point each dangling endpoint to the highest-
+    # importance visible node in the same group so the connection survives.
+    hidden_ids = {node.id for node in hidden}
+    hidden_group: dict[str, str] = {node.id: node.group_id for node in hidden}
+    # Pick the best visible representative per group (highest importance).
+    group_representative: dict[str, str] = {}
+    for node in visible:
+        if node.group_id not in group_representative:
+            group_representative[node.group_id] = node.id
+
+    rerouted_edges: list[ArchitectureEdge] = []
+    rerouted_count = 0
+    seen_keys: set[tuple[str, str]] = set()
+    for edge in graph_edges:
+        src = edge.source
+        tgt = edge.target
+        src_hidden = src in hidden_ids
+        tgt_hidden = tgt in hidden_ids
+        if src_hidden:
+            rep = group_representative.get(hidden_group[src])
+            if rep is None:
+                rerouted_count += 1
+                continue  # entire group pruned — drop edge
+            src = rep
+        if tgt_hidden:
+            rep = group_representative.get(hidden_group[tgt])
+            if rep is None:
+                rerouted_count += 1
+                continue
+            tgt = rep
+        if src == tgt:
+            continue  # self-loop after re-routing
+        key = (src, tgt)
+        if key in seen_keys:
+            continue  # deduplicate
+        seen_keys.add(key)
+        if src_hidden or tgt_hidden:
+            rerouted_count += 1
+            rerouted_edges.append(edge.model_copy(update={"source": src, "target": tgt}))
+        else:
+            rerouted_edges.append(edge)
+
+    visible_edges = sorted(
+        (edge for edge in rerouted_edges if edge.source in visible_ids and edge.target in visible_ids),
+        key=lambda edge: (-edge.evidence_count, edge.id),
+    )
+    excluded = max(0, len(visible_edges) - request.layout.max_edges) + rerouted_count
     visible_edges = visible_edges[:request.layout.max_edges]
     groups = [group for group in GROUPS if group.id in {node.group_id for node in visible}]
     focuses = [ArchitectureAvailableFocus(id=node.id, kind="entrypoint", label=node.label) for node in visible if node.group_id == "entry"]
+
+    # ── Regression guard: no edge may reference a non-existent node ──
+    final_node_ids = {node.id for node in visible}
+    for edge in visible_edges:
+        assert edge.source in final_node_ids, f"Edge {edge.id} references missing source {edge.source}"
+        assert edge.target in final_node_ids, f"Edge {edge.id} references missing target {edge.target}"
 
     return ArchitectureGraphData(
         repository=ArchitectureRepository(repo_id=repo_id, topology="web_application" if any(node.group_id in {"actors", "entry"} for node in visible) else "application", confidence=0.88 if visible else 0),
         groups=groups, nodes=visible, edges=visible_edges, collapsed=collapsed, available_focuses=focuses,
         diagnostics=ArchitectureDiagnostics(status="complete" if visible else "empty", excluded_low_confidence_edges=excluded, source_coverage=min(1, len(path_to_node) / max(1, len(file_profiles))),),
     )
+

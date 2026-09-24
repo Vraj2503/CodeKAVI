@@ -1,13 +1,21 @@
 import React from "react";
-import { EdgeProps, BaseEdge, getSmoothStepPath, EdgeLabelRenderer, Edge } from "@xyflow/react";
+import {
+  EdgeProps,
+  BaseEdge,
+  getSmoothStepPath,
+  EdgeLabelRenderer,
+  Edge,
+} from "@xyflow/react";
 import { ArchitectureEdgeData } from "./types";
 
 /**
  * Custom edge that reads ELK-routed sections (orthogonal) to draw the path,
- * falling back to a standard Bezier edge if ELK hasn't run or is not available.
+ * falling back to a smooth step edge when ELK hasn't run yet.
+ *
+ * Renders a short edge label along the longest horizontal segment so it stays
+ * readable even in dense graphs.
  */
 export default function ArchitectureEdge({
-  id,
   sourceX,
   sourceY,
   targetX,
@@ -15,34 +23,39 @@ export default function ArchitectureEdge({
   sourcePosition,
   targetPosition,
   style = {},
-  markerEnd,
   data,
 }: EdgeProps<Edge<ArchitectureEdgeData>>) {
   let edgePath = "";
   let labelX = (sourceX + targetX) / 2;
   let labelY = (sourceY + targetY) / 2;
 
-  // Use ELK sections if available. Choose the longest horizontal section for
-  // its label: it keeps labels out of vertical routing channels and makes the
-  // primary action readable even in a dense graph.
   if (data?.sections && data.sections.length > 0) {
     const section = data.sections[0];
-    const points = [section.startPoint, ...(section.bendPoints || []), section.endPoint];
-    
-    // Convert points to M/L SVG command string
+    const points = [
+      section.startPoint,
+      ...(section.bendPoints || []),
+      section.endPoint,
+    ];
+
     edgePath = points
       .map((p, index) => `${index === 0 ? "M" : "L"} ${p.x} ${p.y}`)
       .join(" ");
 
-    const horizontal = points.slice(1).map((point, index) => ({
-      from: points[index], to: point,
-      length: points[index].y === point.y ? Math.abs(points[index].x - point.x) : 0,
-    })).sort((a, b) => b.length - a.length)[0];
-    const segment = horizontal?.length ? horizontal : { from: points[0], to: points[points.length - 1] };
-    labelX = (segment.from.x + segment.to.x) / 2;
-    labelY = (segment.from.y + segment.to.y) / 2 - 12;
+    // Place the label on the longest horizontal segment so it doesn't collide
+    // with vertical routing channels.
+    const segments = points.slice(1).map((pt, i) => ({
+      from: points[i],
+      to: pt,
+      length: points[i].y === pt.y ? Math.abs(points[i].x - pt.x) : 0,
+    }));
+    const best = segments.sort((a, b) => b.length - a.length)[0];
+    const seg =
+      best?.length > 0
+        ? best
+        : { from: points[0], to: points[points.length - 1] };
+    labelX = (seg.from.x + seg.to.x) / 2;
+    labelY = (seg.from.y + seg.to.y) / 2 - 14;
   } else {
-    // The fallback remains orthogonal while layout is resolving.
     const [bPath, bCenterX, bCenterY] = getSmoothStepPath({
       sourceX,
       sourceY,
@@ -53,13 +66,22 @@ export default function ArchitectureEdge({
     });
     edgePath = bPath;
     labelX = bCenterX;
-    labelY = bCenterY;
+    labelY = bCenterY - 14;
   }
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={{ ...(style || {}), strokeWidth: 1.5, stroke: "hsl(var(--muted-foreground))" }} />
-      
+      <BaseEdge
+        path={edgePath}
+        style={{
+          ...(style || {}),
+          strokeWidth: 1.5,
+          stroke: "hsl(var(--muted-foreground) / 0.55)",
+        }}
+        markerEnd=""
+        markerStart=""
+      />
+
       {data?.label && (
         <EdgeLabelRenderer>
           <div
@@ -68,7 +90,7 @@ export default function ArchitectureEdge({
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "all",
             }}
-            className="nodrag nopan rounded border border-border bg-background px-1.5 py-0.5 text-[10px] italic text-muted-foreground shadow-sm"
+            className="nodrag nopan max-w-[180px] truncate rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] leading-tight text-muted-foreground shadow-sm backdrop-blur-sm"
           >
             {data.label}
           </div>

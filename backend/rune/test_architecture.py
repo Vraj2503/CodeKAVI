@@ -79,3 +79,51 @@ def test_architecture_manifest_applies_overview_budget_and_view_filter():
         "abcdef123456", _deps(), _profiles(), {"view": "integration_map"}
     )
     assert any(node.group_id == "external" for node in integrations.nodes)
+
+
+def test_no_edge_references_pruned_or_collapsed_node():
+    """Regression: edges must never reference a node that was hidden by max_nodes."""
+    profiles = _profiles() + [
+        {
+            "path": f"backend/rune/service_{i}.py",
+            "role": "service",
+            "role_confidence": 0.85,
+            "importance_score": 10 + i,
+            "language": "Python",
+        }
+        for i in range(20)
+    ]
+    deps = _deps()
+    # Add adjacency so there are edges between the new nodes
+    for i in range(20):
+        deps["adjacency"][f"backend/rune/service_{i}.py"] = [
+            f"backend/rune/service_{(i + 1) % 20}.py"
+        ]
+
+    manifest = build_architecture_manifest(
+        "test-repo",
+        deps,
+        profiles,
+        {"layout": {"max_nodes": 6, "max_edges": 10, "collapse_supporting_components": True}},
+    )
+
+    node_ids = {node.id for node in manifest.nodes}
+    collapsed_member_ids = set()
+    for c in manifest.collapsed:
+        collapsed_member_ids.update(c.member_ids)
+
+    for edge in manifest.edges:
+        assert edge.source in node_ids, (
+            f"Edge {edge.id} source {edge.source} not in visible nodes"
+        )
+        assert edge.target in node_ids, (
+            f"Edge {edge.id} target {edge.target} not in visible nodes"
+        )
+        # Neither endpoint should be a collapsed member
+        assert edge.source not in collapsed_member_ids, (
+            f"Edge {edge.id} source {edge.source} is a collapsed member"
+        )
+        assert edge.target not in collapsed_member_ids, (
+            f"Edge {edge.id} target {edge.target} is a collapsed member"
+        )
+

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { layoutArchitectureGraph } from "./layout";
 import type { ArchitectureGraphData } from "./types";
 
@@ -36,5 +36,41 @@ describe("architecture.v2 layout", () => {
     }
     expect(layout.edges).toHaveLength(2);
     expect(layout.edges.every((edge) => edge.type === "architectureEdge")).toBe(true);
+  });
+
+  it("drops edges referencing non-existent nodes and warns", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const badGraph: ArchitectureGraphData = {
+      ...graph,
+      edges: [
+        ...graph.edges,
+        // Edge pointing at a node that doesn't exist in graph.nodes
+        { id: "dangling-1", source: "api", target: "ghost-node", label: "Phantom link", kind: "http", confidence: 0.5, evidence_count: 1 },
+      ],
+    };
+
+    const layout = await layoutArchitectureGraph(badGraph);
+
+    // The valid edges survive, the dangling one is dropped
+    expect(layout.edges).toHaveLength(2);
+    expect(layout.edges.find((e) => e.id === "dangling-1")).toBeUndefined();
+
+    // A warning was emitted for the dropped edge
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("ghost-node(MISSING)")
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("invariant: every edge endpoint exists in the node set", async () => {
+    const layout = await layoutArchitectureGraph(graph);
+    const nodeIds = new Set(layout.nodes.map((n) => n.id));
+
+    for (const edge of layout.edges) {
+      expect(nodeIds.has(edge.source)).toBe(true);
+      expect(nodeIds.has(edge.target)).toBe(true);
+    }
   });
 });

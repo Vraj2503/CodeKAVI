@@ -1,5 +1,5 @@
 import type { ElkNode } from "elkjs/lib/elk-api";
-import { MarkerType, Node as RFNode, Edge as RFEdge } from "@xyflow/react";
+import { Node as RFNode, Edge as RFEdge } from "@xyflow/react";
 import { ArchitectureGraphData } from "./types";
 
 /**
@@ -87,14 +87,38 @@ export async function layoutArchitectureGraph(
     });
   }
 
-  // Edges
-  const elkEdges = data.edges.map((e) => ({
+  // ── Edge validation pass ─────────────────────────────────────────────
+  // Build a set of only the *leaf* node IDs (the nodes ELK will actually
+  // position). Group nodes are in rfNodes too but data.edges never
+  // reference them — comparing against group IDs would let through edges
+  // whose real endpoint was pruned/collapsed, causing floating arrows.
+  const leafNodeIds = new Set(
+    rfNodes.filter((n) => n.type === "architectureNode").map((n) => n.id)
+  );
+
+  const validEdges: typeof data.edges = [];
+  for (const e of data.edges) {
+    const srcOk = leafNodeIds.has(e.source);
+    const tgtOk = leafNodeIds.has(e.target);
+    if (srcOk && tgtOk) {
+      validEdges.push(e);
+    } else {
+      console.warn(
+        `[ArchitectureGraph] Dropped dangling edge: id=${e.id} ` +
+        `source=${e.source}(${srcOk ? "ok" : "MISSING"}) ` +
+        `target=${e.target}(${tgtOk ? "ok" : "MISSING"}) ` +
+        `label="${e.label}"`
+      );
+    }
+  }
+
+  const elkEdges = validEdges.map((e) => ({
     id: e.id,
     sources: [e.source],
     targets: [e.target],
   }));
 
-  data.edges.forEach((e) => {
+  validEdges.forEach((e) => {
     rfEdges.push({
       id: e.id,
       source: e.source,
@@ -102,7 +126,6 @@ export async function layoutArchitectureGraph(
       type: "architectureEdge",
       data: e,
       animated: e.kind === "event" || e.kind === "queue",
-      markerEnd: { type: MarkerType.ArrowClosed, color: "hsl(var(--muted-foreground))" },
     });
   });
 

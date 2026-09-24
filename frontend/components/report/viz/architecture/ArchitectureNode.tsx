@@ -1,6 +1,6 @@
 import React from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
-import { ArchitectureNodeData } from "./types";
+import { ArchitectureNodeData, ArchitectureTechnology } from "./types";
 import { cn } from "@/lib/utils";
 import { Circle, Server, Database, CloudCog, ArrowRightLeft, Users } from "lucide-react";
 
@@ -53,7 +53,7 @@ export function ArchitectureNode({ data, selected }: NodeProps<Node<Architecture
         
         {data.technologies && data.technologies.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {data.technologies.map((tech: any, i: number) => (
+            {data.technologies.map((tech: ArchitectureTechnology, i: number) => (
               <div 
                 key={i} 
                 className="px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] uppercase font-medium tracking-wide flex items-center gap-1"
@@ -76,10 +76,10 @@ export function ArchitectureNode({ data, selected }: NodeProps<Node<Architecture
 export function ArchitectureGroupNode({ data }: NodeProps<Node<{ label: string } & Record<string, unknown>>>) {
   return (
     <div className="w-full h-full relative">
-      <div className="absolute top-0 left-4 -translate-y-1/2 bg-background px-2 font-mono text-xs font-semibold tracking-widest uppercase text-muted-foreground">
+      <div className="absolute top-0 left-4 z-10 -translate-y-1/2 rounded border border-border/50 bg-background/75 px-2 py-0.5 font-mono text-xs font-semibold tracking-widest uppercase text-muted-foreground shadow-sm backdrop-blur-md">
         {data.label}
       </div>
-      <div className="w-full h-full rounded-2xl border-2 border-dashed border-border/50 bg-muted/5 pointer-events-none" />
+      <div className="pointer-events-none h-full w-full rounded-2xl border-2 border-dashed border-border/50 bg-muted/10 shadow-[inset_0_1px_0_hsl(var(--foreground)/0.05)] backdrop-blur-md" />
     </div>
   );
 }

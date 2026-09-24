@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { PanelRight, PanelRightClose } from "lucide-react";
 import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -28,6 +28,7 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selected, setSelected] = useState<ArchitectureNodeData | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,14 +45,6 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
       });
     return () => { cancelled = true; };
   }, [data, flow]);
-
-  const nodeColor = useCallback((node: Node) => {
-    const kind = (node.data as { kind?: string })?.kind;
-    if (kind === "datastore") return "#f59e0b";
-    if (kind === "external" || kind === "queue") return "#8b5cf6";
-    if (kind === "gateway") return "#60a5fa";
-    return "#14b8a6";
-  }, []);
 
   const summary = useMemo(() => {
     const suffix = data.collapsed.length ? `, ${data.collapsed.length} collapsed group${data.collapsed.length === 1 ? "" : "s"}` : "";
@@ -70,10 +63,14 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
         edges={edges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        defaultEdgeOptions={{ markerEnd: undefined }}
         nodesDraggable={false}
         nodesConnectable={false}
         onNodeClick={(_, node) => {
-          if (node.type === "architectureNode") setSelected(node.data as ArchitectureNodeData);
+          if (node.type === "architectureNode") {
+            setSelected(node.data as ArchitectureNodeData);
+            setInspectorOpen(true);
+          }
         }}
         onPaneClick={() => setSelected(null)}
         fitView={false}
@@ -81,12 +78,22 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-        <Controls showInteractive={false} />
-        <MiniMap nodeColor={nodeColor} maskColor="hsl(var(--background) / 0.82)" />
+        <Controls className="architecture-flow-controls" showInteractive={false} />
       </ReactFlow>
-      <aside className="absolute bottom-0 right-0 top-0 z-10 w-[min(340px,45%)] border-l border-border bg-background/95 shadow-xl backdrop-blur">
-        <ArchitectureInspector node={selected} onClose={() => setSelected(null)} />
-      </aside>
+      <button
+        type="button"
+        aria-label={inspectorOpen ? "Collapse inspector" : "Expand inspector"}
+        aria-expanded={inspectorOpen}
+        onClick={() => setInspectorOpen((open) => !open)}
+        className="absolute right-3 top-3 z-20 inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {inspectorOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRight className="h-4 w-4" />}
+      </button>
+      {inspectorOpen && (
+        <aside className="absolute bottom-0 right-0 top-0 z-10 w-[min(340px,45%)] border-l border-border bg-background/95 shadow-xl backdrop-blur">
+          <ArchitectureInspector node={selected} onClose={() => setSelected(null)} />
+        </aside>
+      )}
     </div>
   );
 }
