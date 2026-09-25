@@ -27,6 +27,10 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
   const flow = useReactFlow();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  // Tracks the data snapshot the current layout was measured for, so a new
+  // graph always gets a fresh estimate→measure cycle without resetting state
+  // synchronously inside an effect.
+  const [measuredFor, setMeasuredFor] = useState<ArchitectureGraphData | null>(null);
   const [selected, setSelected] = useState<ArchitectureNodeData | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +49,43 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
       });
     return () => { cancelled = true; };
   }, [data, flow]);
+
+  // Second pass: ELK laid out estimated card heights, but real cards render
+  // taller (wrapped summaries, tech pills), which leaves routed edges and
+  // labels behind the actual boxes. Once the estimated layout has painted,
+  // measure every capability card in the DOM and re-layout with honest
+  // heights so channels and anchor points match what is on screen.
+  useEffect(() => {
+    if (measuredFor === data || nodes.length === 0) return;
+    let cancelled = false;
+    const frame = requestAnimationFrame(() => {
+      const heights: Record<string, number> = {};
+      document
+        .querySelectorAll<HTMLElement>(".react-flow__node-architectureNode")
+        .forEach((el) => {
+          const id = el.getAttribute("data-id");
+          const height = el.getBoundingClientRect().height;
+          if (id && height > 0) heights[id] = Math.ceil(height);
+        });
+      if (Object.keys(heights).length === 0) {
+        setMeasuredFor(data);
+        return;
+      }
+      layoutArchitectureGraph(data, heights)
+        .then((layout) => {
+          if (cancelled) return;
+          setNodes(layout.nodes);
+          setEdges(layout.edges);
+          setMeasuredFor(data);
+          requestAnimationFrame(() => flow.fitView({ padding: 0.14, duration: 0 }));
+        })
+        .catch(() => setMeasuredFor(data));
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+  }, [measuredFor, nodes, data, flow]);
 
   const summary = useMemo(() => {
     const suffix = data.collapsed.length ? `, ${data.collapsed.length} collapsed group${data.collapsed.length === 1 ? "" : "s"}` : "";

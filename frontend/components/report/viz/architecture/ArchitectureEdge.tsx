@@ -30,31 +30,49 @@ export default function ArchitectureEdge({
   let labelY = (sourceY + targetY) / 2;
 
   if (data?.sections && data.sections.length > 0) {
-    const section = data.sections[0];
-    const points = [
+    // Draw every section ELK produced. Hierarchical edges can arrive split
+    // across multiple sections; drawing only the first truncated the path.
+    const sectionPoints = data.sections.map((section) => [
       section.startPoint,
       ...(section.bendPoints || []),
       section.endPoint,
-    ];
+    ]);
 
-    edgePath = points
-      .map((p, index) => `${index === 0 ? "M" : "L"} ${p.x} ${p.y}`)
+    edgePath = sectionPoints
+      .map((points) =>
+        points.map((p, index) => `${index === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ")
+      )
       .join(" ");
 
-    // Place the label on the longest horizontal segment so it doesn't collide
-    // with vertical routing channels.
-    const segments = points.slice(1).map((pt, i) => ({
-      from: points[i],
-      to: pt,
-      length: points[i].y === pt.y ? Math.abs(points[i].x - pt.x) : 0,
-    }));
-    const best = segments.sort((a, b) => b.length - a.length)[0];
-    const seg =
-      best?.length > 0
-        ? best
-        : { from: points[0], to: points[points.length - 1] };
-    labelX = (seg.from.x + seg.to.x) / 2;
-    labelY = (seg.from.y + seg.to.y) / 2 - 14;
+    // The layout pass scored on-path positions (horizontal and vertical
+    // segment points) against card rects and stored a collision-free anchor
+    // where the pill renders centered ON the line. Centering on the longest
+    // segment here instead would park labels back on top of the node cards.
+    if (typeof data.labelX === "number" && typeof data.labelY === "number") {
+      labelX = data.labelX;
+      labelY = data.labelY;
+    } else {
+      // Legacy data without a layout-time anchor: longest horizontal segment.
+      let best: { from: { x: number; y: number }; to: { x: number; y: number }; length: number } | null =
+        null;
+      for (const points of sectionPoints) {
+        for (let i = 1; i < points.length; i++) {
+          const from = points[i - 1];
+          const to = points[i];
+          const length = from.y === to.y ? Math.abs(from.x - to.x) : 0;
+          if (!best || length > best.length) best = { from, to, length };
+        }
+      }
+      const seg =
+        best && best.length > 0
+          ? best
+          : {
+              from: data.sections[0].startPoint,
+              to: data.sections[data.sections.length - 1].endPoint,
+            };
+      labelX = (seg.from.x + seg.to.x) / 2;
+      labelY = (seg.from.y + seg.to.y) / 2 - 14;
+    }
   } else {
     const [bPath, bCenterX, bCenterY] = getSmoothStepPath({
       sourceX,
@@ -89,6 +107,7 @@ export default function ArchitectureEdge({
               position: "absolute",
               transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
               pointerEvents: "all",
+              zIndex: 30,
             }}
             className="nodrag nopan max-w-[180px] truncate rounded-md border border-border/60 bg-background/90 px-2 py-0.5 text-[10px] leading-tight text-muted-foreground shadow-sm backdrop-blur-sm"
           >

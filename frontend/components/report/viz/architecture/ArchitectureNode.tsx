@@ -31,7 +31,7 @@ export function ArchitectureNode({ data, selected }: NodeProps<Node<Architecture
         selected ? "border-primary ring-1 ring-primary" : "border-border hover:border-primary/50"
       )}
     >
-      <Handle type="target" position={Position.Left} className="opacity-0" />
+      <Handle type="target" position={Position.Top} className="opacity-0" />
       
       <div className="p-4 flex flex-col gap-2">
         <div className="flex items-center gap-2">
@@ -68,7 +68,7 @@ export function ArchitectureNode({ data, selected }: NodeProps<Node<Architecture
         )}
       </div>
 
-      <Handle type="source" position={Position.Right} className="opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="opacity-0" />
     </div>
   );
 }

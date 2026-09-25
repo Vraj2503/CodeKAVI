@@ -85,6 +85,9 @@ export interface ArchitectureEdgeData extends Record<string, unknown> {
   confidence: number;
   evidence_count: number;
   sections?: ArchitectureEdgeSection[];
+  /** Absolute-canvas label anchor chosen at layout time so labels clear nodes. */
+  labelX?: number;
+  labelY?: number;
 }
 
 export interface ArchitectureCollapsed {
