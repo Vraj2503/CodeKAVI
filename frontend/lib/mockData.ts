@@ -525,6 +525,67 @@ export function mockVizResponse(type: string) {
         count: nn_models.length,
       };
 
+    case "concentric_radar": {
+      const tiers = [
+        { level: 0, name: "Hub: Entry Points", radius: 55, color: "#a855f7" },
+        { level: 1, name: "API: Routes & Controllers", radius: 140, color: "#38bdf8" },
+        { level: 2, name: "Core: Domain Logic", radius: 235, color: "#818cf8" },
+        { level: 3, name: "Services: Utils & Helpers", radius: 335, color: "#2dd4bf" },
+        { level: 4, name: "Foundation: Config & Models", radius: 420, color: "#ec4899" },
+        { level: 5, name: "Verification: Tests", radius: 495, color: "#94a3b8" },
+      ];
+      const rawMods = [
+        { id: "main.py", name: "main.py", path: "main.py", tier: 0, role: "entry_point", role_label: "Entry Point", loc: 85, cc: 12, funcs: 3, density: 0.14, is_hotspot: false, inbound: [], outbound: ["routes/analyze.py", "core/analyzer.py"], symbols: [] },
+        { id: "routes/analyze.py", name: "analyze.py", path: "routes/analyze.py", tier: 1, role: "router", role_label: "Router", loc: 412, cc: 68, funcs: 14, density: 0.16, is_hotspot: true, inbound: ["main.py"], outbound: ["core/analyzer.py", "core/complexity.py"], symbols: [{ name: "analyze_stream", kind: "function" as const, line: 110, complexity: 32 }] },
+        { id: "core/analyzer.py", name: "analyzer.py", path: "core/analyzer.py", tier: 2, role: "core_module", role_label: "Core Module", loc: 517, cc: 54, funcs: 19, density: 0.10, is_hotspot: true, inbound: ["main.py", "routes/analyze.py"], outbound: ["core/complexity.py", "utils/cache.py"], symbols: [{ name: "analyze_dependencies", kind: "function" as const, line: 180, complexity: 28 }] },
+        { id: "core/complexity.py", name: "complexity.py", path: "core/complexity.py", tier: 2, role: "core_module", role_label: "Core Module", loc: 390, cc: 42, funcs: 11, density: 0.11, is_hotspot: false, inbound: ["core/analyzer.py", "routes/analyze.py"], outbound: ["utils/cache.py"], symbols: [] },
+        { id: "utils/cache.py", name: "cache.py", path: "utils/cache.py", tier: 3, role: "shared_utility", role_label: "Utility", loc: 180, cc: 16, funcs: 6, density: 0.09, is_hotspot: false, inbound: ["core/analyzer.py", "core/complexity.py"], outbound: ["config/settings.py"], symbols: [] },
+        { id: "config/settings.py", name: "settings.py", path: "config/settings.py", tier: 4, role: "config", role_label: "Config", loc: 95, cc: 6, funcs: 2, density: 0.06, is_hotspot: false, inbound: ["utils/cache.py"], outbound: [], symbols: [] },
+        { id: "tests/test_analyzer.py", name: "test_analyzer.py", path: "tests/test_analyzer.py", tier: 5, role: "test", role_label: "Test Suite", loc: 240, cc: 14, funcs: 8, density: 0.06, is_hotspot: false, inbound: [], outbound: ["core/analyzer.py"], symbols: [] },
+      ];
+      const byTier: Record<number, typeof rawMods> = {};
+      rawMods.forEach((m) => {
+        (byTier[m.tier] = byTier[m.tier] || []).push(m);
+      });
+      const modules = rawMods.map((m) => {
+        const tierMods = byTier[m.tier] || [m];
+        const idx = tierMods.indexOf(m);
+        const n = tierMods.length;
+        const phase = (m.tier * Math.PI) / 6;
+        const theta = phase + (idx / Math.max(n, 1)) * 2 * Math.PI;
+        const dist = tiers[m.tier].radius + (m.cc / 100) * 25;
+        return {
+          ...m,
+          theta,
+          dist,
+          x: dist * Math.cos(theta),
+          y: dist * Math.sin(theta),
+        };
+      });
+      const edges = [
+        { source: "main.py", target: "routes/analyze.py" },
+        { source: "main.py", target: "core/analyzer.py" },
+        { source: "routes/analyze.py", target: "core/analyzer.py" },
+        { source: "routes/analyze.py", target: "core/complexity.py" },
+        { source: "core/analyzer.py", target: "core/complexity.py" },
+        { source: "core/analyzer.py", target: "utils/cache.py" },
+        { source: "core/complexity.py", target: "utils/cache.py" },
+        { source: "utils/cache.py", target: "config/settings.py" },
+        { source: "tests/test_analyzer.py", target: "core/analyzer.py" },
+      ];
+      return {
+        tiers,
+        modules,
+        edges,
+        stats: {
+          total_modules: modules.length,
+          avg_cc: 30.3,
+          hotspot_count: 2,
+          tier_counts: [1, 1, 2, 1, 1, 1],
+        },
+      };
+    }
+
     default:
       return {};
   }

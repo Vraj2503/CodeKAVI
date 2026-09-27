@@ -19,6 +19,7 @@ Endpoints:
 import asyncio
 import json
 import logging
+import math
 import os
 from typing import Any
 
@@ -41,6 +42,9 @@ from rune.architecture import build_architecture_manifest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_RADAR_MAX_MODULES = 150
+_RADAR_MAX_EDGES = 500
 
 
 # ── Helpers ──
@@ -683,7 +687,182 @@ def _build_static_mindmap(classification: list) -> dict:
 
 
 # ─────────────────────────────────────────
-# 6. Explain Visualization (LLM — separate endpoint)
+# 6. Concentric Radar & Complexity Hull
+# ─────────────────────────────────────────
+
+_ROLE_TIER: dict[str, int] = {
+    "entry_point": 0,
+    "router": 1,
+    "core_module": 2, "orchestrator": 2, "ml_pipeline": 2, "ml_training": 2,
+    "shared_utility": 3, "internal_helper": 3,
+    "config": 4, "type_definition": 4, "data": 4, "ml_model": 4,
+    "barrel": 4, "leaf": 4, "build": 4, "documentation": 4,
+    "test": 5,
+}
+
+_RADAR_TIERS = [
+    {"level": 0, "name": "Hub: Entry Points",         "radius": 55,  "color": "#a855f7"},
+    {"level": 1, "name": "API: Routes & Controllers",  "radius": 140, "color": "#38bdf8"},
+    {"level": 2, "name": "Core: Domain Logic",         "radius": 235, "color": "#818cf8"},
+    {"level": 3, "name": "Services: Utils & Helpers",   "radius": 335, "color": "#2dd4bf"},
+    {"level": 4, "name": "Foundation: Config & Models", "radius": 420, "color": "#ec4899"},
+    {"level": 5, "name": "Verification: Tests",         "radius": 495, "color": "#94a3b8"},
+]
+
+def _assign_radar_coords(modules: list[dict]) -> None:
+    by_tier: dict[int, list[dict]] = {}
+    for m in modules:
+        by_tier.setdefault(m["tier"], []).append(m)
+    for tier_level, tier_modules in by_tier.items():
+        if tier_level >= len(_RADAR_TIERS):
+            base_radius = 500
+        else:
+            base_radius = _RADAR_TIERS[tier_level]["radius"]
+        n = len(tier_modules)
+        phase = tier_level * math.pi / 6  # phase offset per tier to avoid spoke alignment
+        for i, m in enumerate(tier_modules):
+            theta = phase + (i / max(n, 1)) * 2 * math.pi
+            cc = m.get("cc") or 0
+            dist = base_radius + (cc / 100) * 25
+            m["theta"] = round(theta, 4)
+            m["dist"] = round(dist, 1)
+            m["x"] = round(dist * math.cos(theta), 1)
+            m["y"] = round(dist * math.sin(theta), 1)
+
+
+@router.get("/visualize/radar/{repo_id}", dependencies=[Depends(per_minute(30))])
+async def visualize_radar(
+    request: Request,
+    repo_id: str,
+    cache: AnalysisCache = Depends(get_cache),
+    user_id: str = Depends(verify_supabase_token),
+):
+    """
+    Build Concentric Radar & Complexity Hull visualization.
+    """
+    result, _ = await _load_repo(repo_id, cache, user_id)
+    file_profiles = result.get("file_profiles", [])
+    
+    sorted_profiles = sorted(
+        file_profiles, 
+        key=lambda fp: fp.get("importance_score", 0), 
+        reverse=True
+    )
+    if len(sorted_profiles) > _RADAR_MAX_MODULES:
+        sorted_profiles = sorted_profiles[:_RADAR_MAX_MODULES]
+
+    included_paths = {fp.get("path") for fp in sorted_profiles if fp.get("path")}
+
+    symbol_graph_data = result.get("symbol_graph", {})
+    symbols_list = symbol_graph_data.get("nodes", []) if isinstance(symbol_graph_data, dict) else []
+    symbols_by_file: dict[str, list] = {}
+    for sym in symbols_list:
+        path = sym.get("file")
+        if path and path in included_paths:
+            symbols_by_file.setdefault(path, []).append(sym)
+            
+    for path, syms in symbols_by_file.items():
+        syms.sort(key=lambda x: x.get("complexity") or 0, reverse=True)
+        symbols_by_file[path] = syms[:5]
+
+    modules = []
+    tier_counts = [0, 0, 0, 0, 0, 0]
+    hotspot_count = 0
+    total_cc = 0
+
+    for fp in sorted_profiles:
+        path = fp.get("path")
+        if not path:
+            continue
+        role = fp.get("role", "other")
+        tier = _ROLE_TIER.get(role, 4)
+        
+        cc = fp.get("complexity") or 0
+        loc = fp.get("loc") or 0
+        is_hotspot = cc >= 50
+        
+        if is_hotspot:
+            hotspot_count += 1
+        total_cc += cc
+        if 0 <= tier < 6:
+            tier_counts[tier] += 1
+            
+        syms_raw = symbols_by_file.get(path, [])
+        syms_clean = [
+            {
+                "name": s.get("name", ""),
+                "kind": s.get("kind", ""),
+                "line": s.get("line", 0),
+                "complexity": s.get("complexity") or 0,
+                "doc": s.get("doc")
+            }
+            for s in syms_raw
+        ]
+        
+        name = os.path.basename(path)
+        
+        m = {
+            "id": path,
+            "name": name,
+            "label": name,
+            "path": path,
+            "tier": tier,
+            "role": role,
+            "role_label": fp.get("role_label", ""),
+            "loc": loc,
+            "cc": cc,
+            "functions": fp.get("functions") or 0,
+            "density": round(cc / loc, 3) if loc > 0 else 0.0,
+            "is_hotspot": is_hotspot,
+            "inbound": [p for p in fp.get("used_by", []) if p in included_paths],
+            "outbound": [p for p in fp.get("depends_on", []) if p in included_paths],
+            "symbols": syms_clean
+        }
+        modules.append(m)
+
+    _disambiguate_labels(modules)
+    for m in modules:
+        m["name"] = m["label"]
+        del m["label"]
+
+    _assign_radar_coords(modules)
+    
+    all_edges = []
+    cc_lookup = {m["id"]: m["cc"] for m in modules}
+    
+    for m in modules:
+        source = m["id"]
+        for target in m["outbound"]:
+            all_edges.append({
+                "source": source,
+                "target": target,
+                "weight": cc_lookup.get(source, 0) + cc_lookup.get(target, 0)
+            })
+            
+    all_edges.sort(key=lambda e: e["weight"], reverse=True)
+    edges = [{"source": e["source"], "target": e["target"]} for e in all_edges[:_RADAR_MAX_EDGES]]
+
+    total_modules = len(modules)
+    avg_cc = round(total_cc / total_modules, 2) if total_modules > 0 else 0.0
+
+    return {
+        "type": "concentric_radar",
+        "data": {
+            "tiers": _RADAR_TIERS,
+            "modules": modules,
+            "edges": edges,
+            "stats": {
+                "total_modules": total_modules,
+                "avg_cc": avg_cc,
+                "hotspot_count": hotspot_count,
+                "tier_counts": tier_counts
+            }
+        }
+    }
+
+
+# ─────────────────────────────────────────
+# 7. Explain Visualization (LLM — separate endpoint)
 # ─────────────────────────────────────────
 
 
@@ -743,6 +922,14 @@ async def explain_visualization(
         "architecture": _explain_prompt_architecture(result),
         "dataflow": _explain_prompt_dataflow(analysis),
         "mindmap": _explain_prompt_mindmap(classification),
+        "concentric_radar": (
+            "You are analyzing a Concentric Radar & Complexity Hull visualization of a codebase. "
+            "Modules are arranged on concentric rings by architectural depth — entry points at the center, "
+            "tests at the outer ring. Each module's distance from its ring center reflects its McCabe "
+            "Cyclomatic Complexity (CC). The red hull polygon spikes outward at hotspot files (CC ≥ 50). "
+            "Explain the architectural layering, identify complexity hotspots visible as hull spikes, "
+            "and note any cross-tier dependency patterns that may indicate design concerns."
+        ),
     }
 
     prompt = prompts.get(viz_type)

@@ -7,6 +7,7 @@ import { DataFlowGraph } from "@/components/report/viz/DataFlowGraph";
 import { RadialMindmap } from "@/components/report/viz/RadialMindmap";
 import { TreemapViz } from "@/components/report/viz/TreemapViz";
 import { NeuralNetworkViz } from "@/components/report/viz/NeuralNetworkViz";
+import { ConcentricRadarViz } from "@/components/report/viz/radar/ConcentricRadarViz";
 
 interface VizContainerProps {
   visualizationType: string;
@@ -27,6 +28,7 @@ const vizTitleMap: Record<string, string> = {
   treemap: "Complexity Treemap",
   flow_diagram: "Data Flow",
   neural_network: "Neural Network Architecture",
+  concentric_radar: "Complexity Radar",
 };
 
 function renderViz(type: string, data: any) {
@@ -92,6 +94,12 @@ function renderViz(type: string, data: any) {
           <EmptyViz message="No neural network found. This view reads PyTorch (nn.Module, nn.Sequential), Keras, TensorFlow and Hugging Face transformers — scikit-learn and gradient-boosting pipelines aren't drawn yet." />
         );
       return <NeuralNetworkViz data={data} />;
+    case "concentric_radar":
+      if (!data.modules || data.modules.length === 0)
+        return (
+          <EmptyViz message="Not enough modules with complexity data to generate a complexity radar." />
+        );
+      return <ConcentricRadarViz data={data} />;
     default:
       return (
         <p className="text-muted-foreground text-center py-12">

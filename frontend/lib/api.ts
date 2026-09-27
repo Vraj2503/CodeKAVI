@@ -102,6 +102,10 @@ export interface FileProfile {
   out_degree: number;
   importance_score: number;
   tags: string[];
+  loc?: number | null;
+  complexity?: number | null;
+  functions?: number | null;
+  complexity_source?: "cyclomatic" | "size_fallback" | null;
 }
 
 export interface RoleSummary {
@@ -200,7 +204,8 @@ export type VizType =
   | "dataflow"
   | "mindmap"
   | "neural_network"
-  | "knowledge";
+  | "knowledge"
+  | "concentric_radar";
 
 export interface VizResponse {
   type: string;
@@ -746,7 +751,12 @@ export async function fetchVisualization(
 
   const authHeaders = await getAuthHeaders();
   const isPost = type === "mindmap" || type === "architecture";
-  const vizPath = type === "neural_network" ? "nn" : type;
+  const vizPath =
+    type === "neural_network"
+      ? "nn"
+      : type === "concentric_radar"
+        ? "radar"
+        : type;
   const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}`;
 
   const res = await fetch(endpoint, {
@@ -791,6 +801,15 @@ export async function fetchVisualization(
     throw new ApiError(res.status, err.detail || "");
   }
 
+  return res.json();
+}
+
+export async function fetchRadarViz(repoId: string): Promise<VizResponse> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/visualize/radar/${repoId}`, {
+    headers: authHeaders,
+  });
+  if (!res.ok) throw new Error(`Radar viz failed: ${res.status}`);
   return res.json();
 }
 
