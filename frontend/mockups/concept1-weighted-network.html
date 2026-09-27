@@ -1,0 +1,1722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CodeKAVI — Concept 1: The Weighted Dependency & Complexity Network</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #07090e;
+    --surface: #0e121b;
+    --surface-elevated: #151b27;
+    --surface-border: #1f283a;
+    --border-hover: #323f5b;
+    --text-primary: #e6edf8;
+    --text-secondary: #94a3b8;
+    --text-muted: #5e6f8d;
+    --accent: #38bdf8;
+    --accent-glow: rgba(56, 189, 248, 0.25);
+    
+    /* Risk Tiers */
+    --risk-low: #10b981;
+    --risk-low-bg: rgba(16, 185, 129, 0.15);
+    --risk-med: #f59e0b;
+    --risk-med-bg: rgba(245, 158, 11, 0.15);
+    --risk-high: #f97316;
+    --risk-high-bg: rgba(249, 115, 22, 0.15);
+    --risk-crit: #ef4444;
+    --risk-crit-bg: rgba(239, 68, 68, 0.2);
+
+    /* Role Colors */
+    --role-core: #818cf8;
+    --role-router: #38bdf8;
+    --role-entry: #a855f7;
+    --role-util: #2dd4bf;
+    --role-model: #ec4899;
+    --role-config: #e2e8f0;
+    --role-test: #94a3b8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  /* Grid background */
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 28px 28px;
+    z-index: 0;
+  }
+
+  /* Top Navigation Bar */
+  header {
+    height: 60px;
+    background: rgba(14, 18, 27, 0.88);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: relative;
+    z-index: 100;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .brand-badge {
+    background: linear-gradient(135deg, #38bdf8 0%, #6366f1 100%);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 0 16px var(--accent-glow);
+  }
+  .brand-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-repo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  /* Metric summary pills */
+  .header-metrics {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .metric-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .metric-pill b {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+  }
+  .metric-pill.hotspot {
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+  }
+  .metric-pill.hotspot b {
+    color: #ef4444;
+  }
+
+  /* Controls */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .search-box input {
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 6px 12px 6px 30px;
+    width: 210px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .search-box input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+    width: 250px;
+  }
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    width: 14px;
+    height: 14px;
+    fill: var(--text-muted);
+    pointer-events: none;
+  }
+  
+  .btn-group {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .btn-group button {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 5px 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-group button.active {
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--surface-border);
+    font-weight: 600;
+  }
+  .btn-group button:hover:not(.active) {
+    color: var(--text-primary);
+  }
+
+  .icon-btn {
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+    background: var(--surface-elevated);
+  }
+
+  /* Main Viewport Container */
+  .viewport {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    cursor: grab;
+  }
+  .viewport:active {
+    cursor: grabbing;
+  }
+  svg#graph-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Node styling */
+  .node-group {
+    cursor: pointer;
+  }
+  .node-halo {
+    transition: r 0.25s, opacity 0.25s, stroke-width 0.25s;
+  }
+  .node-body {
+    transition: stroke 0.2s, stroke-width 0.2s, filter 0.25s;
+  }
+  .node-group:hover .node-body {
+    stroke: #ffffff;
+    stroke-width: 2.5px;
+    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.4));
+  }
+  .node-group.selected .node-body {
+    stroke: #38bdf8;
+    stroke-width: 3px;
+    filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.8));
+  }
+  .node-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    pointer-events: none;
+    text-anchor: middle;
+    paint-order: stroke fill;
+    stroke: #07090e;
+    stroke-width: 4.5px;
+    stroke-linejoin: round;
+    transition: opacity 0.2s;
+  }
+  .node-cc-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    pointer-events: none;
+    text-anchor: middle;
+    fill: #ffffff;
+  }
+
+  /* Edges */
+  .edge-line {
+    fill: none;
+    stroke: #25334c;
+    stroke-width: 1.5;
+    transition: stroke 0.25s, stroke-width 0.25s, opacity 0.25s;
+  }
+  .edge-line.highlight-out {
+    stroke: #38bdf8;
+    stroke-width: 2.5;
+    stroke-dasharray: 6 3;
+    animation: dash-out 1s linear infinite;
+  }
+  .edge-line.highlight-in {
+    stroke: #a855f7;
+    stroke-width: 2.5;
+  }
+  .edge-line.dimmed {
+    opacity: 0.12;
+  }
+  .node-group.dimmed {
+    opacity: 0.15;
+  }
+
+  @keyframes dash-out {
+    to { stroke-dashoffset: -18; }
+  }
+
+  /* Floating Legend */
+  .legend-card {
+    position: absolute;
+    bottom: 24px;
+    left: 24px;
+    background: rgba(14, 18, 27, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 50;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    max-width: 320px;
+  }
+  .legend-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+  }
+  .legend-scale {
+    display: flex;
+    gap: 8px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .legend-nodesize {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .size-sample {
+    border-radius: 50%;
+    border: 1px solid var(--text-secondary);
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* Floating Inspector Drawer */
+  .drawer {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    width: 380px;
+    max-height: calc(100vh - 100px);
+    background: rgba(14, 18, 27, 0.94);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--surface-border);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    z-index: 60;
+    transform: translateX(420px);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s;
+  }
+  .drawer.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: all;
+  }
+  .drawer-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .drawer-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .drawer-role-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-top: 6px;
+  }
+  .close-drawer {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+  }
+  .close-drawer:hover { color: var(--text-primary); }
+
+  .drawer-content {
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  /* Hotspot Warning Banner */
+  .hotspot-banner {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 12px;
+    color: #fca5a5;
+    line-height: 1.4;
+  }
+  .hotspot-banner b { color: #ef4444; font-weight: 600; }
+
+  /* Metrics Grid */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .stat-card {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .stat-val span {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  /* Dependency section */
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .dep-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .dep-chip {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .dep-chip:hover {
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.06);
+    color: var(--accent);
+  }
+
+  /* Symbols breakdown */
+  .symbols-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .symbols-table th {
+    text-align: left;
+    color: var(--text-muted);
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--surface-border);
+    font-weight: 500;
+  }
+  .symbols-table td {
+    padding: 6px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Hover Tooltip */
+  #tooltip {
+    position: absolute;
+    background: rgba(14, 18, 27, 0.95);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Zoom controls corner */
+  .zoom-controls {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 50;
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<!-- Top Navigation -->
+<header>
+  <div class="brand">
+    <span class="brand-badge">Concept 1</span>
+    <div class="brand-title">
+      Weighted Graph
+      <span class="brand-repo">CodeKAVI / backend (rune)</span>
+    </div>
+  </div>
+
+  <div class="header-metrics">
+    <div class="metric-pill"><b>21</b> Files Analyzed</div>
+    <div class="metric-pill"><b>33</b> Resolved Imports</div>
+    <div class="metric-pill">Avg CC: <b>38.6</b></div>
+    <div class="metric-pill hotspot"><b>4</b> High-Risk Hotspots</div>
+  </div>
+
+  <div class="header-actions">
+    <!-- Search / Filter -->
+    <div class="search-box">
+      <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+      <input type="text" id="node-search" placeholder="Search file or symbol..."/>
+    </div>
+
+    <!-- Color Mode toggle -->
+    <div class="btn-group" id="color-mode-group">
+      <button class="active" data-colormode="risk">Complexity Risk</button>
+      <button data-colormode="role">Architecture Role</button>
+    </div>
+
+    <!-- Size Mode toggle -->
+    <div class="btn-group" id="size-mode-group">
+      <button class="active" data-sizemode="complexity">Size: McCabe CC</button>
+      <button data-sizemode="loc">Size: LOC</button>
+    </div>
+  </div>
+</header>
+
+<!-- Main Interactive Canvas -->
+<div class="viewport" id="viewport">
+  <svg id="graph-canvas">
+    <defs>
+      <!-- Arrow heads -->
+      <marker id="arrow-default" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#323f5b" />
+      </marker>
+      <marker id="arrow-active" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+      </marker>
+      <marker id="arrow-inbound" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#a855f7" />
+      </marker>
+    </defs>
+    <g id="transform-layer">
+      <g id="edges-layer"></g>
+      <g id="nodes-layer"></g>
+    </g>
+  </svg>
+
+  <!-- Legend -->
+  <div class="legend-card">
+    <div class="legend-title">
+      <span id="legend-mode-title">McCabe Cyclomatic Risk</span>
+      <span>McCabe v(G)</span>
+    </div>
+    <div class="legend-scale" id="legend-scale-bar">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--risk-low)"></div> &lt; 15 Clean</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--risk-med)"></div> 15-30 Notice</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--risk-high)"></div> 31-50 Alert</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--risk-crit)"></div> 50+ Critical</div>
+    </div>
+    <div class="legend-nodesize">
+      <div class="size-sample" style="width:12px;height:12px"></div>
+      <div class="size-sample" style="width:18px;height:18px"></div>
+      <div class="size-sample" style="width:26px;height:26px"></div>
+      <span style="margin-left:auto">Radius ∝ Metric Volume</span>
+    </div>
+  </div>
+
+  <!-- Zoom & Fit Controls -->
+  <div class="zoom-controls">
+    <button class="icon-btn" id="btn-zoom-in" title="Zoom In">+</button>
+    <button class="icon-btn" id="btn-zoom-out" title="Zoom Out">−</button>
+    <button class="icon-btn" id="btn-zoom-fit" title="Reset View">⊡</button>
+  </div>
+
+  <!-- Inspector Slide-out Drawer -->
+  <div class="drawer" id="node-drawer">
+    <div class="drawer-header">
+      <div>
+        <div class="drawer-title" id="d-path">rune/analyzer.py</div>
+        <span class="drawer-role-tag" id="d-role">Core Engine</span>
+      </div>
+      <button class="close-drawer" id="d-close">&times;</button>
+    </div>
+    
+    <div class="drawer-content">
+      <!-- Hotspot alert when high risk -->
+      <div class="hotspot-banner" id="d-hotspot-alert">
+        <div>⚠️</div>
+        <div>
+          <b>Architectural Hotspot:</b> This file combines high cyclomatic complexity with heavy incoming caller dependencies. Changes here carry systemic regression risk.
+        </div>
+      </div>
+
+      <!-- Stat cards -->
+      <div class="metrics-grid">
+        <div class="stat-card">
+          <div class="stat-label">Cyclomatic CC</div>
+          <div class="stat-val" id="d-cc">68 <span>McCabe</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Lines of Code</div>
+          <div class="stat-val" id="d-loc">517 <span>LOC</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Complexity Density</div>
+          <div class="stat-val" id="d-density">0.13 <span>CC/line</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Functions / Methods</div>
+          <div class="stat-val" id="d-funcs">24 <span>units</span></div>
+        </div>
+      </div>
+
+      <!-- Outbound Dependencies -->
+      <div>
+        <div class="section-label">Imports (<span id="d-out-count">0</span> Outbound)</div>
+        <div class="dep-list" id="d-out-list"></div>
+      </div>
+
+      <!-- Inbound Callers -->
+      <div>
+        <div class="section-label">Imported By (<span id="d-in-count">0</span> Inbound)</div>
+        <div class="dep-list" id="d-in-list"></div>
+      </div>
+
+      <!-- Key Symbols -->
+      <div>
+        <div class="section-label">Top Complex AST Symbols</div>
+        <table class="symbols-table">
+          <thead>
+            <tr><th>Symbol</th><th>Kind</th><th>Line</th><th style="text-align:right">CC</th></tr>
+          </thead>
+          <tbody id="d-symbols-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hover Tooltip -->
+  <div id="tooltip"></div>
+</div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════
+// REAL BACKEND EXTRACTION PAYLOAD
+// Matches the structure emitted by rune.routes.analyze / rune.graph
+// ═════════════════════════════════════════════════════════════════════════
+const BACKEND_PAYLOAD = {
+  repo_id: "CodeKavi/backend",
+  nodes: [
+    {
+      id: "main.py",
+      name: "main.py",
+      path: "main.py",
+      role: "entry_point",
+      role_label: "Application Entry",
+      language: "Python",
+      loc: 145,
+      complexity: 18,
+      functions: 6,
+      in_degree: 0,
+      out_degree: 3,
+      importance: 84.5,
+      flags: ["entry_point"],
+      top_symbols: [
+        { name: "create_app", kind: "function", line: 32, complexity: 8, doc: "FastAPI factory mounting routes, CORS, and lifespan." },
+        { name: "lifespan", kind: "function", line: 85, complexity: 6, doc: "Async context manager warming cache & pool." }
+      ]
+    },
+    {
+      id: "rune/analyzer.py",
+      name: "analyzer.py",
+      path: "rune/analyzer.py",
+      role: "core_module",
+      role_label: "Core AST Analyzer",
+      language: "Python",
+      loc: 517,
+      complexity: 68,
+      functions: 24,
+      in_degree: 3,
+      out_degree: 2,
+      importance: 94.2,
+      flags: ["hub"],
+      top_symbols: [
+        { name: "analyze_dependencies", kind: "function", line: 124, complexity: 22, doc: "Extract multi-file imports via tree-sitter." },
+        { name: "patch_dep_graph", kind: "function", line: 290, complexity: 16, doc: "Incrementally patch cached graph." },
+        { name: "_resolve_imports", kind: "function", line: 385, complexity: 18, doc: "Resolve relative import paths against AST." }
+      ]
+    },
+    {
+      id: "rune/classifier.py",
+      name: "classifier.py",
+      path: "rune/classifier.py",
+      role: "core_module",
+      role_label: "Role Classifier",
+      language: "Python",
+      loc: 925,
+      complexity: 88,
+      functions: 32,
+      in_degree: 1,
+      out_degree: 2,
+      importance: 91.0,
+      flags: ["god_file"],
+      top_symbols: [
+        { name: "classify_files", kind: "function", line: 420, complexity: 28, doc: "Assign architectural role labels across all files." },
+        { name: "_compute_importance", kind: "function", line: 640, complexity: 19, doc: "Weighted PageRank centrality score." }
+      ]
+    },
+    {
+      id: "rune/complexity.py",
+      name: "complexity.py",
+      path: "rune/complexity.py",
+      role: "core_module",
+      role_label: "Cyclomatic Analyzer",
+      language: "Python",
+      loc: 517,
+      complexity: 54,
+      functions: 19,
+      in_degree: 4,
+      out_degree: 0,
+      importance: 89.4,
+      flags: ["hub"],
+      top_symbols: [
+        { name: "file_complexity", kind: "function", line: 489, complexity: 14, doc: "McCabe complexity from tree-sitter branch queries." },
+        { name: "_capture_counts", kind: "function", line: 422, complexity: 18, doc: "Count decision branch points (@b) and functions (@f)." }
+      ]
+    },
+    {
+      id: "rune/graph.py",
+      name: "graph.py",
+      path: "rune/graph.py",
+      role: "core_module",
+      role_label: "Graph Exporter",
+      language: "Python",
+      loc: 1191,
+      complexity: 96,
+      functions: 38,
+      in_degree: 2,
+      out_degree: 1,
+      importance: 95.8,
+      flags: ["god_file", "hub"],
+      top_symbols: [
+        { name: "export_graph_json", kind: "function", line: 24, complexity: 31, doc: "Convert dependency data into visualization-ready nodes/edges." },
+        { name: "detect_cycles", kind: "function", line: 412, complexity: 19, doc: "Tarjan algorithm for circular dependency detection." }
+      ]
+    },
+    {
+      id: "rune/graph_assembler.py",
+      name: "graph_assembler.py",
+      path: "rune/graph_assembler.py",
+      role: "core_module",
+      role_label: "Semantic Assembler",
+      language: "Python",
+      loc: 408,
+      complexity: 46,
+      functions: 14,
+      in_degree: 1,
+      out_degree: 2,
+      importance: 79.2,
+      flags: [],
+      top_symbols: [
+        { name: "assemble_graph", kind: "function", line: 335, complexity: 16, doc: "Assemble layers, containers, and portal edges." },
+        { name: "derive_containers", kind: "function", line: 140, complexity: 14, doc: "Subsystem container clustering." }
+      ]
+    },
+    {
+      id: "rune/routes/analyze.py",
+      name: "routes/analyze.py",
+      path: "rune/routes/analyze.py",
+      role: "router",
+      role_label: "Analysis API",
+      language: "Python",
+      loc: 970,
+      complexity: 82,
+      functions: 18,
+      in_degree: 1,
+      out_degree: 7,
+      importance: 93.1,
+      flags: ["god_file"],
+      top_symbols: [
+        { name: "analyze_repo_stream", kind: "function", line: 565, complexity: 26, doc: "SSE streaming pipeline yielding progress events." },
+        { name: "run_analysis_pipeline", kind: "function", line: 110, complexity: 29, doc: "Full clone -> analyze -> classify -> graph lifecycle." }
+      ]
+    },
+    {
+      id: "rune/routes/graph.py",
+      name: "routes/graph.py",
+      path: "rune/routes/graph.py",
+      role: "router",
+      role_label: "Graph API",
+      language: "Python",
+      loc: 247,
+      complexity: 26,
+      functions: 8,
+      in_degree: 1,
+      out_degree: 3,
+      importance: 74.0,
+      flags: [],
+      top_symbols: [
+        { name: "get_repo_graph", kind: "function", line: 34, complexity: 9, doc: "GET /graph/semantic/{repo_id} deterministic payload." },
+        { name: "get_repo_question_tour", kind: "function", line: 62, complexity: 11, doc: "Semantic question tour generation." }
+      ]
+    },
+    {
+      id: "rune/routes/dependencies.py",
+      name: "routes/dependencies.py",
+      path: "rune/routes/dependencies.py",
+      role: "router",
+      role_label: "Security & Quotas",
+      language: "Python",
+      loc: 56,
+      complexity: 8,
+      functions: 4,
+      in_degree: 2,
+      out_degree: 3,
+      importance: 62.0,
+      flags: [],
+      top_symbols: [
+        { name: "enforce_quota", kind: "function", line: 20, complexity: 4, doc: "Per-user daily token quota gate raising HTTP 429." }
+      ]
+    },
+    {
+      id: "rune/cache.py",
+      name: "cache.py",
+      path: "rune/cache.py",
+      role: "shared_utility",
+      role_label: "Redis Cache",
+      language: "Python",
+      loc: 280,
+      complexity: 24,
+      functions: 12,
+      in_degree: 3,
+      out_degree: 1,
+      importance: 71.5,
+      flags: [],
+      top_symbols: [
+        { name: "AnalysisCache.get_result", kind: "method", line: 85, complexity: 7, doc: "Retrieve compressed JSON cache by fingerprint." }
+      ]
+    },
+    {
+      id: "rune/cloner.py",
+      name: "cloner.py",
+      path: "rune/cloner.py",
+      role: "shared_utility",
+      role_label: "Git Cloner",
+      language: "Python",
+      loc: 195,
+      complexity: 22,
+      functions: 7,
+      in_degree: 1,
+      out_degree: 0,
+      importance: 64.0,
+      flags: [],
+      top_symbols: [
+        { name: "clone_repository", kind: "function", line: 45, complexity: 12, doc: "Shallow git clone with depth & size limit." }
+      ]
+    },
+    {
+      id: "rune/file_selector.py",
+      name: "file_selector.py",
+      path: "rune/file_selector.py",
+      role: "shared_utility",
+      role_label: "File Selector",
+      language: "Python",
+      loc: 340,
+      complexity: 38,
+      functions: 11,
+      in_degree: 1,
+      out_degree: 1,
+      importance: 68.2,
+      flags: [],
+      top_symbols: [
+        { name: "select_files", kind: "function", line: 70, complexity: 18, doc: "Filter repository files using .gitignore rules." }
+      ]
+    },
+    {
+      id: "rune/symbol_graph.py",
+      name: "symbol_graph.py",
+      path: "rune/symbol_graph.py",
+      role: "core_module",
+      role_label: "Symbol Call Graph",
+      language: "Python",
+      loc: 480,
+      complexity: 58,
+      functions: 16,
+      in_degree: 1,
+      out_degree: 2,
+      importance: 82.3,
+      flags: [],
+      top_symbols: [
+        { name: "build_symbol_graph", kind: "function", line: 88, complexity: 24, doc: "Symbol-to-symbol call and inheritance graph." }
+      ]
+    },
+    {
+      id: "rune/indexer.py",
+      name: "indexer.py",
+      path: "rune/indexer.py",
+      role: "shared_utility",
+      role_label: "Vector Indexer",
+      language: "Python",
+      loc: 410,
+      complexity: 32,
+      functions: 10,
+      in_degree: 1,
+      out_degree: 1,
+      importance: 69.8,
+      flags: [],
+      top_symbols: [
+        { name: "index_repository", kind: "function", line: 95, complexity: 15, doc: "Cloudflare embeddings and Zilliz upsert." }
+      ]
+    },
+    {
+      id: "rune/pipeline_models.py",
+      name: "pipeline_models.py",
+      path: "rune/pipeline_models.py",
+      role: "model",
+      role_label: "Pipeline Schemas",
+      language: "Python",
+      loc: 210,
+      complexity: 6,
+      functions: 5,
+      in_degree: 4,
+      out_degree: 0,
+      importance: 58.0,
+      flags: [],
+      top_symbols: [
+        { name: "FileProfile", kind: "class", line: 30, complexity: 2, doc: "Data model for metrics, roles, and complexity." }
+      ]
+    },
+    {
+      id: "rune/settings.py",
+      name: "settings.py",
+      path: "rune/settings.py",
+      role: "config",
+      role_label: "Config & Settings",
+      language: "Python",
+      loc: 120,
+      complexity: 5,
+      functions: 3,
+      in_degree: 5,
+      out_degree: 0,
+      importance: 55.0,
+      flags: [],
+      top_symbols: [
+        { name: "Settings", kind: "class", line: 15, complexity: 3, doc: "Configuration parsing environment variables." }
+      ]
+    },
+    {
+      id: "rune/quota.py",
+      name: "quota.py",
+      path: "rune/quota.py",
+      role: "shared_utility",
+      role_label: "Quota Tracker",
+      language: "Python",
+      loc: 160,
+      complexity: 16,
+      functions: 6,
+      in_degree: 1,
+      out_degree: 1,
+      importance: 52.0,
+      flags: [],
+      top_symbols: [
+        { name: "TokenTracker.check_quota", kind: "method", line: 62, complexity: 6, doc: "Redis token quota verification." }
+      ]
+    },
+    {
+      id: "rune/auth.py",
+      name: "auth.py",
+      path: "rune/auth.py",
+      role: "shared_utility",
+      role_label: "Supabase JWT",
+      language: "Python",
+      loc: 110,
+      complexity: 14,
+      functions: 5,
+      in_degree: 1,
+      out_degree: 1,
+      importance: 50.0,
+      flags: [],
+      top_symbols: [
+        { name: "verify_supabase_token", kind: "function", line: 28, complexity: 8, doc: "Validate RS256 JWT claims." }
+      ]
+    },
+    {
+      id: "rune/fingerprint.py",
+      name: "fingerprint.py",
+      path: "rune/fingerprint.py",
+      role: "shared_utility",
+      role_label: "Fingerprint Hasher",
+      language: "Python",
+      loc: 135,
+      complexity: 15,
+      functions: 5,
+      in_degree: 1,
+      out_degree: 0,
+      importance: 48.0,
+      flags: [],
+      top_symbols: [
+        { name: "_hash_sorted", kind: "function", line: 40, complexity: 5, doc: "Deterministic SHA-256 fingerprint from tokens." }
+      ]
+    },
+    {
+      id: "rune/test_analyzer.py",
+      name: "test_analyzer.py",
+      path: "rune/test_analyzer.py",
+      role: "test",
+      role_label: "Analyzer Suite",
+      language: "Python",
+      loc: 440,
+      complexity: 28,
+      functions: 18,
+      in_degree: 0,
+      out_degree: 1,
+      importance: 42.0,
+      flags: [],
+      top_symbols: [
+        { name: "test_analyze_dependencies", kind: "function", line: 45, complexity: 3, doc: "Verify dependency graph output." }
+      ]
+    },
+    {
+      id: "rune/test_complexity.py",
+      name: "test_complexity.py",
+      path: "rune/test_complexity.py",
+      role: "test",
+      role_label: "Complexity Suite",
+      language: "Python",
+      loc: 310,
+      complexity: 20,
+      functions: 14,
+      in_degree: 0,
+      out_degree: 1,
+      importance: 40.0,
+      flags: [],
+      top_symbols: [
+        { name: "test_mccabe_decision_points", kind: "function", line: 30, complexity: 4, doc: "Verify branch capture counts." }
+      ]
+    }
+  ],
+  edges: [
+    { source: "main.py", target: "rune/routes/analyze.py", count: 3 },
+    { source: "main.py", target: "rune/routes/graph.py", count: 2 },
+    { source: "main.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/analyzer.py", count: 2 },
+    { source: "rune/routes/analyze.py", target: "rune/classifier.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/graph.py", count: 2 },
+    { source: "rune/routes/analyze.py", target: "rune/symbol_graph.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/cloner.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/file_selector.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/cache.py", count: 1 },
+    { source: "rune/routes/analyze.py", target: "rune/routes/dependencies.py", count: 2 },
+    { source: "rune/routes/graph.py", target: "rune/graph_assembler.py", count: 1 },
+    { source: "rune/routes/graph.py", target: "rune/cache.py", count: 1 },
+    { source: "rune/routes/graph.py", target: "rune/routes/dependencies.py", count: 2 },
+    { source: "rune/routes/dependencies.py", target: "rune/auth.py", count: 1 },
+    { source: "rune/routes/dependencies.py", target: "rune/cache.py", count: 1 },
+    { source: "rune/routes/dependencies.py", target: "rune/quota.py", count: 1 },
+    { source: "rune/analyzer.py", target: "rune/complexity.py", count: 1 },
+    { source: "rune/analyzer.py", target: "rune/pipeline_models.py", count: 2 },
+    { source: "rune/classifier.py", target: "rune/complexity.py", count: 1 },
+    { source: "rune/classifier.py", target: "rune/pipeline_models.py", count: 1 },
+    { source: "rune/graph.py", target: "rune/pipeline_models.py", count: 1 },
+    { source: "rune/graph_assembler.py", target: "rune/fingerprint.py", count: 1 },
+    { source: "rune/graph_assembler.py", target: "rune/graph.py", count: 2 },
+    { source: "rune/symbol_graph.py", target: "rune/complexity.py", count: 1 },
+    { source: "rune/symbol_graph.py", target: "rune/pipeline_models.py", count: 1 },
+    { source: "rune/indexer.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/quota.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/auth.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/cache.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/file_selector.py", target: "rune/settings.py", count: 1 },
+    { source: "rune/test_analyzer.py", target: "rune/analyzer.py", count: 1 },
+    { source: "rune/test_complexity.py", target: "rune/complexity.py", count: 1 }
+  ]
+};
+
+// ═════════════════════════════════════════════════════════════════════════
+// SIMULATION & RENDERING ENGINE
+// ═════════════════════════════════════════════════════════════════════════
+
+const state = {
+  colorMode: "risk",      // 'risk' | 'role'
+  sizeMode: "complexity", // 'complexity' | 'loc'
+  selectedNodeId: null,
+  hoveredNodeId: null,
+  searchQuery: "",
+  pan: { x: 0, y: 0 },
+  zoom: 1.0,
+  isDraggingCanvas: false,
+  dragStart: { x: 0, y: 0 },
+  draggedNode: null
+};
+
+// Pre-index node data
+const nodesMap = new Map();
+BACKEND_PAYLOAD.nodes.forEach(n => {
+  n.density = (n.complexity / Math.max(1, n.loc)).toFixed(3);
+  n.isHotspot = (n.complexity >= 50 && n.in_degree >= 2) || n.flags.includes("god_file");
+  nodesMap.set(n.id, n);
+});
+
+// Calculate node radiuses
+function computeRadius(node) {
+  if (state.sizeMode === "complexity") {
+    // McCabe range 5 - 96 -> maps to 16px - 44px
+    return Math.max(14, Math.min(48, 12 + Math.sqrt(node.complexity) * 3.6));
+  } else {
+    // LOC range 56 - 1191 -> maps to 14px - 44px
+    return Math.max(14, Math.min(48, 10 + Math.sqrt(node.loc) * 1.05));
+  }
+}
+
+// Node colors
+function getRiskColor(cc) {
+  if (cc >= 50) return "var(--risk-crit)";
+  if (cc >= 30) return "var(--risk-high)";
+  if (cc >= 15) return "var(--risk-med)";
+  return "var(--risk-low)";
+}
+
+function getRoleColor(role) {
+  switch(role) {
+    case "core_module": return "var(--role-core)";
+    case "router": return "var(--role-router)";
+    case "entry_point": return "var(--role-entry)";
+    case "shared_utility": return "var(--role-util)";
+    case "model": return "var(--role-model)";
+    case "config": return "var(--role-config)";
+    case "test": return "var(--role-test)";
+    default: return "#94a3b8";
+  }
+}
+
+function getNodeColor(node) {
+  if (state.colorMode === "role") return getRoleColor(node.role);
+  return getRiskColor(node.complexity);
+}
+
+// Initial node coordinates (spaced intelligently)
+const width = window.innerWidth;
+const height = window.innerHeight - 60;
+const centerX = width / 2;
+const centerY = height / 2;
+
+BACKEND_PAYLOAD.nodes.forEach((n, i) => {
+  // Stagger nodes in clustered rings based on architectural role
+  let angle = (i / BACKEND_PAYLOAD.nodes.length) * 2 * Math.PI;
+  let dist = 160 + (i % 3) * 90;
+  if (n.role === "entry_point") { dist = 280; angle = -Math.PI * 0.75; }
+  else if (n.role === "core_module") { dist = 90 + (i % 2) * 60; }
+  else if (n.role === "router") { dist = 190; angle = -Math.PI * 0.25; }
+  else if (n.role === "test") { dist = 320; angle = Math.PI * 0.7; }
+  
+  n.x = centerX + dist * Math.cos(angle);
+  n.y = centerY + dist * Math.sin(angle);
+  n.vx = (Math.random() - 0.5) * 2;
+  n.vy = (Math.random() - 0.5) * 2;
+  n.radius = computeRadius(n);
+});
+
+// ── Physics Force Simulation ──
+let simulationRunning = true;
+let simAlpha = 1.0;
+
+function runSimulationStep() {
+  if (!simulationRunning || simAlpha < 0.005) return;
+
+  const nodes = BACKEND_PAYLOAD.nodes;
+  const edges = BACKEND_PAYLOAD.edges;
+
+  // 1. Center gravity pull
+  nodes.forEach(n => {
+    const dx = centerX - n.x;
+    const dy = centerY - n.y;
+    n.vx += dx * 0.0012 * simAlpha;
+    n.vy += dy * 0.0012 * simAlpha;
+  });
+
+  // 2. Node-node electrostatic repulsion
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const dist2 = dx * dx + dy * dy || 1;
+      const dist = Math.sqrt(dist2);
+      
+      const minDist = a.radius + b.radius + 35; // margin
+      const force = (minDist * minDist) / dist2 * 2.8 * simAlpha;
+      
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+
+      a.vx -= fx;
+      a.vy -= fy;
+      b.vx += fx;
+      b.vy += fy;
+    }
+  }
+
+  // 3. Hooke spring attraction on edges
+  edges.forEach(e => {
+    const s = nodesMap.get(e.source);
+    const t = nodesMap.get(e.target);
+    if (!s || !t) return;
+
+    const dx = t.x - s.x;
+    const dy = t.y - s.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const targetDist = 110 + (s.radius + t.radius);
+    const displacement = dist - targetDist;
+    const springForce = displacement * 0.024 * simAlpha;
+
+    const fx = (dx / dist) * springForce;
+    const fy = (dy / dist) * springForce;
+
+    s.vx += fx;
+    s.vy += fy;
+    t.vx -= fx;
+    t.vy -= fy;
+  });
+
+  // 4. Update positions with friction damping
+  nodes.forEach(n => {
+    if (n === state.draggedNode) return;
+    n.x += n.vx;
+    n.y += n.vy;
+    n.vx *= 0.86;
+    n.vy *= 0.86;
+  });
+
+  simAlpha *= 0.985; // cool down
+  renderCanvas();
+  requestAnimationFrame(runSimulationStep);
+}
+
+function reheatSimulation() {
+  simAlpha = 0.5;
+  if (!simulationRunning) {
+    simulationRunning = true;
+    requestAnimationFrame(runSimulationStep);
+  }
+}
+
+// ── DOM Elements ──
+const canvas = document.getElementById("graph-canvas");
+const transformLayer = document.getElementById("transform-layer");
+const edgesLayer = document.getElementById("edges-layer");
+const nodesLayer = document.getElementById("nodes-layer");
+const tooltip = document.getElementById("tooltip");
+const drawer = document.getElementById("node-drawer");
+
+function updateTransform() {
+  transformLayer.setAttribute("transform", `translate(${state.pan.x}, ${state.pan.y}) scale(${state.zoom})`);
+}
+
+// ── Render Nodes and Edges ──
+function initDOMGraph() {
+  edgesLayer.innerHTML = "";
+  nodesLayer.innerHTML = "";
+
+  // Create edge elements
+  BACKEND_PAYLOAD.edges.forEach((edge, idx) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "edge-line");
+    path.setAttribute("id", `edge-${idx}`);
+    path.setAttribute("marker-end", "url(#arrow-default)");
+    edgesLayer.appendChild(path);
+  });
+
+  // Create node elements
+  BACKEND_PAYLOAD.nodes.forEach(node => {
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("class", "node-group");
+    g.setAttribute("id", `node-${node.id.replace(/[^a-zA-Z0-9]/g, "_")}`);
+
+    // Outer glow / halo ring
+    const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    halo.setAttribute("class", "node-halo");
+    halo.setAttribute("fill", "transparent");
+    halo.setAttribute("stroke-width", "0");
+    halo.setAttribute("opacity", "0.2");
+    g.appendChild(halo);
+
+    // Circle Body
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("class", "node-body");
+    circle.setAttribute("stroke", "rgba(255,255,255,0.15)");
+    circle.setAttribute("stroke-width", "1.5");
+    g.appendChild(circle);
+
+    // Centered CC Badge
+    const badge = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    badge.setAttribute("class", "node-cc-badge");
+    badge.setAttribute("dy", "3.5");
+    badge.textContent = node.complexity;
+    g.appendChild(badge);
+
+    // Label below node
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("class", "node-label");
+    label.setAttribute("fill", "#cbd5e1");
+    label.textContent = node.name;
+    g.appendChild(label);
+
+    // Mouse interactions
+    g.addEventListener("mouseenter", (e) => onNodeHover(node, e));
+    g.addEventListener("mouseleave", onNodeLeave);
+    g.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectNode(node.id);
+    });
+
+    nodesLayer.appendChild(g);
+  });
+
+  renderCanvas();
+}
+
+function renderCanvas() {
+  const activeNodeId = state.selectedNodeId || state.hoveredNodeId;
+  const connectedOut = new Set();
+  const connectedIn = new Set();
+
+  if (activeNodeId) {
+    BACKEND_PAYLOAD.edges.forEach(e => {
+      if (e.source === activeNodeId) connectedOut.add(e.target);
+      if (e.target === activeNodeId) connectedIn.add(e.source);
+    });
+  }
+
+  // 1. Update Edges
+  BACKEND_PAYLOAD.edges.forEach((edge, idx) => {
+    const s = nodesMap.get(edge.source);
+    const t = nodesMap.get(edge.target);
+    const pathEl = document.getElementById(`edge-${idx}`);
+    if (!s || !t || !pathEl) return;
+
+    // Curved Bezier line
+    const dx = t.x - s.x;
+    const dy = t.y - s.y;
+    const dist = Math.sqrt(dx * dy + dy * dy);
+    const cx = (s.x + t.x) / 2 - dy * 0.08;
+    const cy = (s.y + t.y) / 2 + dx * 0.08;
+
+    pathEl.setAttribute("d", `M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`);
+
+    if (activeNodeId) {
+      if (edge.source === activeNodeId) {
+        pathEl.setAttribute("class", "edge-line highlight-out");
+        pathEl.setAttribute("marker-end", "url(#arrow-active)");
+      } else if (edge.target === activeNodeId) {
+        pathEl.setAttribute("class", "edge-line highlight-in");
+        pathEl.setAttribute("marker-end", "url(#arrow-inbound)");
+      } else {
+        pathEl.setAttribute("class", "edge-line dimmed");
+        pathEl.setAttribute("marker-end", "url(#arrow-default)");
+      }
+    } else {
+      pathEl.setAttribute("class", "edge-line");
+      pathEl.setAttribute("marker-end", "url(#arrow-default)");
+    }
+  });
+
+  // 2. Update Nodes
+  BACKEND_PAYLOAD.nodes.forEach(node => {
+    const domId = `node-${node.id.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const g = document.getElementById(domId);
+    if (!g) return;
+
+    node.radius = computeRadius(node);
+    const col = getNodeColor(node);
+
+    g.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+
+    const halo = g.querySelector(".node-halo");
+    const circle = g.querySelector(".node-body");
+    const badge = g.querySelector(".node-cc-badge");
+    const label = g.querySelector(".node-label");
+
+    halo.setAttribute("r", node.radius + 6);
+    halo.setAttribute("stroke", col);
+    halo.setAttribute("stroke-width", node.isHotspot ? "4" : "0");
+
+    circle.setAttribute("r", node.radius);
+    circle.setAttribute("fill", col);
+
+    label.setAttribute("y", node.radius + 15);
+
+    // Dimming logic
+    if (activeNodeId) {
+      const isSelf = node.id === activeNodeId;
+      const isTarget = connectedOut.has(node.id);
+      const isSource = connectedIn.has(node.id);
+
+      if (isSelf) {
+        g.setAttribute("class", "node-group selected");
+      } else if (isTarget || isSource) {
+        g.setAttribute("class", "node-group");
+      } else {
+        g.setAttribute("class", "node-group dimmed");
+      }
+    } else {
+      g.setAttribute("class", "node-group");
+    }
+  });
+}
+
+// ── Hover & Tooltip ──
+function onNodeHover(node, e) {
+  state.hoveredNodeId = node.id;
+  renderCanvas();
+
+  const rect = canvas.getBoundingClientRect();
+  tooltip.style.opacity = "1";
+  tooltip.style.left = `${e.clientX + 14}px`;
+  tooltip.style.top = `${e.clientY - 20}px`;
+  tooltip.innerHTML = `
+    <div style="font-weight:600;color:var(--text-primary);margin-bottom:3px">${node.path}</div>
+    <div style="color:var(--text-secondary);font-size:11px">${node.role_label} · ${node.loc} LOC</div>
+    <div style="margin-top:4px;color:${getNodeColor(node)};font-weight:700">
+      McCabe CC: ${node.complexity} ${node.isHotspot ? '⚠️ HOTSPOT' : ''}
+    </div>
+  `;
+}
+
+function onNodeLeave() {
+  state.hoveredNodeId = null;
+  tooltip.style.opacity = "0";
+  renderCanvas();
+}
+
+// ── Inspector Drawer Detail ──
+function selectNode(nodeId) {
+  state.selectedNodeId = nodeId;
+  renderCanvas();
+
+  if (!nodeId) {
+    drawer.classList.remove("open");
+    return;
+  }
+
+  const node = nodesMap.get(nodeId);
+  if (!node) return;
+
+  drawer.classList.add("open");
+  document.getElementById("d-path").textContent = node.path;
+  
+  const roleEl = document.getElementById("d-role");
+  roleEl.textContent = node.role_label;
+  roleEl.style.background = getNodeColor(node);
+  roleEl.style.color = "#ffffff";
+
+  // Hotspot banner
+  const banner = document.getElementById("d-hotspot-alert");
+  banner.style.display = node.isHotspot ? "flex" : "none";
+
+  // Metrics
+  document.getElementById("d-cc").innerHTML = `${node.complexity} <span style="color:${getNodeColor(node)}">${node.complexity >= 50 ? 'Critical' : node.complexity >= 30 ? 'High' : 'Normal'}</span>`;
+  document.getElementById("d-loc").innerHTML = `${node.loc} <span>LOC</span>`;
+  document.getElementById("d-density").innerHTML = `${node.density} <span>CC/line</span>`;
+  document.getElementById("d-funcs").innerHTML = `${node.functions} <span>units</span>`;
+
+  // Outbound dependencies
+  const outEdges = BACKEND_PAYLOAD.edges.filter(e => e.source === nodeId);
+  document.getElementById("d-out-count").textContent = outEdges.length;
+  const outList = document.getElementById("d-out-list");
+  outList.innerHTML = outEdges.length ? "" : "<div style='color:var(--text-muted);font-size:11px'>No outbound imports</div>";
+  outEdges.forEach(e => {
+    const chip = document.createElement("div");
+    chip.className = "dep-chip";
+    const targetNode = nodesMap.get(e.target);
+    chip.innerHTML = `<span>${e.target}</span><span style="color:${getNodeColor(targetNode)};font-weight:600">CC ${targetNode.complexity}</span>`;
+    chip.addEventListener("click", () => selectNode(e.target));
+    outList.appendChild(chip);
+  });
+
+  // Inbound callers
+  const inEdges = BACKEND_PAYLOAD.edges.filter(e => e.target === nodeId);
+  document.getElementById("d-in-count").textContent = inEdges.length;
+  const inList = document.getElementById("d-in-list");
+  inList.innerHTML = inEdges.length ? "" : "<div style='color:var(--text-muted);font-size:11px'>No inbound callers (root/standalone)</div>";
+  inEdges.forEach(e => {
+    const chip = document.createElement("div");
+    chip.className = "dep-chip";
+    const srcNode = nodesMap.get(e.source);
+    chip.innerHTML = `<span>${e.source}</span><span style="color:${getNodeColor(srcNode)};font-weight:600">CC ${srcNode.complexity}</span>`;
+    chip.addEventListener("click", () => selectNode(e.source));
+    inList.appendChild(chip);
+  });
+
+  // Symbols table
+  const tbody = document.getElementById("d-symbols-body");
+  tbody.innerHTML = "";
+  if (node.top_symbols && node.top_symbols.length) {
+    node.top_symbols.forEach(sym => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="color:var(--text-primary);font-weight:500" title="${sym.doc || ''}">${sym.name}</td>
+        <td style="color:var(--text-muted)">${sym.kind}</td>
+        <td style="color:var(--text-secondary)">:${sym.line}</td>
+        <td style="text-align:right;color:${getRiskColor(sym.complexity)};font-weight:600">${sym.complexity}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } else {
+    tbody.innerHTML = "<tr><td colspan='4' style='color:var(--text-muted)'>No extracted symbols</td></tr>";
+  }
+}
+
+document.getElementById("d-close").addEventListener("click", () => {
+  selectNode(null);
+});
+
+// ── Pan & Zoom Interaction ──
+const viewport = document.getElementById("viewport");
+
+viewport.addEventListener("mousedown", (e) => {
+  if (e.target.closest(".node-group") || e.target.closest(".drawer") || e.target.closest(".legend-card")) return;
+  state.isDraggingCanvas = true;
+  state.dragStart = { x: e.clientX - state.pan.x, y: e.clientY - state.pan.y };
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (state.isDraggingCanvas) {
+    state.pan.x = e.clientX - state.dragStart.x;
+    state.pan.y = e.clientY - state.dragStart.y;
+    updateTransform();
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  state.isDraggingCanvas = false;
+  state.draggedNode = null;
+});
+
+viewport.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+  const newZoom = Math.max(0.35, Math.min(2.8, state.zoom * zoomFactor));
+
+  // Zoom to cursor
+  const mouseX = e.clientX;
+  const mouseY = e.clientY;
+  state.pan.x = mouseX - (mouseX - state.pan.x) * (newZoom / state.zoom);
+  state.pan.y = mouseY - (mouseY - state.pan.y) * (newZoom / state.zoom);
+  state.zoom = newZoom;
+  updateTransform();
+}, { passive: false });
+
+// Zoom controls
+document.getElementById("btn-zoom-in").addEventListener("click", () => {
+  state.zoom = Math.min(2.8, state.zoom * 1.2);
+  updateTransform();
+});
+document.getElementById("btn-zoom-out").addEventListener("click", () => {
+  state.zoom = Math.max(0.35, state.zoom / 1.2);
+  updateTransform();
+});
+document.getElementById("btn-zoom-fit").addEventListener("click", () => {
+  state.zoom = 1.0;
+  state.pan = { x: 0, y: 0 };
+  updateTransform();
+});
+
+// Canvas background click clears selection
+viewport.addEventListener("click", (e) => {
+  if (!e.target.closest(".node-group") && !e.target.closest(".drawer") && !e.target.closest(".legend-card")) {
+    selectNode(null);
+  }
+});
+
+// ── Search & Highlight ──
+const searchInput = document.getElementById("node-search");
+searchInput.addEventListener("input", (e) => {
+  const query = e.target.value.toLowerCase().trim();
+  if (!query) {
+    selectNode(null);
+    return;
+  }
+  const match = BACKEND_PAYLOAD.nodes.find(n => n.name.toLowerCase().includes(query) || n.path.toLowerCase().includes(query));
+  if (match) {
+    selectNode(match.id);
+    // Pan to node
+    state.pan.x = width / 2 - match.x * state.zoom;
+    state.pan.y = height / 2 - match.y * state.zoom;
+    updateTransform();
+  }
+});
+
+// ── Mode Switchers ──
+document.querySelectorAll("#color-mode-group button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#color-mode-group button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.colorMode = btn.dataset.colormode;
+    
+    // Update legend
+    const legendTitle = document.getElementById("legend-mode-title");
+    const legendBar = document.getElementById("legend-scale-bar");
+    if (state.colorMode === "role") {
+      legendTitle.textContent = "Architectural Role";
+      legendBar.innerHTML = `
+        <div class="legend-item"><div class="legend-dot" style="background:var(--role-core)"></div> Core Engine</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--role-router)"></div> API Router</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--role-util)"></div> Shared Utility</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--role-entry)"></div> Entry Point</div>
+      `;
+    } else {
+      legendTitle.textContent = "McCabe Cyclomatic Risk";
+      legendBar.innerHTML = `
+        <div class="legend-item"><div class="legend-dot" style="background:var(--risk-low)"></div> &lt; 15 Clean</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--risk-med)"></div> 15-30 Notice</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--risk-high)"></div> 31-50 Alert</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--risk-crit)"></div> 50+ Critical</div>
+      `;
+    }
+
+    renderCanvas();
+  });
+});
+
+document.querySelectorAll("#size-mode-group button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#size-mode-group button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.sizeMode = btn.dataset.sizemode;
+    reheatSimulation();
+    renderCanvas();
+  });
+});
+
+// Initialize
+initDOMGraph();
+runSimulationStep();
+</script>
+</body>
+</html>

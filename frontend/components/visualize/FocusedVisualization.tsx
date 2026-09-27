@@ -68,6 +68,13 @@ const KnowledgeGraph = dynamic(
     ),
   { ssr: false, loading: () => <VizSkeleton /> },
 );
+const ConcentricRadarViz = dynamic(
+  () =>
+    import("@/components/report/viz/radar/ConcentricRadarViz").then(
+      (m) => m.ConcentricRadarViz,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
+);
 
 /**
  * Owns description enrichment for the knowledge graph.
@@ -548,7 +555,7 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
       );
     case "architecture":
       return (
-        <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />
+        <ArchitectureGraph data={data} />
       );
     case "dataflow":
       return (
@@ -556,6 +563,8 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
       );
     case "complexity":
       return <TreemapViz data={data} />;
+    case "concentric_radar":
+      return <ConcentricRadarViz data={data} />;
     case "mindmap":
       return <RadialMindmap root={data.root || data} />;
     case "neural_network":
@@ -572,7 +581,6 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
 function hasUnresolvedEdges(type: VizType, data: any) {
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return !!data?.nodes?.length && !data?.edges?.length;
     default:
@@ -584,11 +592,12 @@ function isEmptyVisualization(type: VizType, data: any) {
   if (!data) return true;
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return (
         !data.nodes || data.nodes.length === 0 || hasUnresolvedEdges(type, data)
       );
+    case "concentric_radar":
+      return !data.modules || data.modules.length === 0;
     case "complexity":
       return !data.children || data.children.length === 0;
     case "mindmap":

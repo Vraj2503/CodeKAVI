@@ -10,6 +10,7 @@ import {
   Brain,
   BrainCircuit,
   Network,
+  Radar,
 } from "lucide-react";
 import { useVisualization } from "@/hooks/useVisualization";
 import { useExplanation } from "@/hooks/useExplanation";
@@ -34,6 +35,13 @@ export const VIZ_CONFIG: VizConfigItem[] = [
     description:
       "Visualize file-to-file import relationships and identify dependency hubs.",
     icon: GitBranch,
+  },
+  {
+    type: "concentric_radar",
+    label: "Complexity Radar",
+    description:
+      "Concentric architectural tiers with dependency arcs and McCabe complexity hull.",
+    icon: Radar,
   },
   // Says what the two channels actually encode. The old copy promised
   // "complexity by importance score", which named a metric the chart has never

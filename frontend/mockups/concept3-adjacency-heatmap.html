@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CodeKAVI — Concept 3: Dependency Structure Matrix (DSM) & Complexity Heatmap</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #07090e;
+    --surface: #0e121b;
+    --surface-elevated: #151b27;
+    --surface-border: #1f283a;
+    --border-hover: #323f5b;
+    --text-primary: #e6edf8;
+    --text-secondary: #94a3b8;
+    --text-muted: #5e6f8d;
+    --accent: #38bdf8;
+    --accent-glow: rgba(56, 189, 248, 0.25);
+    
+    /* Risk / Coupled Complexity Heatmap */
+    --heat-empty: #101623;
+    --heat-low: #10b981;
+    --heat-low-bg: rgba(16, 185, 129, 0.22);
+    --heat-med: #f59e0b;
+    --heat-med-bg: rgba(245, 158, 11, 0.25);
+    --heat-high: #f97316;
+    --heat-high-bg: rgba(249, 115, 22, 0.32);
+    --heat-crit: #ef4444;
+    --heat-crit-bg: rgba(239, 68, 68, 0.38);
+
+    /* Role Colors */
+    --role-core: #818cf8;
+    --role-router: #38bdf8;
+    --role-entry: #a855f7;
+    --role-util: #2dd4bf;
+    --role-model: #ec4899;
+    --role-config: #e2e8f0;
+    --role-test: #94a3b8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+    z-index: 0;
+  }
+
+  /* Top Navigation */
+  header {
+    height: 60px;
+    background: rgba(14, 18, 27, 0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: relative;
+    z-index: 100;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .brand-badge {
+    background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 0 16px rgba(245, 158, 11, 0.3);
+  }
+  .brand-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-repo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .header-metrics {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .metric-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .metric-pill b {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+  }
+  .metric-pill.hotspot {
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+  }
+  .metric-pill.hotspot b { color: #ef4444; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .btn-group {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .btn-group button {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-group button.active {
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--surface-border);
+    font-weight: 600;
+  }
+  .btn-group button:hover:not(.active) { color: var(--text-primary); }
+
+  /* Toolbar */
+  .toolbar {
+    height: 44px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    position: relative;
+    z-index: 90;
+  }
+  .toolbar-left, .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .sort-select {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    padding: 4px 8px;
+    border-radius: 6px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  /* Matrix Legend Bar */
+  .legend-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .heat-sample {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+
+  /* Main Container */
+  .main-container {
+    flex: 1;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Matrix Scroll Viewport */
+  .matrix-viewport {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    padding: 24px;
+    display: flex;
+    background: var(--bg);
+  }
+
+  /* Matrix Layout Structure */
+  .matrix-wrapper {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    margin: auto 0;
+  }
+
+  /* Top Column Headers (Rotated) */
+  .col-headers-row {
+    display: flex;
+    margin-left: 280px; /* Space for Row Headers */
+    height: 140px;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    background: var(--bg);
+  }
+  .col-header {
+    width: 32px;
+    height: 140px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding-bottom: 8px;
+    cursor: pointer;
+  }
+  .col-header-text {
+    transform: rotate(-45deg);
+    transform-origin: bottom left;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s;
+    width: 150px;
+  }
+  .col-header:hover .col-header-text {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .col-header.highlighted .col-header-text {
+    color: #a855f7;
+    font-weight: 700;
+  }
+
+  /* Matrix Body (Rows) */
+  .matrix-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* Single Matrix Row */
+  .matrix-row {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    position: relative;
+  }
+  .matrix-row.highlighted {
+    background: rgba(56, 189, 248, 0.05);
+  }
+
+  /* Row Header (Left sticky column) */
+  .row-header {
+    width: 280px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-primary);
+    position: sticky;
+    left: 0;
+    background: var(--bg);
+    z-index: 30;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-right: 1px solid var(--surface-border);
+  }
+  .row-header:hover {
+    background: var(--surface);
+    color: var(--accent);
+  }
+  .row-header.highlighted {
+    background: rgba(56, 189, 248, 0.12);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .row-title-area {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .row-index {
+    color: var(--text-muted);
+    font-size: 10px;
+    width: 18px;
+  }
+  .row-meta-stats {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .row-cc-pill {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    min-width: 24px;
+    text-align: center;
+  }
+
+  /* Matrix Cells */
+  .cells-strip {
+    display: flex;
+    gap: 2px;
+    padding-left: 2px;
+  }
+
+  .cell {
+    width: 30px;
+    height: 30px;
+    border-radius: 4px;
+    background: var(--heat-empty);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .cell:hover {
+    transform: scale(1.22);
+    z-index: 50;
+    border-color: #ffffff;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8);
+  }
+  .cell.active-select {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+    transform: scale(1.15);
+    z-index: 45;
+  }
+
+  /* Diagonal Self-Cell */
+  .cell.diagonal {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+  .diag-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Crosshair Guidelines */
+  .cell.col-hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .cell.row-hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  /* Module cluster boundary block */
+  .cluster-border-bottom {
+    border-bottom: 2px dashed rgba(255, 255, 255, 0.15) !important;
+    margin-bottom: 4px;
+  }
+  .cluster-border-right {
+    border-right: 2px dashed rgba(255, 255, 255, 0.15) !important;
+    margin-right: 4px;
+  }
+
+  /* Right Side Inspector Drawer */
+  .inspector {
+    width: 380px;
+    background: var(--surface);
+    border-left: 1px solid var(--surface-border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 30;
+  }
+  .inspector-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .inspector-type {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    color: var(--text-muted);
+  }
+  .interaction-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    word-break: break-all;
+  }
+
+  .inspector-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* Coupled Risk Card */
+  .risk-card {
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border: 1px solid transparent;
+  }
+  .risk-card.critical {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+  }
+  .risk-card.moderate {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fde68a;
+  }
+  .risk-card.clean {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #a7f3d0;
+  }
+  .risk-title {
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .risk-desc {
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  /* Dual File Comparison Cards */
+  .dual-compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .compare-box {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .compare-role {
+    font-size: 9px;
+    text-transform: uppercase;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    width: fit-content;
+  }
+  .compare-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .compare-stat {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+
+  /* Section Headings */
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+
+  /* Symbol Tags */
+  .symbol-tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .symbol-tag {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  /* Tooltip */
+  #matrix-tooltip {
+    position: absolute;
+    background: rgba(14, 18, 27, 0.95);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<!-- Top Navigation -->
+<header>
+  <div class="brand">
+    <span class="brand-badge">Concept 3</span>
+    <div class="brand-title">
+      Dependency Structure Matrix (DSM)
+      <span class="brand-repo">CodeKAVI / backend (rune)</span>
+    </div>
+  </div>
+
+  <div class="header-metrics">
+    <div class="metric-pill"><b>21 &times; 21</b> Grid</div>
+    <div class="metric-pill"><b>33</b> Direct Couplings</div>
+    <div class="metric-pill hotspot"><b>5</b> High-Coupled Hotspots</div>
+  </div>
+
+  <div class="header-actions">
+    <!-- Matrix Value View -->
+    <div class="btn-group" id="cell-mode-group">
+      <button class="active" data-cellmode="heat">Coupled CC Heatmap</button>
+      <button data-cellmode="symbols">Import Symbols</button>
+    </div>
+  </div>
+</header>
+
+<!-- Subheader Toolbar -->
+<div class="toolbar">
+  <div class="toolbar-left">
+    <span>Sort Rows / Columns by:</span>
+    <select class="sort-select" id="matrix-sort">
+      <option value="layer">Architectural Subsystems (DSM Partitions)</option>
+      <option value="cc-desc">Cyclomatic Complexity (Highest First)</option>
+      <option value="coupling-desc">Coupling Volume (Most Connected)</option>
+      <option value="alpha">Alphabetical (A → Z)</option>
+    </select>
+  </div>
+
+  <div class="toolbar-right">
+    <div class="legend-strip">
+      <span style="color:var(--text-muted)">Coupled Complexity Risk:</span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="heat-sample" style="background:var(--heat-low)"></span> &lt; 40
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="heat-sample" style="background:var(--heat-med)"></span> 40-80
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="heat-sample" style="background:var(--heat-high)"></span> 80-120
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span class="heat-sample" style="background:var(--heat-crit)"></span> 120+ Critical
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Main Area -->
+<div class="main-container">
+  
+  <!-- Matrix Viewport -->
+  <div class="matrix-viewport" id="matrix-viewport">
+    <div class="matrix-wrapper">
+      
+      <!-- Top Column Headers -->
+      <div class="col-headers-row" id="col-headers-container"></div>
+
+      <!-- Matrix Grid of Rows -->
+      <div class="matrix-grid" id="matrix-grid-container"></div>
+
+    </div>
+  </div>
+
+  <!-- Right Side Inspector Panel -->
+  <div class="inspector" id="matrix-inspector">
+    <div class="inspector-header">
+      <div class="inspector-type" id="ins-type">Dependency Interaction</div>
+      <div class="interaction-title" id="ins-title">
+        <span id="ins-src-title">routes/analyze.py</span>
+        <span style="color:var(--accent)">→</span>
+        <span id="ins-tgt-title">analyzer.py</span>
+      </div>
+    </div>
+
+    <div class="inspector-content">
+      <!-- Risk Card -->
+      <div class="risk-card critical" id="ins-risk-card">
+        <div class="risk-title" id="ins-risk-title">
+          <span>⚠️</span> High Coupled Complexity: 150 CC
+        </div>
+        <div class="risk-desc" id="ins-risk-desc">
+          Both the caller (CC 82) and the dependency (CC 68) exhibit heavy decision branching. High cognitive load and volatile contract surface.
+        </div>
+      </div>
+
+      <!-- Caller & Dependency Side-by-Side -->
+      <div class="dual-compare">
+        <div class="compare-box">
+          <span class="compare-role" id="ins-src-role" style="background:var(--role-router);color:#fff">Caller (Row)</span>
+          <div class="compare-name" id="ins-src-name">routes/analyze.py</div>
+          <div class="compare-stat">Complexity: <b id="ins-src-cc">82</b></div>
+          <div class="compare-stat">Lines: <b id="ins-src-loc">970</b></div>
+        </div>
+
+        <div class="compare-box">
+          <span class="compare-role" id="ins-tgt-role" style="background:var(--role-core);color:#fff">Dependency (Col)</span>
+          <div class="compare-name" id="ins-tgt-name">analyzer.py</div>
+          <div class="compare-stat">Complexity: <b id="ins-tgt-cc">68</b></div>
+          <div class="compare-stat">Lines: <b id="ins-tgt-loc">517</b></div>
+        </div>
+      </div>
+
+      <!-- Imported Symbols from AST -->
+      <div>
+        <div class="section-label">Imported Symbols &amp; Bindings</div>
+        <div class="symbol-tag-list" id="ins-symbols-list">
+          <span class="symbol-tag">analyze_dependencies</span>
+          <span class="symbol-tag">patch_dep_graph</span>
+        </div>
+      </div>
+
+      <!-- Architecture Guidance -->
+      <div>
+        <div class="section-label">Architectural Assessment</div>
+        <p style="font-size:11px;color:var(--text-secondary);line-height:1.5" id="ins-arch-advice">
+          This is a legitimate top-down layered import from API route controller into core business logic. However, because both modules exceed CC 60, unit testing requires mocking out the complex analyzer interface.
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- Hover Tooltip -->
+<div id="matrix-tooltip"></div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════
+// REAL BACKEND EXTRACTION DATA
+// Matches CodeKavi's AST analysis & dependency extraction
+// ═════════════════════════════════════════════════════════════════════════
+const MODULES_DATA = [
+  { id: "main.py", name: "main.py", path: "main.py", role: "entry_point", role_label: "Entry", subsystem: "entry", loc: 145, cc: 18, funcs: 6 },
+  
+  // Routes
+  { id: "rune/routes/analyze.py", name: "routes/analyze.py", path: "rune/routes/analyze.py", role: "router", role_label: "Analyze API", subsystem: "routes", loc: 970, cc: 82, funcs: 18 },
+  { id: "rune/routes/graph.py", name: "routes/graph.py", path: "rune/routes/graph.py", role: "router", role_label: "Graph API", subsystem: "routes", loc: 247, cc: 26, funcs: 8 },
+  { id: "rune/routes/dependencies.py", name: "routes/dependencies.py", path: "rune/routes/dependencies.py", role: "router", role_label: "Quota/Auth", subsystem: "routes", loc: 56, cc: 8, funcs: 4 },
+  
+  // Core Engine
+  { id: "rune/analyzer.py", name: "analyzer.py", path: "rune/analyzer.py", role: "core_module", role_label: "AST Engine", subsystem: "core", loc: 517, cc: 68, funcs: 24 },
+  { id: "rune/classifier.py", name: "classifier.py", path: "rune/classifier.py", role: "core_module", role_label: "Classifier", subsystem: "core", loc: 925, cc: 88, funcs: 32 },
+  { id: "rune/complexity.py", name: "complexity.py", path: "rune/complexity.py", role: "core_module", role_label: "Complexity", subsystem: "core", loc: 517, cc: 54, funcs: 19 },
+  { id: "rune/graph.py", name: "graph.py", path: "rune/graph.py", role: "core_module", role_label: "Graph Exporter", subsystem: "core", loc: 1191, cc: 96, funcs: 38 },
+  { id: "rune/graph_assembler.py", name: "graph_assembler.py", path: "rune/graph_assembler.py", role: "core_module", role_label: "Assembler", subsystem: "core", loc: 408, cc: 46, funcs: 14 },
+  { id: "rune/symbol_graph.py", name: "symbol_graph.py", path: "rune/symbol_graph.py", role: "core_module", role_label: "Symbol Graph", subsystem: "core", loc: 480, cc: 58, funcs: 16 },
+
+  // Shared Utilities
+  { id: "rune/cache.py", name: "cache.py", path: "rune/cache.py", role: "shared_utility", role_label: "Redis Cache", subsystem: "utils", loc: 280, cc: 24, funcs: 12 },
+  { id: "rune/cloner.py", name: "cloner.py", path: "rune/cloner.py", role: "shared_utility", role_label: "Git Cloner", subsystem: "utils", loc: 195, cc: 22, funcs: 7 },
+  { id: "rune/file_selector.py", name: "file_selector.py", path: "rune/file_selector.py", role: "shared_utility", role_label: "File Filter", subsystem: "utils", loc: 340, cc: 38, funcs: 11 },
+  { id: "rune/indexer.py", name: "indexer.py", path: "rune/indexer.py", role: "shared_utility", role_label: "Vector Index", subsystem: "utils", loc: 410, cc: 32, funcs: 10 },
+  { id: "rune/quota.py", name: "quota.py", path: "rune/quota.py", role: "shared_utility", role_label: "Quota Mgr", subsystem: "utils", loc: 160, cc: 16, funcs: 6 },
+  { id: "rune/auth.py", name: "auth.py", path: "rune/auth.py", role: "shared_utility", role_label: "Supabase JWT", subsystem: "utils", loc: 110, cc: 14, funcs: 5 },
+  { id: "rune/fingerprint.py", name: "fingerprint.py", path: "rune/fingerprint.py", role: "shared_utility", role_label: "Hasher", subsystem: "utils", loc: 135, cc: 15, funcs: 5 },
+
+  // Models & Config
+  { id: "rune/pipeline_models.py", name: "pipeline_models.py", path: "rune/pipeline_models.py", role: "model", role_label: "Models", subsystem: "models", loc: 210, cc: 6, funcs: 5 },
+  { id: "rune/settings.py", name: "settings.py", path: "rune/settings.py", role: "config", role_label: "Config", subsystem: "models", loc: 120, cc: 5, funcs: 3 },
+
+  // Tests
+  { id: "rune/test_analyzer.py", name: "test_analyzer.py", path: "rune/test_analyzer.py", role: "test", role_label: "Test Suite", subsystem: "tests", loc: 440, cc: 28, funcs: 18 },
+  { id: "rune/test_complexity.py", name: "test_complexity.py", path: "rune/test_complexity.py", role: "test", role_label: "Test Suite", subsystem: "tests", loc: 310, cc: 20, funcs: 14 }
+];
+
+const RAW_DEPENDENCY_EDGES = [
+  { source: "main.py", target: "rune/routes/analyze.py", symbols: ["router"] },
+  { source: "main.py", target: "rune/routes/graph.py", symbols: ["router"] },
+  { source: "main.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/routes/analyze.py", target: "rune/analyzer.py", symbols: ["analyze_dependencies", "patch_dep_graph"] },
+  { source: "rune/routes/analyze.py", target: "rune/classifier.py", symbols: ["classify_files"] },
+  { source: "rune/routes/analyze.py", target: "rune/graph.py", symbols: ["export_graph_json", "build_module_graph"] },
+  { source: "rune/routes/analyze.py", target: "rune/symbol_graph.py", symbols: ["build_symbol_graph"] },
+  { source: "rune/routes/analyze.py", target: "rune/cloner.py", symbols: ["clone_repository"] },
+  { source: "rune/routes/analyze.py", target: "rune/file_selector.py", symbols: ["select_files"] },
+  { source: "rune/routes/analyze.py", target: "rune/cache.py", symbols: ["AnalysisCache"] },
+  { source: "rune/routes/analyze.py", target: "rune/routes/dependencies.py", symbols: ["get_cache", "enforce_quota"] },
+  { source: "rune/routes/graph.py", target: "rune/graph_assembler.py", symbols: ["assemble_graph"] },
+  { source: "rune/routes/graph.py", target: "rune/cache.py", symbols: ["AnalysisCache"] },
+  { source: "rune/routes/graph.py", target: "rune/routes/dependencies.py", symbols: ["get_cache", "enforce_quota"] },
+  { source: "rune/routes/dependencies.py", target: "rune/auth.py", symbols: ["verify_supabase_token"] },
+  { source: "rune/routes/dependencies.py", target: "rune/cache.py", symbols: ["AnalysisCache"] },
+  { source: "rune/routes/dependencies.py", target: "rune/quota.py", symbols: ["get_token_tracker"] },
+  { source: "rune/analyzer.py", target: "rune/complexity.py", symbols: ["file_complexity"] },
+  { source: "rune/analyzer.py", target: "rune/pipeline_models.py", symbols: ["FileProfile", "DepGraph"] },
+  { source: "rune/classifier.py", target: "rune/complexity.py", symbols: ["file_complexity"] },
+  { source: "rune/classifier.py", target: "rune/pipeline_models.py", symbols: ["FileProfile"] },
+  { source: "rune/graph.py", target: "rune/pipeline_models.py", symbols: ["FileProfile"] },
+  { source: "rune/graph_assembler.py", target: "rune/fingerprint.py", symbols: ["_hash_sorted"] },
+  { source: "rune/graph_assembler.py", target: "rune/graph.py", symbols: ["ROLE_TO_LAYER", "detect_cycles"] },
+  { source: "rune/symbol_graph.py", target: "rune/complexity.py", symbols: ["file_complexity"] },
+  { source: "rune/symbol_graph.py", target: "rune/pipeline_models.py", symbols: ["SymbolNode"] },
+  { source: "rune/indexer.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/quota.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/auth.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/cache.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/file_selector.py", target: "rune/settings.py", symbols: ["settings"] },
+  { source: "rune/test_analyzer.py", target: "rune/analyzer.py", symbols: ["analyze_dependencies"] },
+  { source: "rune/test_complexity.py", target: "rune/complexity.py", symbols: ["file_complexity"] }
+];
+
+// ═════════════════════════════════════════════════════════════════════════
+// MATRIX DATA STRUCTURES
+// ═════════════════════════════════════════════════════════════════════════
+
+const moduleMap = new Map();
+MODULES_DATA.forEach(m => moduleMap.set(m.id, m));
+
+// Lookup map for fast (source, target) edge check
+const edgeLookup = new Map();
+RAW_DEPENDENCY_EDGES.forEach(e => {
+  edgeLookup.set(`${e.source}->${e.target}`, e);
+});
+
+// App State
+const state = {
+  sortBy: "layer",        // 'layer' | 'cc-desc' | 'coupling-desc' | 'alpha'
+  cellDisplay: "heat",    // 'heat' | 'symbols'
+  hoveredSource: null,
+  hoveredTarget: null,
+  selectedSource: "rune/routes/analyze.py",
+  selectedTarget: "rune/analyzer.py"
+};
+
+function getRiskColor(cc) {
+  if (cc >= 50) return "var(--heat-crit)";
+  if (cc >= 30) return "var(--heat-high)";
+  if (cc >= 15) return "var(--heat-med)";
+  return "var(--heat-low)";
+}
+
+function getRoleColor(role) {
+  switch(role) {
+    case "core_module": return "var(--role-core)";
+    case "router": return "var(--role-router)";
+    case "entry_point": return "var(--role-entry)";
+    case "shared_utility": return "var(--role-util)";
+    case "model": return "var(--role-model)";
+    case "config": return "var(--role-config)";
+    case "test": return "var(--role-test)";
+    default: return "#94a3b8";
+  }
+}
+
+function getCoupledColor(sourceCC, targetCC) {
+  const combined = sourceCC + targetCC;
+  if (combined >= 120) return "var(--heat-crit)";
+  if (combined >= 80) return "var(--heat-high)";
+  if (combined >= 40) return "var(--heat-med)";
+  return "var(--heat-low)";
+}
+
+function getSortedModules() {
+  const list = [...MODULES_DATA];
+  if (state.sortBy === "cc-desc") {
+    return list.sort((a, b) => b.cc - a.cc);
+  } else if (state.sortBy === "coupling-desc") {
+    // Count total connections
+    return list.sort((a, b) => {
+      const connA = RAW_DEPENDENCY_EDGES.filter(e => e.source === a.id || e.target === a.id).length;
+      const connB = RAW_DEPENDENCY_EDGES.filter(e => e.source === b.id || e.target === b.id).length;
+      return connB - connA;
+    });
+  } else if (state.sortBy === "alpha") {
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  // Default: layer
+  const order = { entry: 1, routes: 2, core: 3, utils: 4, models: 5, tests: 6 };
+  return list.sort((a, b) => {
+    if (order[a.subsystem] !== order[b.subsystem]) {
+      return order[a.subsystem] - order[b.subsystem];
+    }
+    return b.cc - a.cc;
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RENDER MATRIX
+// ═════════════════════════════════════════════════════════════════════════
+
+const colHeadersContainer = document.getElementById("col-headers-container");
+const matrixGridContainer = document.getElementById("matrix-grid-container");
+const tooltip = document.getElementById("matrix-tooltip");
+
+function renderMatrix() {
+  const modules = getSortedModules();
+  colHeadersContainer.innerHTML = "";
+  matrixGridContainer.innerHTML = "";
+
+  // 1. Render Column Headers (Top)
+  modules.forEach((mod, colIdx) => {
+    const colHeader = document.createElement("div");
+    colHeader.className = "col-header";
+    colHeader.dataset.colId = mod.id;
+    if (mod.id === state.hoveredTarget || mod.id === state.selectedTarget) {
+      colHeader.classList.add("highlighted");
+    }
+
+    // Cluster separator border
+    if (state.sortBy === "layer" && colIdx < modules.length - 1 && mod.subsystem !== modules[colIdx + 1].subsystem) {
+      colHeader.classList.add("cluster-border-right");
+    }
+
+    colHeader.innerHTML = `
+      <div class="col-header-text">
+        <span style="color:var(--text-muted)">${colIdx + 1}.</span>
+        <span>${mod.name}</span>
+      </div>
+    `;
+
+    colHeader.addEventListener("mouseenter", (e) => onHeaderHover(null, mod.id, e));
+    colHeader.addEventListener("mouseleave", onHeaderLeave);
+    colHeader.addEventListener("click", () => selectModuleTarget(mod.id));
+
+    colHeadersContainer.appendChild(colHeader);
+  });
+
+  // 2. Render Rows
+  modules.forEach((rowMod, rowIdx) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "matrix-row";
+    rowEl.dataset.rowId = rowMod.id;
+    if (rowMod.id === state.hoveredSource || rowMod.id === state.selectedSource) {
+      rowEl.classList.add("highlighted");
+    }
+
+    // Cluster separator
+    if (state.sortBy === "layer" && rowIdx < modules.length - 1 && rowMod.subsystem !== modules[rowIdx + 1].subsystem) {
+      rowEl.classList.add("cluster-border-bottom");
+    }
+
+    // Row Header (Left)
+    const rowHeader = document.createElement("div");
+    rowHeader.className = "row-header";
+    if (rowMod.id === state.hoveredSource || rowMod.id === state.selectedSource) {
+      rowHeader.classList.add("highlighted");
+    }
+
+    const roleColor = getRoleColor(rowMod.role);
+    const riskColor = getRiskColor(rowMod.cc);
+
+    rowHeader.innerHTML = `
+      <div class="row-title-area">
+        <span class="row-index">${rowIdx + 1}.</span>
+        <span class="row-name" title="${rowMod.path}">${rowMod.name}</span>
+      </div>
+      <div class="row-meta-stats">
+        <span style="font-size:9px;color:${roleColor};font-weight:700">${rowMod.role_label}</span>
+        <span class="row-cc-pill" style="background:${riskColor}20;color:${riskColor};border:1px solid ${riskColor}40">
+          ${rowMod.cc}
+        </span>
+      </div>
+    `;
+
+    rowHeader.addEventListener("mouseenter", (e) => onHeaderHover(rowMod.id, null, e));
+    rowHeader.addEventListener("mouseleave", onHeaderLeave);
+    rowHeader.addEventListener("click", () => selectModuleSource(rowMod.id));
+
+    rowEl.appendChild(rowHeader);
+
+    // Cells Strip
+    const cellsStrip = document.createElement("div");
+    cellsStrip.className = "cells-strip";
+
+    modules.forEach((colMod, colIdx) => {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.dataset.src = rowMod.id;
+      cell.dataset.tgt = colMod.id;
+
+      // Cluster separator right
+      if (state.sortBy === "layer" && colIdx < modules.length - 1 && colMod.subsystem !== modules[colIdx + 1].subsystem) {
+        cell.classList.add("cluster-border-right");
+      }
+
+      // Check diagonal
+      const isDiagonal = rowMod.id === colMod.id;
+      if (isDiagonal) {
+        cell.classList.add("diagonal");
+        cell.innerHTML = `<span class="diag-dot" style="background:${riskColor}"></span>`;
+        cell.title = `${rowMod.name}\nCyclomatic Complexity: ${rowMod.cc} (Self)`;
+      } else {
+        // Check dependency
+        const edge = edgeLookup.get(`${rowMod.id}->${colMod.id}`);
+        if (edge) {
+          const coupledCol = getCoupledColor(rowMod.cc, colMod.cc);
+          const combined = rowMod.cc + colMod.cc;
+          
+          cell.style.background = `${coupledCol}35`;
+          cell.style.borderColor = `${coupledCol}88`;
+          cell.style.color = coupledCol;
+
+          if (state.cellDisplay === "symbols") {
+            cell.textContent = edge.symbols.length;
+          } else {
+            cell.textContent = combined;
+          }
+
+          if (state.selectedSource === rowMod.id && state.selectedTarget === colMod.id) {
+            cell.classList.add("active-select");
+          }
+
+          cell.addEventListener("click", () => selectCell(rowMod.id, colMod.id, edge));
+          cell.addEventListener("mouseenter", (e) => onCellHover(rowMod, colMod, edge, e));
+          cell.addEventListener("mouseleave", onCellLeave);
+        }
+      }
+
+      // Crosshair Hover Classes
+      if (colMod.id === state.hoveredTarget || colMod.id === state.selectedTarget) {
+        cell.classList.add("col-hover");
+      }
+      if (rowMod.id === state.hoveredSource || rowMod.id === state.selectedSource) {
+        cell.classList.add("row-hover");
+      }
+
+      cellsStrip.appendChild(cell);
+    });
+
+    rowEl.appendChild(cellsStrip);
+    matrixGridContainer.appendChild(rowEl);
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// INTERACTIONS & TOOLTIP
+// ═════════════════════════════════════════════════════════════════════════
+
+function onCellHover(source, target, edge, e) {
+  state.hoveredSource = source.id;
+  state.hoveredTarget = target.id;
+  updateCrosshairs();
+
+  const combined = source.cc + target.cc;
+  tooltip.style.opacity = "1";
+  tooltip.style.left = `${e.clientX + 14}px`;
+  tooltip.style.top = `${e.clientY - 20}px`;
+  tooltip.innerHTML = `
+    <div style="font-weight:700;color:var(--text-primary);margin-bottom:3px">
+      ${source.name} <span style="color:var(--accent)">→</span> ${target.name}
+    </div>
+    <div style="color:var(--text-secondary);font-size:10px">
+      Combined Complexity: <b style="color:${getCoupledColor(source.cc, target.cc)}">${combined} CC</b>
+    </div>
+    <div style="color:var(--text-muted);font-size:10px;margin-top:2px">
+      Imports: ${edge.symbols.join(", ")}
+    </div>
+  `;
+}
+
+function onCellLeave() {
+  state.hoveredSource = null;
+  state.hoveredTarget = null;
+  tooltip.style.opacity = "0";
+  updateCrosshairs();
+}
+
+function onHeaderHover(srcId, tgtId, e) {
+  state.hoveredSource = srcId;
+  state.hoveredTarget = tgtId;
+  updateCrosshairs();
+}
+
+function onHeaderLeave() {
+  state.hoveredSource = null;
+  state.hoveredTarget = null;
+  updateCrosshairs();
+}
+
+function updateCrosshairs() {
+  const activeSrc = state.hoveredSource || state.selectedSource;
+  const activeTgt = state.hoveredTarget || state.selectedTarget;
+
+  document.querySelectorAll(".cell").forEach(cell => {
+    const s = cell.dataset.src;
+    const t = cell.dataset.tgt;
+    if (s === activeSrc) cell.classList.add("row-hover");
+    else cell.classList.remove("row-hover");
+
+    if (t === activeTgt) cell.classList.add("col-hover");
+    else cell.classList.remove("col-hover");
+  });
+}
+
+function selectCell(srcId, tgtId, edge) {
+  state.selectedSource = srcId;
+  state.selectedTarget = tgtId;
+
+  document.querySelectorAll(".cell").forEach(c => c.classList.remove("active-select"));
+  const activeCell = document.querySelector(`.cell[data-src='${srcId}'][data-tgt='${tgtId}']`);
+  if (activeCell) activeCell.classList.add("active-select");
+
+  updateInspector(srcId, tgtId, edge);
+  updateCrosshairs();
+}
+
+function selectModuleSource(srcId) {
+  state.selectedSource = srcId;
+  // find first outbound edge
+  const edge = RAW_DEPENDENCY_EDGES.find(e => e.source === srcId);
+  if (edge) {
+    selectCell(srcId, edge.target, edge);
+  } else {
+    renderMatrix();
+  }
+}
+
+function selectModuleTarget(tgtId) {
+  state.selectedTarget = tgtId;
+  const edge = RAW_DEPENDENCY_EDGES.find(e => e.target === tgtId);
+  if (edge) {
+    selectCell(edge.source, tgtId, edge);
+  } else {
+    renderMatrix();
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// INSPECTOR DRAWER DETAIL
+// ═════════════════════════════════════════════════════════════════════════
+
+function updateInspector(srcId, tgtId, edge) {
+  const s = moduleMap.get(srcId);
+  const t = moduleMap.get(tgtId);
+  if (!s || !t) return;
+
+  document.getElementById("ins-src-title").textContent = s.name;
+  document.getElementById("ins-tgt-title").textContent = t.name;
+
+  document.getElementById("ins-src-name").textContent = s.path;
+  document.getElementById("ins-src-cc").textContent = s.cc;
+  document.getElementById("ins-src-loc").textContent = s.loc;
+  const sRole = document.getElementById("ins-src-role");
+  sRole.textContent = s.role_label;
+  sRole.style.background = getRoleColor(s.role);
+
+  document.getElementById("ins-tgt-name").textContent = t.path;
+  document.getElementById("ins-tgt-cc").textContent = t.cc;
+  document.getElementById("ins-tgt-loc").textContent = t.loc;
+  const tRole = document.getElementById("ins-tgt-role");
+  tRole.textContent = t.role_label;
+  tRole.style.background = getRoleColor(t.role);
+
+  const combined = s.cc + t.cc;
+  const riskCard = document.getElementById("ins-risk-card");
+  const riskTitle = document.getElementById("ins-risk-title");
+  const riskDesc = document.getElementById("ins-risk-desc");
+
+  if (combined >= 120) {
+    riskCard.className = "risk-card critical";
+    riskTitle.innerHTML = `<span>⚠️</span> Critical Coupled CC: ${combined}`;
+    riskDesc.textContent = `Severe architectural hotspot. Both modules contain extensive cyclomatic branching (Caller CC ${s.cc}, Dependency CC ${t.cc}). High bug-coupling probability.`;
+  } else if (combined >= 70) {
+    riskCard.className = "risk-card moderate";
+    riskTitle.innerHTML = `<span>⚡</span> Elevated Coupled CC: ${combined}`;
+    riskDesc.textContent = `Moderate coupling impact. Refactoring one file is likely to mandate test updates in the other due to branch density.`;
+  } else {
+    riskCard.className = "risk-card clean";
+    riskTitle.innerHTML = `<span>✓</span> Controlled Coupling: ${combined} CC`;
+    riskDesc.textContent = `Clean architectural boundary. Caller interacts with simple contracts or stable helpers without heavy transitive complexity.`;
+  }
+
+  // Symbols list
+  const listEl = document.getElementById("ins-symbols-list");
+  listEl.innerHTML = "";
+  if (edge && edge.symbols && edge.symbols.length) {
+    edge.symbols.forEach(sym => {
+      const tag = document.createElement("span");
+      tag.className = "symbol-tag";
+      tag.textContent = sym;
+      listEl.appendChild(tag);
+    });
+  } else {
+    listEl.innerHTML = "<span style='color:var(--text-muted);font-size:11px'>Direct package import</span>";
+  }
+
+  // Advice
+  const adviceEl = document.getElementById("ins-arch-advice");
+  if (s.subsystem === "routes" && t.subsystem === "core") {
+    adviceEl.textContent = "Clean vertical dependency: API route controller invoking core business logic. Maintain encapsulation by keeping request/response schemas out of the core.";
+  } else if (s.subsystem === "core" && t.subsystem === "utils") {
+    adviceEl.textContent = "Expected downward dependency: Core analysis logic utilizing infrastructure utilities (caching, AST queries). Low risk.";
+  } else if (s.subsystem === t.subsystem) {
+    adviceEl.textContent = `Intra-subsystem coupling within ${s.subsystem}. Verify that responsibility boundaries remain well-defined to avoid circular coupling.`;
+  } else {
+    adviceEl.textContent = "Standard cross-module import. Monitor interface stability if either module undergoes heavy refactoring.";
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// TOOLBAR & EVENT LISTENERS
+// ═════════════════════════════════════════════════════════════════════════
+
+document.getElementById("matrix-sort").addEventListener("change", (e) => {
+  state.sortBy = e.target.value;
+  renderMatrix();
+});
+
+document.querySelectorAll("#cell-mode-group button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#cell-mode-group button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.cellDisplay = btn.dataset.cellmode;
+    renderMatrix();
+  });
+});
+
+// Initial Render
+const initialEdge = edgeLookup.get("rune/routes/analyze.py->rune/analyzer.py");
+selectCell("rune/routes/analyze.py", "rune/analyzer.py", initialEdge);
+renderMatrix();
+</script>
+</body>
+</html>

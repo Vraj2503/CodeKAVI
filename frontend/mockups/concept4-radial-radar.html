@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CodeKAVI — Concept 4: Concentric Radar & Complexity Hull</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #07090e;
+    --surface: #0e121b;
+    --surface-elevated: #151b27;
+    --surface-border: #1f283a;
+    --border-hover: #323f5b;
+    --text-primary: #e6edf8;
+    --text-secondary: #94a3b8;
+    --text-muted: #5e6f8d;
+    --accent: #38bdf8;
+    --accent-glow: rgba(56, 189, 248, 0.25);
+    
+    /* Risk Tiers */
+    --risk-low: #10b981;
+    --risk-low-bg: rgba(16, 185, 129, 0.15);
+    --risk-med: #f59e0b;
+    --risk-med-bg: rgba(245, 158, 11, 0.15);
+    --risk-high: #f97316;
+    --risk-high-bg: rgba(249, 115, 22, 0.15);
+    --risk-crit: #ef4444;
+    --risk-crit-bg: rgba(239, 68, 68, 0.2);
+
+    /* Tier Colors */
+    --tier-0: #a855f7;
+    --tier-1: #38bdf8;
+    --tier-2: #818cf8;
+    --tier-3: #2dd4bf;
+    --tier-4: #ec4899;
+    --tier-5: #94a3b8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text-primary);
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    user-select: none;
+  }
+
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 28px 28px;
+    z-index: 0;
+  }
+
+  /* Top Navigation */
+  header {
+    height: 60px;
+    background: rgba(14, 18, 27, 0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    position: relative;
+    z-index: 100;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .brand-badge {
+    background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 8px;
+    border-radius: 6px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    box-shadow: 0 0 16px rgba(168, 85, 247, 0.3);
+  }
+  .brand-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-repo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .header-metrics {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .metric-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .metric-pill b {
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+  }
+  .metric-pill.hotspot {
+    border-color: rgba(239, 68, 68, 0.4);
+    background: rgba(239, 68, 68, 0.08);
+    color: #fca5a5;
+  }
+  .metric-pill.hotspot b { color: #ef4444; }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .search-box input {
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 6px 12px 6px 30px;
+    width: 200px;
+    outline: none;
+    transition: all 0.2s;
+  }
+  .search-box input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+    width: 230px;
+  }
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    width: 14px;
+    height: 14px;
+    fill: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .btn-group {
+    display: flex;
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 2px;
+  }
+  .btn-group button {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 5px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-group button.active {
+    background: var(--surface-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--surface-border);
+    font-weight: 600;
+  }
+  .btn-group button:hover:not(.active) { color: var(--text-primary); }
+
+  /* Toolbar */
+  .toolbar {
+    height: 44px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    position: relative;
+    z-index: 90;
+  }
+  .toolbar-left, .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+  .toggle-checkbox {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  /* Main Viewport Container */
+  .viewport {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    cursor: grab;
+  }
+  .viewport:active {
+    cursor: grabbing;
+  }
+  svg#radar-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  /* Rings & Concentric lines */
+  .ring-circle {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.05);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+  }
+  .ring-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    fill: var(--text-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+  .spoke-line {
+    stroke: rgba(255, 255, 255, 0.03);
+    stroke-width: 1;
+  }
+
+  /* Complexity Polygon Hull */
+  .complexity-hull {
+    fill: url(#hull-gradient);
+    stroke: #ef4444;
+    stroke-width: 1.5;
+    stroke-opacity: 0.65;
+    stroke-dasharray: 4 2;
+    transition: all 0.3s ease;
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.25));
+  }
+
+  /* Radar sweep beam */
+  .radar-sweep {
+    transform-origin: 0 0;
+    pointer-events: none;
+    opacity: 0.15;
+  }
+
+  /* Dependency Beziers */
+  .radar-edge {
+    fill: none;
+    stroke: #1f2b40;
+    stroke-width: 1.2;
+    transition: stroke 0.25s, stroke-width 0.25s, opacity 0.25s;
+  }
+  .radar-edge.highlight-out {
+    stroke: #38bdf8;
+    stroke-width: 2.2;
+    stroke-dasharray: 6 3;
+    animation: dash-out 1s linear infinite;
+  }
+  .radar-edge.highlight-in {
+    stroke: #a855f7;
+    stroke-width: 2.2;
+  }
+  .radar-edge.dimmed { opacity: 0.1; }
+
+  @keyframes dash-out {
+    to { stroke-dashoffset: -18; }
+  }
+
+  /* Node Groups */
+  .node-group {
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .node-group.dimmed { opacity: 0.18; }
+
+  .node-halo {
+    transition: r 0.25s, opacity 0.25s;
+  }
+  .node-circle {
+    transition: stroke 0.2s, stroke-width 0.2s, filter 0.25s;
+  }
+  .node-group:hover .node-circle {
+    stroke: #ffffff;
+    stroke-width: 2.5px;
+    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.5));
+  }
+  .node-group.selected .node-circle {
+    stroke: #38bdf8;
+    stroke-width: 3px;
+    filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.9));
+  }
+
+  .node-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    font-weight: 500;
+    pointer-events: none;
+    paint-order: stroke fill;
+    stroke: #07090e;
+    stroke-width: 4px;
+    stroke-linejoin: round;
+  }
+
+  /* Floating Legend */
+  .legend-card {
+    position: absolute;
+    bottom: 24px;
+    left: 24px;
+    background: rgba(14, 18, 27, 0.9);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 50;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+    max-width: 320px;
+  }
+  .legend-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+  }
+  .legend-tiers {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .tier-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+  .tier-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  /* Zoom controls corner */
+  .zoom-controls {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 50;
+  }
+  .icon-btn {
+    background: var(--surface);
+    border: 1px solid var(--surface-border);
+    color: var(--text-secondary);
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+    background: var(--surface-elevated);
+  }
+
+  /* Right Side Inspector Panel */
+  .inspector {
+    position: absolute;
+    top: 20px;
+    right: 24px;
+    width: 380px;
+    max-height: calc(100vh - 100px);
+    background: rgba(14, 18, 27, 0.94);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--surface-border);
+    border-radius: 14px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    z-index: 60;
+    transform: translateX(420px);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s;
+  }
+  .inspector.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: all;
+  }
+  .inspector-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--surface-border);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+  }
+  .inspector-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
+  .inspector-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .badge-tag {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .close-btn:hover { color: var(--text-primary); }
+
+  .inspector-content {
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .hotspot-banner {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    color: #fca5a5;
+    line-height: 1.4;
+  }
+  .hotspot-banner b { color: #ef4444; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .stat-card {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  .stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .stat-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .chip-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 130px;
+    overflow-y: auto;
+  }
+  .jump-chip {
+    background: var(--surface-elevated);
+    border: 1px solid var(--surface-border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .jump-chip:hover {
+    border-color: var(--accent);
+    background: rgba(56, 189, 248, 0.08);
+    color: var(--accent);
+  }
+
+  .symbols-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+  .symbols-table th {
+    text-align: left;
+    color: var(--text-muted);
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--surface-border);
+  }
+  .symbols-table td {
+    padding: 6px 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Tooltip */
+  #radar-tooltip {
+    position: absolute;
+    background: rgba(14, 18, 27, 0.95);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.15s;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<!-- Top Navigation -->
+<header>
+  <div class="brand">
+    <span class="brand-badge">Concept 4</span>
+    <div class="brand-title">
+      Concentric Radar Architecture
+      <span class="brand-repo">CodeKAVI / backend (rune)</span>
+    </div>
+  </div>
+
+  <div class="header-metrics">
+    <div class="metric-pill"><b>5</b> Concentric Tiers</div>
+    <div class="metric-pill"><b>21</b> Modules</div>
+    <div class="metric-pill">Avg CC: <b>38.6</b></div>
+    <div class="metric-pill hotspot"><b>4</b> Perimeter Hotspots</div>
+  </div>
+
+  <div class="header-actions">
+    <div class="search-box">
+      <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+      <input type="text" id="radar-search" placeholder="Search module in radar..."/>
+    </div>
+
+    <!-- Color Mode -->
+    <div class="btn-group" id="color-mode-group">
+      <button class="active" data-colormode="risk">Complexity Risk</button>
+      <button data-colormode="tier">Architectural Tier</button>
+    </div>
+  </div>
+</header>
+
+<!-- Subheader Toolbar -->
+<div class="toolbar">
+  <div class="toolbar-left">
+    <label class="toggle-label">
+      <input type="checkbox" id="toggle-hull" class="toggle-checkbox" checked />
+      <span>Complexity Radar Hull (Polygon)</span>
+    </label>
+
+    <label class="toggle-label">
+      <input type="checkbox" id="toggle-sweep" class="toggle-checkbox" checked />
+      <span>Radar Sweep Animation</span>
+    </label>
+
+    <div class="btn-group" id="size-mode-group" style="margin-left:12px">
+      <button class="active" data-sizemode="complexity">Size: McCabe CC</button>
+      <button data-sizemode="loc">Size: LOC</button>
+    </div>
+  </div>
+
+  <div class="toolbar-right">
+    <span style="color:var(--text-muted)">Concentric Depth:</span>
+    <span style="font-size:11px;color:var(--tier-0)">● Hub (Center)</span>
+    <span style="font-size:11px;color:var(--tier-1)">● Routes</span>
+    <span style="font-size:11px;color:var(--tier-2)">● Core Domain</span>
+    <span style="font-size:11px;color:var(--tier-3)">● Utilities</span>
+    <span style="font-size:11px;color:var(--tier-4)">● Foundations</span>
+    <span style="font-size:11px;color:var(--tier-5)">● Tests</span>
+  </div>
+</div>
+
+<!-- Main Canvas Viewport -->
+<div class="viewport" id="radar-viewport">
+  <svg id="radar-canvas">
+    <defs>
+      <!-- Gradient for complexity hull -->
+      <radialGradient id="hull-gradient" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="rgba(239, 68, 68, 0.05)" />
+        <stop offset="70%" stop-color="rgba(239, 68, 68, 0.18)" />
+        <stop offset="100%" stop-color="rgba(239, 68, 68, 0.35)" />
+      </radialGradient>
+
+      <!-- Gradient for rotating radar sweep beam -->
+      <linearGradient id="sweep-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="rgba(56, 189, 248, 0)" />
+        <stop offset="100%" stop-color="rgba(56, 189, 248, 0.35)" />
+      </linearGradient>
+
+      <!-- Arrowheads -->
+      <marker id="arrow-radar-default" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#2d3b55" />
+      </marker>
+      <marker id="arrow-radar-active" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+      </marker>
+      <marker id="arrow-radar-inbound" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1 L 10 5 L 0 9 z" fill="#a855f7" />
+      </marker>
+    </defs>
+
+    <g id="radar-root">
+      <!-- Background Concentric Rings -->
+      <g id="radar-rings-layer"></g>
+
+      <!-- Rotating Sweep Beam -->
+      <g id="radar-sweep-layer">
+        <path class="radar-sweep" id="sweep-beam" fill="url(#sweep-gradient)"></path>
+      </g>
+
+      <!-- Complexity Polygon Hull -->
+      <polygon id="complexity-hull-polygon" class="complexity-hull"></polygon>
+
+      <!-- Directed Dependency Arcs -->
+      <g id="radar-edges-layer"></g>
+
+      <!-- Modules Nodes Layer -->
+      <g id="radar-nodes-layer"></g>
+    </g>
+  </svg>
+
+  <!-- Legend -->
+  <div class="legend-card">
+    <div class="legend-title">
+      <span>Architectural Tiers &amp; Spoke Depth</span>
+      <span>Depth: 0 → 5</span>
+    </div>
+    <div class="legend-tiers">
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-0)"></div> Tier 0: App Hub</div>
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-1)"></div> Tier 1: API Routes</div>
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-2)"></div> Tier 2: Core Domain</div>
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-3)"></div> Tier 3: Utilities</div>
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-4)"></div> Tier 4: Foundations</div>
+      <div class="tier-item"><div class="tier-dot" style="background:var(--tier-5)"></div> Tier 5: Tests</div>
+    </div>
+    <div style="font-size:10px;color:var(--text-muted);border-top:1px solid rgba(255,255,255,0.06);padding-top:6px;display:flex;justify-content:space-between">
+      <span>Spoke Radius ∝ Metric</span>
+      <span>Hull Spike = High CC</span>
+    </div>
+  </div>
+
+  <!-- Zoom Controls -->
+  <div class="zoom-controls">
+    <button class="icon-btn" id="btn-zoom-in" title="Zoom In">+</button>
+    <button class="icon-btn" id="btn-zoom-out" title="Zoom Out">−</button>
+    <button class="icon-btn" id="btn-zoom-fit" title="Reset View">⊡</button>
+  </div>
+
+  <!-- Inspector Slide-out Drawer -->
+  <div class="inspector" id="radar-inspector">
+    <div class="inspector-header">
+      <div>
+        <div class="inspector-title" id="d-path">rune/analyzer.py</div>
+        <div class="inspector-badges">
+          <span class="badge-tag" id="d-tier" style="background:var(--tier-2);color:#fff">Tier 2: Core Domain</span>
+          <span class="badge-tag" id="d-risk" style="background:var(--risk-crit);color:#fff">Critical Hotspot</span>
+        </div>
+      </div>
+      <button class="close-btn" id="d-close">&times;</button>
+    </div>
+
+    <div class="inspector-content">
+      <div class="hotspot-banner" id="d-hotspot-banner">
+        <div>⚠️</div>
+        <div>
+          <b>Perimeter Spoke Hotspot:</b> This file causes a major outward spike on the complexity radar hull with $CC \ge 50$. Volatile core dependency.
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">Cyclomatic CC</div>
+          <div class="stat-val" id="d-cc" style="color:var(--risk-crit)">68</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Lines of Code</div>
+          <div class="stat-val" id="d-loc">517</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Architectural Depth</div>
+          <div class="stat-val" id="d-depth">Ring 2</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Complexity Density</div>
+          <div class="stat-val" id="d-density">0.131</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">Imports (<span id="d-out-count">0</span> Outbound)</div>
+        <div class="chip-list" id="d-out-list"></div>
+      </div>
+
+      <div>
+        <div class="section-label">Imported By (<span id="d-in-count">0</span> Inbound)</div>
+        <div class="chip-list" id="d-in-list"></div>
+      </div>
+
+      <div>
+        <div class="section-label">Top Complex AST Symbols</div>
+        <table class="symbols-table">
+          <thead>
+            <tr><th>Symbol</th><th>Kind</th><th>Line</th><th style="text-align:right">CC</th></tr>
+          </thead>
+          <tbody id="d-symbols-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Hover Tooltip -->
+<div id="radar-tooltip"></div>
+
+<script>
+// ═════════════════════════════════════════════════════════════════════════
+// REAL BACKEND EXTRACTION DATA
+// Organized by Concentric Topological Tiers
+// ═════════════════════════════════════════════════════════════════════════
+const RADAR_DATA = {
+  tiers: [
+    { level: 0, name: "Tier 0: Application Hub", radius: 55, color: "var(--tier-0)" },
+    { level: 1, name: "Tier 1: API Controllers", radius: 140, color: "var(--tier-1)" },
+    { level: 2, name: "Tier 2: Core Domain Logic", radius: 235, color: "var(--tier-2)" },
+    { level: 3, name: "Tier 3: Infrastructure & Services", radius: 335, color: "var(--tier-3)" },
+    { level: 4, name: "Tier 4: Foundations & Config", radius: 420, color: "var(--tier-4)" },
+    { level: 5, name: "Tier 5: Verification & Tests", radius: 495, color: "var(--tier-5)" }
+  ],
+  modules: [
+    // Tier 0: Hub
+    { id: "main.py", name: "main.py", path: "main.py", tier: 0, tierLabel: "Hub", role: "entry_point", role_label: "Entry", loc: 145, cc: 18, funcs: 6, symbols: [
+      { name: "create_app", kind: "function", line: 32, complexity: 8, doc: "FastAPI factory mounting routes & middleware." },
+      { name: "lifespan", kind: "function", line: 85, complexity: 6, doc: "Async context manager for cache & pool." }
+    ]},
+
+    // Tier 1: Routes
+    { id: "rune/routes/analyze.py", name: "routes/analyze.py", path: "rune/routes/analyze.py", tier: 1, tierLabel: "Routes", role: "router", role_label: "Analyze API", loc: 970, cc: 82, funcs: 18, symbols: [
+      { name: "analyze_repo_stream", kind: "function", line: 565, complexity: 26, doc: "SSE streaming pipeline events." }
+    ]},
+    { id: "rune/routes/graph.py", name: "routes/graph.py", path: "rune/routes/graph.py", tier: 1, tierLabel: "Routes", role: "router", role_label: "Graph API", loc: 247, cc: 26, funcs: 8, symbols: [
+      { name: "get_repo_graph", kind: "function", line: 34, complexity: 9, doc: "GET /graph/semantic/{repo_id}." }
+    ]},
+    { id: "rune/routes/dependencies.py", name: "routes/dependencies.py", path: "rune/routes/dependencies.py", tier: 1, tierLabel: "Routes", role: "router", role_label: "Quota/Auth", loc: 56, cc: 8, funcs: 4, symbols: [
+      { name: "enforce_quota", kind: "function", line: 20, complexity: 4, doc: "Per-user token quota guard." }
+    ]},
+
+    // Tier 2: Core Domain
+    { id: "rune/analyzer.py", name: "analyzer.py", path: "rune/analyzer.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "AST Engine", loc: 517, cc: 68, funcs: 24, symbols: [
+      { name: "analyze_dependencies", kind: "function", line: 124, complexity: 22, doc: "Multi-file import extraction." }
+    ]},
+    { id: "rune/classifier.py", name: "classifier.py", path: "rune/classifier.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "Classifier", loc: 925, cc: 88, funcs: 32, symbols: [
+      { name: "classify_files", kind: "function", line: 420, complexity: 28, doc: "Architectural role classification." }
+    ]},
+    { id: "rune/complexity.py", name: "complexity.py", path: "rune/complexity.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "Complexity", loc: 517, cc: 54, funcs: 19, symbols: [
+      { name: "file_complexity", kind: "function", line: 489, complexity: 14, doc: "McCabe tree-sitter branch query." }
+    ]},
+    { id: "rune/graph.py", name: "graph.py", path: "rune/graph.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "Graph Exporter", loc: 1191, cc: 96, funcs: 38, symbols: [
+      { name: "export_graph_json", kind: "function", line: 24, complexity: 31, doc: "Visualization-ready nodes/edges JSON." }
+    ]},
+    { id: "rune/graph_assembler.py", name: "graph_assembler.py", path: "rune/graph_assembler.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "Assembler", loc: 408, cc: 46, funcs: 14, symbols: [
+      { name: "assemble_graph", kind: "function", line: 335, complexity: 16, doc: "Assemble layers and containers." }
+    ]},
+    { id: "rune/symbol_graph.py", name: "symbol_graph.py", path: "rune/symbol_graph.py", tier: 2, tierLabel: "Core", role: "core_module", role_label: "Symbol Graph", loc: 480, cc: 58, funcs: 16, symbols: [
+      { name: "build_symbol_graph", kind: "function", line: 88, complexity: 24, doc: "Symbol-level call & inheritance graph." }
+    ]},
+
+    // Tier 3: Utilities & Services
+    { id: "rune/cache.py", name: "cache.py", path: "rune/cache.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Redis Cache", loc: 280, cc: 24, funcs: 12, symbols: [
+      { name: "AnalysisCache.get_result", kind: "method", line: 85, complexity: 7, doc: "Retrieve compressed JSON cache." }
+    ]},
+    { id: "rune/cloner.py", name: "cloner.py", path: "rune/cloner.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Git Cloner", loc: 195, cc: 22, funcs: 7, symbols: [
+      { name: "clone_repository", kind: "function", line: 45, complexity: 12, doc: "Shallow git clone with depth limit." }
+    ]},
+    { id: "rune/file_selector.py", name: "file_selector.py", path: "rune/file_selector.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "File Filter", loc: 340, cc: 38, funcs: 11, symbols: [
+      { name: "select_files", kind: "function", line: 70, complexity: 18, doc: "Filter repository files by ignore patterns." }
+    ]},
+    { id: "rune/indexer.py", name: "indexer.py", path: "rune/indexer.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Vector Index", loc: 410, cc: 32, funcs: 10, symbols: [
+      { name: "index_repository", kind: "function", line: 95, complexity: 15, doc: "Cloudflare embeddings and Zilliz upsert." }
+    ]},
+    { id: "rune/quota.py", name: "quota.py", path: "rune/quota.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Quota Mgr", loc: 160, cc: 16, funcs: 6, symbols: [
+      { name: "TokenTracker.check_quota", kind: "method", line: 62, complexity: 6, doc: "Daily LLM token threshold check." }
+    ]},
+    { id: "rune/auth.py", name: "auth.py", path: "rune/auth.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Supabase JWT", loc: 110, cc: 14, funcs: 5, symbols: [
+      { name: "verify_supabase_token", kind: "function", line: 28, complexity: 8, doc: "Validate RS256 JWT claims." }
+    ]},
+    { id: "rune/fingerprint.py", name: "fingerprint.py", path: "rune/fingerprint.py", tier: 3, tierLabel: "Utils", role: "shared_utility", role_label: "Hasher", loc: 135, cc: 15, funcs: 5, symbols: [
+      { name: "_hash_sorted", kind: "function", line: 40, complexity: 5, doc: "Deterministic SHA-256 fingerprint." }
+    ]},
+
+    // Tier 4: Foundations
+    { id: "rune/pipeline_models.py", name: "pipeline_models.py", path: "rune/pipeline_models.py", tier: 4, tierLabel: "Models", role: "model", role_label: "Models", loc: 210, cc: 6, funcs: 5, symbols: [
+      { name: "FileProfile", kind: "class", line: 30, complexity: 2, doc: "Model for file metrics, roles, and CC." }
+    ]},
+    { id: "rune/settings.py", name: "settings.py", path: "rune/settings.py", tier: 4, tierLabel: "Config", role: "config", role_label: "Config", loc: 120, cc: 5, funcs: 3, symbols: [
+      { name: "Settings", kind: "class", line: 15, complexity: 3, doc: "Environment settings parsing." }
+    ]},
+
+    // Tier 5: Tests
+    { id: "rune/test_analyzer.py", name: "test_analyzer.py", path: "rune/test_analyzer.py", tier: 5, tierLabel: "Tests", role: "test", role_label: "Test Suite", loc: 440, cc: 28, funcs: 18, symbols: [
+      { name: "test_analyze_dependencies", kind: "function", line: 45, complexity: 3, doc: "Verify dependency graph output." }
+    ]},
+    { id: "rune/test_complexity.py", name: "test_complexity.py", path: "rune/test_complexity.py", tier: 5, tierLabel: "Tests", role: "test", role_label: "Test Suite", loc: 310, cc: 20, funcs: 14, symbols: [
+      { name: "test_mccabe_decision_points", kind: "function", line: 30, complexity: 4, doc: "Verify branch capture counts." }
+    ]}
+  ],
+  edges: [
+    { source: "main.py", target: "rune/routes/analyze.py" },
+    { source: "main.py", target: "rune/routes/graph.py" },
+    { source: "main.py", target: "rune/settings.py" },
+    { source: "rune/routes/analyze.py", target: "rune/analyzer.py" },
+    { source: "rune/routes/analyze.py", target: "rune/classifier.py" },
+    { source: "rune/routes/analyze.py", target: "rune/graph.py" },
+    { source: "rune/routes/analyze.py", target: "rune/symbol_graph.py" },
+    { source: "rune/routes/analyze.py", target: "rune/cloner.py" },
+    { source: "rune/routes/analyze.py", target: "rune/file_selector.py" },
+    { source: "rune/routes/analyze.py", target: "rune/cache.py" },
+    { source: "rune/routes/analyze.py", target: "rune/routes/dependencies.py" },
+    { source: "rune/routes/graph.py", target: "rune/graph_assembler.py" },
+    { source: "rune/routes/graph.py", target: "rune/cache.py" },
+    { source: "rune/routes/graph.py", target: "rune/routes/dependencies.py" },
+    { source: "rune/routes/dependencies.py", target: "rune/auth.py" },
+    { source: "rune/routes/dependencies.py", target: "rune/cache.py" },
+    { source: "rune/routes/dependencies.py", target: "rune/quota.py" },
+    { source: "rune/analyzer.py", target: "rune/complexity.py" },
+    { source: "rune/analyzer.py", target: "rune/pipeline_models.py" },
+    { source: "rune/classifier.py", target: "rune/complexity.py" },
+    { source: "rune/classifier.py", target: "rune/pipeline_models.py" },
+    { source: "rune/graph.py", target: "rune/pipeline_models.py" },
+    { source: "rune/graph_assembler.py", target: "rune/fingerprint.py" },
+    { source: "rune/graph_assembler.py", target: "rune/graph.py" },
+    { source: "rune/symbol_graph.py", target: "rune/complexity.py" },
+    { source: "rune/symbol_graph.py", target: "rune/pipeline_models.py" },
+    { source: "rune/indexer.py", target: "rune/settings.py" },
+    { source: "rune/quota.py", target: "rune/settings.py" },
+    { source: "rune/auth.py", target: "rune/settings.py" },
+    { source: "rune/cache.py", target: "rune/settings.py" },
+    { source: "rune/file_selector.py", target: "rune/settings.py" },
+    { source: "rune/test_analyzer.py", target: "rune/analyzer.py" },
+    { source: "rune/test_complexity.py", target: "rune/complexity.py" }
+  ]
+};
+
+// ═════════════════════════════════════════════════════════════════════════
+// COMPUTE POLAR RADIAL POSITIONS
+// ═════════════════════════════════════════════════════════════════════════
+
+const moduleMap = new Map();
+const modulesByTier = new Map();
+
+RADAR_DATA.tiers.forEach(t => modulesByTier.set(t.level, []));
+
+RADAR_DATA.modules.forEach(m => {
+  m.density = (m.cc / Math.max(1, m.loc)).toFixed(3);
+  m.isHotspot = m.cc >= 50;
+  m.outbound = [];
+  m.inbound = [];
+  moduleMap.set(m.id, m);
+  modulesByTier.get(m.tier).push(m);
+});
+
+RADAR_DATA.edges.forEach(e => {
+  const s = moduleMap.get(e.source);
+  const t = moduleMap.get(e.target);
+  if (s && t) {
+    s.outbound.push(e.target);
+    t.inbound.push(e.source);
+  }
+});
+
+// App State
+const state = {
+  colorMode: "risk",      // 'risk' | 'tier'
+  sizeMode: "complexity", // 'complexity' | 'loc'
+  showHull: true,
+  showSweep: true,
+  selectedId: "rune/analyzer.py",
+  hoveredId: null,
+  pan: { x: 0, y: 0 },
+  zoom: 1.0,
+  isDragging: false,
+  dragStart: { x: 0, y: 0 }
+};
+
+// Center of radial canvas
+let cx = window.innerWidth / 2;
+let cy = (window.innerHeight - 60) / 2;
+
+function computeRadius(node) {
+  if (state.sizeMode === "complexity") {
+    return Math.max(12, Math.min(38, 10 + Math.sqrt(node.cc) * 2.8));
+  } else {
+    return Math.max(12, Math.min(38, 9 + Math.sqrt(node.loc) * 0.85));
+  }
+}
+
+function getRiskColor(cc) {
+  if (cc >= 50) return "var(--risk-crit)";
+  if (cc >= 30) return "var(--risk-high)";
+  if (cc >= 15) return "var(--risk-med)";
+  return "var(--risk-low)";
+}
+
+function getTierColor(tier) {
+  return `var(--tier-${tier})`;
+}
+
+function getNodeColor(node) {
+  if (state.colorMode === "tier") return getTierColor(node.tier);
+  return getRiskColor(node.cc);
+}
+
+// Calculate polar coordinates: theta and distance
+function calculateNodePositions() {
+  RADAR_DATA.tiers.forEach(t => {
+    const mods = modulesByTier.get(t.level);
+    if (!mods.length) return;
+
+    if (t.level === 0) {
+      // Hub centered
+      mods[0].theta = 0;
+      mods[0].dist = 0;
+      mods[0].x = 0;
+      mods[0].y = 0;
+    } else {
+      const step = (2 * Math.PI) / mods.length;
+      const angleOffset = t.level * 0.35; // staggering
+
+      mods.forEach((m, i) => {
+        m.theta = i * step + angleOffset - Math.PI / 2;
+        // Spoke offset: higher complexity pushes outwards further into the ring!
+        const ccOffset = (m.cc / 100) * 25;
+        m.dist = t.radius + ccOffset;
+        m.x = m.dist * Math.cos(m.theta);
+        m.y = m.dist * Math.sin(m.theta);
+      });
+    }
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RENDERING RADAR CANVAS
+// ═════════════════════════════════════════════════════════════════════════
+
+const canvas = document.getElementById("radar-canvas");
+const radarRoot = document.getElementById("radar-root");
+const ringsLayer = document.getElementById("radar-rings-layer");
+const edgesLayer = document.getElementById("radar-edges-layer");
+const nodesLayer = document.getElementById("radar-nodes-layer");
+const hullPolygon = document.getElementById("complexity-hull-polygon");
+const sweepBeam = document.getElementById("sweep-beam");
+const tooltip = document.getElementById("radar-tooltip");
+const drawer = document.getElementById("radar-inspector");
+
+function updateTransform() {
+  radarRoot.setAttribute("transform", `translate(${cx + state.pan.x}, ${cy + state.pan.y}) scale(${state.zoom})`);
+}
+
+function initRadar() {
+  calculateNodePositions();
+  updateTransform();
+
+  // 1. Draw Concentric Rings & Spokes
+  ringsLayer.innerHTML = "";
+  RADAR_DATA.tiers.forEach(t => {
+    if (t.level === 0) return;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", 0);
+    circle.setAttribute("cy", 0);
+    circle.setAttribute("r", t.radius);
+    circle.setAttribute("class", "ring-circle");
+    ringsLayer.appendChild(circle);
+
+    // Label at top
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", 8);
+    text.setAttribute("y", -t.radius + 12);
+    text.setAttribute("class", "ring-label");
+    text.textContent = t.name;
+    ringsLayer.appendChild(text);
+  });
+
+  // Background radial spokes (8 compass rays)
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * 2 * Math.PI;
+    const maxR = 520;
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", 0);
+    line.setAttribute("y1", 0);
+    line.setAttribute("x2", maxR * Math.cos(angle));
+    line.setAttribute("y2", maxR * Math.sin(angle));
+    line.setAttribute("class", "spoke-line");
+    ringsLayer.appendChild(line);
+  }
+
+  // Sweep beam geometry (pie wedge)
+  const sweepRadius = 520;
+  const sweepAngle = Math.PI / 4; // 45 deg
+  const p1x = sweepRadius * Math.cos(-sweepAngle / 2);
+  const p1y = sweepRadius * Math.sin(-sweepAngle / 2);
+  const p2x = sweepRadius * Math.cos(sweepAngle / 2);
+  const p2y = sweepRadius * Math.sin(sweepAngle / 2);
+  sweepBeam.setAttribute("d", `M 0 0 L ${p1x} ${p1y} A ${sweepRadius} ${sweepRadius} 0 0 1 ${p2x} ${p2y} Z`);
+
+  // 2. Draw Edges
+  edgesLayer.innerHTML = "";
+  RADAR_DATA.edges.forEach((edge, idx) => {
+    const s = moduleMap.get(edge.source);
+    const t = moduleMap.get(edge.target);
+    if (!s || !t) return;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("id", `radar-edge-${idx}`);
+    path.setAttribute("class", "radar-edge");
+    path.setAttribute("marker-end", "url(#arrow-radar-default)");
+
+    // Smooth radial Bezier curve
+    const d = calculateArcBezier(s.x, s.y, t.x, t.y);
+    path.setAttribute("d", d);
+
+    edgesLayer.appendChild(path);
+  });
+
+  // 3. Draw Nodes
+  nodesLayer.innerHTML = "";
+  RADAR_DATA.modules.forEach(node => {
+    const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    g.setAttribute("class", "node-group");
+    g.setAttribute("id", `radar-node-${node.id.replace(/[^a-zA-Z0-9]/g, "_")}`);
+    g.setAttribute("transform", `translate(${node.x}, ${node.y})`);
+
+    const r = computeRadius(node);
+    const col = getNodeColor(node);
+
+    // Halo
+    const halo = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    halo.setAttribute("class", "node-halo");
+    halo.setAttribute("r", r + 5);
+    halo.setAttribute("fill", "transparent");
+    halo.setAttribute("stroke", col);
+    halo.setAttribute("stroke-width", node.isHotspot ? "3" : "0");
+    halo.setAttribute("opacity", "0.25");
+    g.appendChild(halo);
+
+    // Circle Body
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("class", "node-circle");
+    circle.setAttribute("r", r);
+    circle.setAttribute("fill", col);
+    circle.setAttribute("stroke", "rgba(255,255,255,0.18)");
+    circle.setAttribute("stroke-width", "1.5");
+    g.appendChild(circle);
+
+    // CC Badge
+    const badge = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    badge.setAttribute("dy", "3.5");
+    badge.setAttribute("text-anchor", "middle");
+    badge.setAttribute("fill", "#ffffff");
+    badge.setAttribute("font-family", "JetBrains Mono");
+    badge.setAttribute("font-size", "10px");
+    badge.setAttribute("font-weight", "700");
+    badge.setAttribute("pointer-events", "none");
+    badge.textContent = node.cc;
+    g.appendChild(badge);
+
+    // Label outside circle
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("class", "node-label");
+    label.setAttribute("fill", "#cbd5e1");
+
+    // Dynamic positioning based on polar quadrant
+    if (node.dist === 0) {
+      label.setAttribute("x", 0);
+      label.setAttribute("y", r + 14);
+      label.setAttribute("text-anchor", "middle");
+    } else {
+      const lx = (r + 10) * Math.cos(node.theta);
+      const ly = (r + 10) * Math.sin(node.theta) + 3;
+      label.setAttribute("x", lx);
+      label.setAttribute("y", ly);
+      label.setAttribute("text-anchor", Math.cos(node.theta) >= 0 ? "start" : "end");
+    }
+    label.textContent = node.name;
+    g.appendChild(label);
+
+    g.addEventListener("mouseenter", (e) => onNodeHover(node, e));
+    g.addEventListener("mouseleave", onNodeLeave);
+    g.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectNode(node.id);
+    });
+
+    nodesLayer.appendChild(g);
+  });
+
+  updateComplexityHull();
+  renderSelectionState();
+}
+
+// Cubic Bezier curving inward toward center
+function calculateArcBezier(x1, y1, x2, y2) {
+  const mx = (x1 + x2) / 2;
+  const my = (y1 + y2) / 2;
+  // Curve slightly toward center (0, 0)
+  const cx = mx * 0.65;
+  const cy = my * 0.65;
+  return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// COMPLEXITY RADAR HULL (POLYGON)
+// Connects the nodes sorted by angle; spikes outwards on high CC!
+// ═════════════════════════════════════════════════════════════════════════
+
+function updateComplexityHull() {
+  if (!state.showHull) {
+    hullPolygon.style.display = "none";
+    return;
+  }
+  hullPolygon.style.display = "block";
+
+  // Filter modules outside hub (Tier 1 to 5)
+  const outerModules = RADAR_DATA.modules.filter(m => m.dist > 0);
+  outerModules.sort((a, b) => a.theta - b.theta);
+
+  // Polygon vertices: distance modulated by cyclomatic complexity
+  const points = outerModules.map(m => {
+    const spikeDist = m.dist + (m.cc / 100) * 35;
+    const px = spikeDist * Math.cos(m.theta);
+    const py = spikeDist * Math.sin(m.theta);
+    return `${px.toFixed(1)},${py.toFixed(1)}`;
+  });
+
+  hullPolygon.setAttribute("points", points.join(" "));
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// INTERACTION & SELECTION
+// ═════════════════════════════════════════════════════════════════════════
+
+function renderSelectionState() {
+  const activeId = state.selectedId || state.hoveredId;
+  const activeNode = moduleMap.get(activeId);
+
+  const outSet = new Set(activeNode ? activeNode.outbound : []);
+  const inSet = new Set(activeNode ? activeNode.inbound : []);
+
+  // Update edges
+  RADAR_DATA.edges.forEach((edge, idx) => {
+    const el = document.getElementById(`radar-edge-${idx}`);
+    if (!el) return;
+
+    if (activeId) {
+      if (edge.source === activeId) {
+        el.setAttribute("class", "radar-edge highlight-out");
+        el.setAttribute("marker-end", "url(#arrow-radar-active)");
+      } else if (edge.target === activeId) {
+        el.setAttribute("class", "radar-edge highlight-in");
+        el.setAttribute("marker-end", "url(#arrow-radar-inbound)");
+      } else {
+        el.setAttribute("class", "radar-edge dimmed");
+        el.setAttribute("marker-end", "url(#arrow-radar-default)");
+      }
+    } else {
+      el.setAttribute("class", "radar-edge");
+      el.setAttribute("marker-end", "url(#arrow-radar-default)");
+    }
+  });
+
+  // Update nodes
+  RADAR_DATA.modules.forEach(node => {
+    const domId = `radar-node-${node.id.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const g = document.getElementById(domId);
+    if (!g) return;
+
+    if (activeId) {
+      const isSelf = node.id === activeId;
+      const isTarget = outSet.has(node.id);
+      const isSource = inSet.has(node.id);
+
+      if (isSelf) {
+        g.setAttribute("class", "node-group selected");
+      } else if (isTarget || isSource) {
+        g.setAttribute("class", "node-group");
+      } else {
+        g.setAttribute("class", "node-group dimmed");
+      }
+    } else {
+      g.setAttribute("class", "node-group");
+    }
+  });
+}
+
+function onNodeHover(node, e) {
+  state.hoveredId = node.id;
+  renderSelectionState();
+
+  tooltip.style.opacity = "1";
+  tooltip.style.left = `${e.clientX + 14}px`;
+  tooltip.style.top = `${e.clientY - 20}px`;
+  tooltip.innerHTML = `
+    <div style="font-weight:700;color:var(--text-primary);margin-bottom:2px">${node.path}</div>
+    <div style="color:var(--text-secondary);font-size:10px">${node.tierLabel} (Tier ${node.tier}) · ${node.loc} LOC</div>
+    <div style="color:${getNodeColor(node)};font-weight:700;margin-top:3px">
+      McCabe CC: ${node.cc} ${node.isHotspot ? '⚠️ SPIKE' : ''}
+    </div>
+  `;
+}
+
+function onNodeLeave() {
+  state.hoveredId = null;
+  tooltip.style.opacity = "0";
+  renderSelectionState();
+}
+
+function selectNode(nodeId) {
+  state.selectedId = nodeId;
+  renderSelectionState();
+
+  if (!nodeId) {
+    drawer.classList.remove("open");
+    return;
+  }
+
+  const node = moduleMap.get(nodeId);
+  if (!node) return;
+
+  drawer.classList.add("open");
+  document.getElementById("d-path").textContent = node.path;
+
+  const tierEl = document.getElementById("d-tier");
+  tierEl.textContent = `Tier ${node.tier}: ${node.tierLabel}`;
+  tierEl.style.background = getTierColor(node.tier);
+
+  const riskEl = document.getElementById("d-risk");
+  riskEl.textContent = node.cc >= 50 ? "Critical Spike" : node.cc >= 30 ? "High Alert" : "Clean Code";
+  riskEl.style.background = getRiskColor(node.cc);
+
+  document.getElementById("d-hotspot-banner").style.display = node.isHotspot ? "flex" : "none";
+
+  document.getElementById("d-cc").textContent = node.cc;
+  document.getElementById("d-cc").style.color = getRiskColor(node.cc);
+  document.getElementById("d-loc").textContent = node.loc;
+  document.getElementById("d-depth").textContent = `Ring ${node.tier}`;
+  document.getElementById("d-density").textContent = node.density;
+
+  // Outbound list
+  document.getElementById("d-out-count").textContent = node.outbound.length;
+  const outList = document.getElementById("d-out-list");
+  outList.innerHTML = node.outbound.length ? "" : "<div style='color:var(--text-muted);font-size:11px'>No outbound imports</div>";
+  node.outbound.forEach(target => {
+    const t = moduleMap.get(target);
+    const chip = document.createElement("div");
+    chip.className = "jump-chip";
+    chip.innerHTML = `<span>${target}</span><span style="color:${getRiskColor(t ? t.cc : 0)};font-weight:600">CC ${t ? t.cc : ''}</span>`;
+    chip.addEventListener("click", () => selectNode(target));
+    outList.appendChild(chip);
+  });
+
+  // Inbound list
+  document.getElementById("d-in-count").textContent = node.inbound.length;
+  const inList = document.getElementById("d-in-list");
+  inList.innerHTML = node.inbound.length ? "" : "<div style='color:var(--text-muted);font-size:11px'>No inbound callers</div>";
+  node.inbound.forEach(src => {
+    const s = moduleMap.get(src);
+    const chip = document.createElement("div");
+    chip.className = "jump-chip";
+    chip.innerHTML = `<span>${src}</span><span style="color:${getRiskColor(s ? s.cc : 0)};font-weight:600">CC ${s ? s.cc : ''}</span>`;
+    chip.addEventListener("click", () => selectNode(src));
+    inList.appendChild(chip);
+  });
+
+  // Symbols table
+  const tbody = document.getElementById("d-symbols-body");
+  tbody.innerHTML = "";
+  if (node.symbols && node.symbols.length) {
+    node.symbols.forEach(sym => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td style="color:var(--text-primary);font-weight:500" title="${sym.doc || ''}">${sym.name}</td>
+        <td style="color:var(--text-muted)">${sym.kind}</td>
+        <td style="color:var(--text-secondary)">:${sym.line}</td>
+        <td style="text-align:right;color:${getRiskColor(sym.complexity)};font-weight:700">${sym.complexity}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } else {
+    tbody.innerHTML = "<tr><td colspan='4' style='color:var(--text-muted)'>No extracted symbols</td></tr>";
+  }
+}
+
+document.getElementById("d-close").addEventListener("click", () => {
+  selectNode(null);
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// PAN & ZOOM & RADAR SWEEP ANIMATION
+// ═════════════════════════════════════════════════════════════════════════
+
+const viewport = document.getElementById("radar-viewport");
+
+viewport.addEventListener("mousedown", (e) => {
+  if (e.target.closest(".node-group") || e.target.closest(".inspector") || e.target.closest(".legend-card")) return;
+  state.isDragging = true;
+  state.dragStart = { x: e.clientX - state.pan.x, y: e.clientY - state.pan.y };
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (state.isDragging) {
+    state.pan.x = e.clientX - state.dragStart.x;
+    state.pan.y = e.clientY - state.dragStart.y;
+    updateTransform();
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  state.isDragging = false;
+});
+
+viewport.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+  state.zoom = Math.max(0.35, Math.min(2.8, state.zoom * zoomFactor));
+  updateTransform();
+}, { passive: false });
+
+viewport.addEventListener("click", (e) => {
+  if (!e.target.closest(".node-group") && !e.target.closest(".inspector") && !e.target.closest(".legend-card")) {
+    selectNode(null);
+  }
+});
+
+document.getElementById("btn-zoom-in").addEventListener("click", () => {
+  state.zoom = Math.min(2.8, state.zoom * 1.2);
+  updateTransform();
+});
+document.getElementById("btn-zoom-out").addEventListener("click", () => {
+  state.zoom = Math.max(0.35, state.zoom / 1.2);
+  updateTransform();
+});
+document.getElementById("btn-zoom-fit").addEventListener("click", () => {
+  state.zoom = 1.0;
+  state.pan = { x: 0, y: 0 };
+  updateTransform();
+});
+
+// Search
+document.getElementById("radar-search").addEventListener("input", (e) => {
+  const query = e.target.value.toLowerCase().trim();
+  if (!query) {
+    selectNode(null);
+    return;
+  }
+  const match = RADAR_DATA.modules.find(m => m.name.toLowerCase().includes(query) || m.path.toLowerCase().includes(query));
+  if (match) {
+    selectNode(match.id);
+  }
+});
+
+// Color Mode
+document.querySelectorAll("#color-mode-group button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#color-mode-group button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.colorMode = btn.dataset.colormode;
+    initRadar();
+  });
+});
+
+// Size Mode
+document.querySelectorAll("#size-mode-group button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#size-mode-group button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.sizeMode = btn.dataset.sizemode;
+    initRadar();
+  });
+});
+
+// Hull Toggle
+document.getElementById("toggle-hull").addEventListener("change", (e) => {
+  state.showHull = e.target.checked;
+  updateComplexityHull();
+});
+
+// Sweep Toggle
+document.getElementById("toggle-sweep").addEventListener("change", (e) => {
+  state.showSweep = e.target.checked;
+  sweepBeam.style.display = state.showSweep ? "block" : "none";
+});
+
+// Continuous Radar Sweep Animation Loop
+let sweepAngle = 0;
+function animateSweep() {
+  if (state.showSweep) {
+    sweepAngle = (sweepAngle + 0.5) % 360;
+    sweepBeam.setAttribute("transform", `rotate(${sweepAngle})`);
+  }
+  requestAnimationFrame(animateSweep);
+}
+requestAnimationFrame(animateSweep);
+
+// Window resize
+window.addEventListener("resize", () => {
+  cx = window.innerWidth / 2;
+  cy = (window.innerHeight - 60) / 2;
+  updateTransform();
+});
+
+// Start
+initRadar();
+selectNode("rune/analyzer.py");
+</script>
+</body>
+</html>
