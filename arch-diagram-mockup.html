@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>CodeKAVI Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#09090f;font-family:'Inter',sans-serif;color:#c8d0e0;
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  padding:52px 24px 72px;gap:40px;
+}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;
+  background-image:radial-gradient(rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:30px 30px;
+}
+.hd{text-align:center;position:relative;z-index:1}
+.ey{font-size:10px;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:rgba(148,163,184,.35);margin-bottom:14px}
+h1{font-size:26px;font-weight:300;color:#dde3f0;letter-spacing:-.02em}
+h1 b{font-weight:600}
+.scroll{width:100%;overflow:auto;position:relative;z-index:1}
+.canvas{position:relative;width:1180px;height:880px;margin:0 auto}
+.bbox{position:absolute;border:1px dashed rgba(99,102,241,.18);border-radius:16px;pointer-events:none}
+.blbl{
+  position:absolute;top:-10px;left:18px;
+  font-size:9px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;
+  color:rgba(99,102,241,.4);background:#09090f;padding:0 8px;
+}
+.node{
+  position:absolute;transform:translate(-50%,-50%);
+  display:flex;align-items:center;gap:8px;
+  padding:0 15px 0 12px;height:40px;border-radius:999px;
+  border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.02);
+  white-space:nowrap;cursor:default;transition:border-color .2s,background .2s;z-index:2;
+}
+.node:hover{border-color:rgba(255,255,255,.16);background:rgba(255,255,255,.04)}
+.dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;opacity:.85}
+.nm{font-size:12.5px;font-weight:400;color:#c8d0e0;letter-spacing:-.01em}
+.sb{font-size:10px;font-weight:300;color:rgba(148,163,184,.5)}
+.sb::before{content:'·';margin:0 4px;opacity:.4}
+svg.lines{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;z-index:1}
+.leg{display:flex;gap:28px;position:relative;z-index:1}
+.li{display:flex;align-items:center;gap:9px;font-size:11px;color:rgba(148,163,184,.4)}
+.ll{width:22px;height:1.5px;border-radius:2px}
+.ls{background:rgba(148,163,184,.42)}
+.ld{background:repeating-linear-gradient(90deg,rgba(148,163,184,.42) 0,rgba(148,163,184,.42) 4px,transparent 4px,transparent 8px)}
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <div class="ey">System Architecture</div>
+  <h1><b>CodeKAVI</b> Platform</h1>
+</div>
+
+<div class="scroll"><div class="canvas" id="cv">
+
+  <!-- Backend Runtime box -->
+  <div class="bbox" style="left:495px;top:295px;width:220px;height:545px">
+    <span class="blbl">Backend Runtime</span>
+  </div>
+
+  <!-- Spine -->
+  <div class="node" id="nu" style="left:370px;top:64px">
+    <span class="dot" style="background:#818cf8"></span>
+    <span class="nm">Browser User</span>
+  </div>
+  <div class="node" id="nw" style="left:370px;top:156px">
+    <span class="dot" style="background:#818cf8"></span>
+    <span class="nm">CodeKAVI Web App</span><span class="sb">Next.js</span>
+  </div>
+  <div class="node" id="na" style="left:370px;top:252px">
+    <span class="dot" style="background:#818cf8"></span>
+    <span class="nm">API &amp; Access Control</span><span class="sb">FastAPI</span>
+  </div>
+
+  <!-- Services -->
+  <div class="node" id="np" style="left:605px;top:420px">
+    <span class="dot" style="background:#2dd4bf"></span>
+    <span class="nm">Analysis Pipeline</span>
+  </div>
+  <div class="node" id="nr" style="left:605px;top:568px">
+    <span class="dot" style="background:#2dd4bf"></span>
+    <span class="nm">RAG Chat Service</span>
+  </div>
+  <div class="node" id="ne" style="left:605px;top:716px">
+    <span class="dot" style="background:#2dd4bf"></span>
+    <span class="nm">AI Explanation</span>
+  </div>
+
+  <!-- Storage / source -->
+  <div class="node" id="ngh" style="left:855px;top:348px">
+    <span class="dot" style="background:#fb923c"></span>
+    <span class="nm">Git Hosts</span><span class="sb">GitHub · GitLab · Bitbucket</span>
+  </div>
+  <div class="node" id="nlc" style="left:855px;top:420px">
+    <span class="dot" style="background:#fb923c"></span>
+    <span class="nm">Local Workspace</span>
+  </div>
+  <div class="node" id="nrd" style="left:855px;top:494px">
+    <span class="dot" style="background:#fb923c"></span>
+    <span class="nm">Redis</span><span class="sb">Cache · Rate Limits</span>
+  </div>
+  <div class="node" id="nsb" style="left:855px;top:568px">
+    <span class="dot" style="background:#fb923c"></span>
+    <span class="nm">Supabase</span><span class="sb">Auth · Postgres</span>
+  </div>
+
+  <!-- AI / Vector -->
+  <div class="node" id="ncf" style="left:1090px;top:400px">
+    <span class="dot" style="background:#a78bfa"></span>
+    <span class="nm">Cloudflare AI</span><span class="sb">BGE Large</span>
+  </div>
+  <div class="node" id="nz" style="left:1090px;top:494px">
+    <span class="dot" style="background:#a78bfa"></span>
+    <span class="nm">Zilliz Cloud</span><span class="sb">Milvus</span>
+  </div>
+  <div class="node" id="ngr" style="left:1090px;top:620px">
+    <span class="dot" style="background:#a78bfa"></span>
+    <span class="nm">Groq</span><span class="sb">Llama 3.3</span>
+  </div>
+  <div class="node" id="ngm" style="left:1090px;top:740px">
+    <span class="dot" style="background:#a78bfa"></span>
+    <span class="nm">Google Gemini</span>
+  </div>
+
+  <svg class="lines" id="svg">
+    <defs>
+      <marker id="a1" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+        <path d="M0,0.5 L0,5.5 L6,3 z" fill="rgba(148,163,184,.48)"/>
+      </marker>
+      <marker id="a2" markerWidth="6" markerHeight="6" refX="5.5" refY="3" orient="auto">
+        <path d="M0,0.5 L0,5.5 L6,3 z" fill="rgba(148,163,184,.26)"/>
+      </marker>
+    </defs>
+  </svg>
+</div></div>
+
+<div class="leg">
+  <div class="li"><div class="ll ls"></div>Primary flow</div>
+  <div class="li"><div class="ll ld"></div>External / optional</div>
+</div>
+
+<script>
+const E=[
+  {a:'nu', b:'nw', lbl:'Uses app',              d:0},
+  {a:'nw', b:'na', lbl:'API requests & SSE',    d:0},
+  {a:'na', b:'np', lbl:'Starts analysis',        d:0},
+  {a:'na', b:'nr', lbl:'Answers questions',       d:0},
+  {a:'na', b:'ne', lbl:'Generates walkthroughs', d:0},
+  {a:'np', b:'ngh',lbl:'Clones source',           d:1},
+  {a:'np', b:'nlc',lbl:'Reads & writes',          d:0},
+  {a:'np', b:'nrd',lbl:'Caches analysis',         d:0},
+  {a:'np', b:'nsb',lbl:'Persists analysis',       d:0},
+  {a:'np', b:'ncf',lbl:'Embeds chunks',           d:1},
+  {a:'np', b:'nz', lbl:'Stores vectors',          d:0},
+  {a:'nr', b:'ncf',lbl:'Embeds query',            d:1},
+  {a:'nr', b:'nz', lbl:'Searches context',        d:0},
+  {a:'nr', b:'ngr',lbl:'Generates answer',        d:1},
+  {a:'nr', b:'ngm',lbl:'Fallback answer',         d:1},
+  {a:'ne', b:'ngr',lbl:'Writes explanations',     d:1},
+  {a:'ne', b:'ngm',lbl:'Fallback explanation',    d:1},
+];
+
+function rc(id){
+  const el=document.getElementById(id);
+  const cv=document.getElementById('cv');
+  const e=el.getBoundingClientRect(),c=cv.getBoundingClientRect();
+  const w=e.width,h=e.height;
+  const cx=e.left-c.left+w/2,cy=e.top-c.top+h/2;
+  return{cx,cy,l:cx-w/2,r:cx+w/2,t:cy-h/2,b:cy+h/2};
+}
+
+function draw(){
+  const svg=document.getElementById('svg');
+  [...svg.children].forEach(c=>{if(c.tagName!=='defs')c.remove()});
+
+  for(const e of E){
+    const a=rc(e.a),b=rc(e.b);
+    let x1,y1,x2,y2;
+
+    // decide connection ports
+    if(b.l>a.cx){          // B is to the right
+      x1=a.r;y1=a.cy;x2=b.l;y2=b.cy;
+    } else if(b.t>a.cy){   // B is below
+      x1=a.cx;y1=a.b;x2=b.cx;y2=b.t;
+    } else {                // B is above (upward dashed call)
+      x1=a.r;y1=a.cy;x2=b.l;y2=b.cy;
+    }
+
+    const dx=x2-x1, dy=y2-y1;
+    const horizontal=Math.abs(dx)>Math.abs(dy)*0.5;
+    let d;
+    if(horizontal){
+      const cp=Math.abs(dx)*0.42;
+      d=`M${x1} ${y1}C${x1+cp} ${y1},${x2-cp} ${y2},${x2} ${y2}`;
+    } else {
+      const cp=Math.abs(dy)*0.42;
+      d=`M${x1} ${y1}C${x1} ${y1+cp},${x2} ${y2-cp},${x2} ${y2}`;
+    }
+
+    const p=document.createElementNS('http://www.w3.org/2000/svg','path');
+    p.setAttribute('d',d);
+    p.setAttribute('stroke',e.d?'rgba(148,163,184,.22)':'rgba(148,163,184,.4)');
+    p.setAttribute('stroke-width',e.d?'1':'1.25');
+    p.setAttribute('fill','none');
+    if(e.d)p.setAttribute('stroke-dasharray','4 3.5');
+    p.setAttribute('marker-end',`url(#${e.d?'a2':'a1'})`);
+    svg.appendChild(p);
+
+    // label at midpoint
+    const mx=(x1+x2)/2, my=(y1+y2)/2;
+    // backing rect
+    const bg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    const tx=document.createElementNS('http://www.w3.org/2000/svg','text');
+    tx.setAttribute('x',mx);tx.setAttribute('y',my-4);
+    tx.setAttribute('text-anchor','middle');
+    tx.setAttribute('font-size','9');
+    tx.setAttribute('font-family','Inter,sans-serif');
+    tx.setAttribute('font-style','italic');
+    tx.setAttribute('fill','rgba(148,163,184,.4)');
+    tx.textContent=e.lbl;
+    svg.appendChild(tx);
+    requestAnimationFrame(()=>{
+      try{
+        const bb=tx.getBBox();
+        bg.setAttribute('x',bb.x-4);bg.setAttribute('y',bb.y-2);
+        bg.setAttribute('width',bb.width+8);bg.setAttribute('height',bb.height+4);
+        bg.setAttribute('rx','3');bg.setAttribute('fill','#09090f');
+        svg.insertBefore(bg,tx);
+      }catch(_){}
+    });
+  }
+}
+
+window.addEventListener('load',()=>setTimeout(draw,100));
+window.addEventListener('resize',draw);
+</script>
+</body>
+</html>

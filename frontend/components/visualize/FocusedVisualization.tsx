@@ -5,11 +5,19 @@ import { useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Loader2, AlertCircle, Network, RefreshCw, Telescope, X } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  Network,
+  RefreshCw,
+  Telescope,
+  X,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { VizState } from "@/hooks/useVisualization";
 import type { ExplainState } from "@/hooks/useExplanation";
-import type { VizType } from "@/lib/api";
+import { useKnowledgeGraph } from "@/hooks/useKnowledgeGraph";
+import type { VizType, KnowledgeGraphPayload } from "@/lib/api";
 import { FailureState } from "@/components/FailureState";
 import { DownloadMenu } from "./DownloadMenu";
 
@@ -53,6 +61,47 @@ const NeuralNetworkViz = dynamic(
     ),
   { ssr: false, loading: () => <VizSkeleton /> },
 );
+const KnowledgeGraph = dynamic(
+  () =>
+    import("@/components/knowledge/KnowledgeGraph").then(
+      (m) => m.KnowledgeGraph,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
+);
+const ConcentricRadarViz = dynamic(
+  () =>
+    import("@/components/report/viz/radar/ConcentricRadarViz").then(
+      (m) => m.ConcentricRadarViz,
+    ),
+  { ssr: false, loading: () => <VizSkeleton /> },
+);
+
+/**
+ * Owns description enrichment for the knowledge graph.
+ *
+ * The base payload already arrived through the generic fetch pipeline (same
+ * as every other free chart) — this only adds the "Generate descriptions"
+ * action, so it calls `useKnowledgeGraph` for `enrich`/`isEnriching` alone
+ * and never touches that hook's own `generate`, which would refetch the same
+ * data a second time.
+ */
+function KnowledgeGraphViz({
+  payload,
+  repoId,
+}: {
+  payload: KnowledgeGraphPayload;
+  repoId: string;
+}) {
+  const { payload: enriched, isEnriching, enrich } = useKnowledgeGraph(repoId);
+  const active = enriched ?? payload;
+  return (
+    <KnowledgeGraph
+      payload={active}
+      isEnriching={isEnriching}
+      onEnrich={enrich}
+    />
+  );
+}
 
 function VizSkeleton() {
   return (
@@ -141,6 +190,7 @@ function EmptyViz({
 
 interface FocusedVisualizationProps {
   type: VizType;
+  repoId: string;
   config: { label: string; description: string; icon: any };
   state: VizState;
   explanationState: ExplainState;
@@ -158,6 +208,7 @@ interface FocusedVisualizationProps {
 
 export function FocusedVisualization({
   type,
+  repoId,
   config,
   state,
   explanationState,
@@ -228,23 +279,27 @@ export function FocusedVisualization({
                 filename={`${type}-visualization`}
               />
 
-              {/* AI Insights — scrolls page down to insights section */}
-              <button
-                onClick={handleInsightsClick}
-                aria-label="AI Insights"
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-sm transition-all duration-200 ${
-                  isExplanationOpen
-                    ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
-                    : "bg-background/90 border-border text-foreground hover:bg-muted"
-                }`}
-              >
-                <Telescope size={18} />
-                {/* Label drops below `sm`; the icon plus `aria-label` still
-                    names the control where there is no room for both. */}
-                <span className="hidden text-sm font-semibold sm:inline">
-                  AI Insights
-                </span>
-              </button>
+              {/* AI Insights — scrolls page down to insights section.
+                  Backend has no explain prompt for "knowledge" (visualize.py),
+                  so the button would just 400; hide it for that type. */}
+              {type !== "knowledge" && (
+                <button
+                  onClick={handleInsightsClick}
+                  aria-label="AI Insights"
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl backdrop-blur-md border shadow-sm transition-all duration-200 ${
+                    isExplanationOpen
+                      ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                      : "bg-background/90 border-border text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <Telescope size={18} />
+                  {/* Label drops below `sm`; the icon plus `aria-label` still
+                      names the control where there is no room for both. */}
+                  <span className="hidden text-sm font-semibold sm:inline">
+                    AI Insights
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -356,12 +411,7 @@ export function FocusedVisualization({
                     unresolvedEdges={hasUnresolvedEdges(type, state.data.data)}
                   />
                 ) : (
-                  <>
-                    <DiagnosticsBanner
-                      diagnostics={(state.data.data as any)?.diagnostics}
-                    />
-                    {renderVisualization(type, state.data.data)}
-                  </>
+                  renderVisualization(type, state.data.data, repoId)
                 )}
               </motion.div>
             )}
@@ -483,10 +533,17 @@ export function FocusedVisualization({
   );
 }
 
-function renderVisualization(type: VizType, data: any) {
+function renderVisualization(type: VizType, data: any, repoId: string) {
   if (!data) return null;
 
   switch (type) {
+    case "knowledge":
+      return (
+        <KnowledgeGraphViz
+          payload={data as KnowledgeGraphPayload}
+          repoId={repoId}
+        />
+      );
     case "dependencies":
       return (
         <DependencyGraph
@@ -498,7 +555,7 @@ function renderVisualization(type: VizType, data: any) {
       );
     case "architecture":
       return (
-        <ArchitectureGraph nodes={data.nodes || []} edges={data.edges || []} />
+        <ArchitectureGraph data={data} />
       );
     case "dataflow":
       return (
@@ -506,6 +563,8 @@ function renderVisualization(type: VizType, data: any) {
       );
     case "complexity":
       return <TreemapViz data={data} />;
+    case "concentric_radar":
+      return <ConcentricRadarViz data={data} />;
     case "mindmap":
       return <RadialMindmap root={data.root || data} />;
     case "neural_network":
@@ -519,25 +578,9 @@ function renderVisualization(type: VizType, data: any) {
   }
 }
 
-function DiagnosticsBanner({ diagnostics }: { diagnostics: any }) {
-  if (!diagnostics) return null;
-  const { resolution_rate, unsupported_languages } = diagnostics;
-  const incomplete = resolution_rate < 1 || unsupported_languages?.length > 0;
-  if (!incomplete) return null;
-  const pct = Math.round((resolution_rate ?? 1) * 100);
-  return (
-    <div className="export-hide absolute top-20 left-4 right-4 z-10 text-xs text-muted-foreground bg-background/90 backdrop-blur-md border border-dashed border-border rounded-lg px-3 py-2 pointer-events-none">
-      {pct}% of imports resolved.
-      {unsupported_languages?.length > 0 &&
-        ` Unsupported languages detected: ${unsupported_languages.join(", ")}.`}
-    </div>
-  );
-}
-
 function hasUnresolvedEdges(type: VizType, data: any) {
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return !!data?.nodes?.length && !data?.edges?.length;
     default:
@@ -549,11 +592,12 @@ function isEmptyVisualization(type: VizType, data: any) {
   if (!data) return true;
   switch (type) {
     case "dependencies":
-    case "architecture":
     case "dataflow":
       return (
         !data.nodes || data.nodes.length === 0 || hasUnresolvedEdges(type, data)
       );
+    case "concentric_radar":
+      return !data.modules || data.modules.length === 0;
     case "complexity":
       return !data.children || data.children.length === 0;
     case "mindmap":
@@ -562,6 +606,8 @@ function isEmptyVisualization(type: VizType, data: any) {
       );
     case "neural_network":
       return !data.models || data.models.length === 0;
+    case "knowledge":
+      return !data.nodes || data.nodes.length === 0;
     default:
       return false;
   }

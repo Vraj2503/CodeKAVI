@@ -8,7 +8,9 @@ import {
   Layers,
   ArrowRightLeft,
   Brain,
+  BrainCircuit,
   Network,
+  Radar,
 } from "lucide-react";
 import { useVisualization } from "@/hooks/useVisualization";
 import { useExplanation } from "@/hooks/useExplanation";
@@ -27,15 +29,64 @@ export type VizConfigItem = {
 };
 
 export const VIZ_CONFIG: VizConfigItem[] = [
-  { type: "dependencies", label: "Dependency Graph", description: "Visualize file-to-file import relationships and identify dependency hubs.", icon: GitBranch },
+  {
+    type: "dependencies",
+    label: "Dependency Graph",
+    description:
+      "Visualize file-to-file import relationships and identify dependency hubs.",
+    icon: GitBranch,
+  },
+  {
+    type: "concentric_radar",
+    label: "Complexity Radar",
+    description:
+      "Concentric architectural tiers with dependency arcs and McCabe complexity hull.",
+    icon: Radar,
+  },
   // Says what the two channels actually encode. The old copy promised
   // "complexity by importance score", which named a metric the chart has never
   // drawn — importance is graph centrality, not complexity.
-  { type: "complexity", label: "Complexity Treemap", description: "Files sized by bytes, colored by cyclomatic complexity — spot maintenance hotspots.", icon: BarChart3 },
-  { type: "architecture", label: "Architecture Graph", description: "Module-level architecture showing how directories depend on each other.", icon: Layers },
-  { type: "dataflow", label: "Data Flow Diagram", description: "Trace data flow from entry points through the system layers.", icon: ArrowRightLeft },
-  { type: "mindmap", label: "Mind Map", description: "Radial mind map of the codebase structure, categories, and patterns.", icon: Brain },
-  { type: "neural_network", label: "Neural Network", description: "PlotNeuralNet-style 3D model architecture visualization for detected ML models.", icon: Network },
+  {
+    type: "complexity",
+    label: "Complexity Treemap",
+    description:
+      "Files sized by bytes, colored by cyclomatic complexity — spot maintenance hotspots.",
+    icon: BarChart3,
+  },
+  {
+    type: "architecture",
+    label: "Architecture Graph",
+    description:
+      "Module-level architecture showing how directories depend on each other.",
+    icon: Layers,
+  },
+  {
+    type: "dataflow",
+    label: "Data Flow Diagram",
+    description: "Trace data flow from entry points through the system layers.",
+    icon: ArrowRightLeft,
+  },
+  {
+    type: "mindmap",
+    label: "Mind Map",
+    description:
+      "Radial mind map of the codebase structure, categories, and patterns.",
+    icon: Brain,
+  },
+  {
+    type: "neural_network",
+    label: "Neural Network",
+    description:
+      "PlotNeuralNet-style 3D model architecture visualization for detected ML models.",
+    icon: Network,
+  },
+  {
+    type: "knowledge",
+    label: "Knowledge Graph",
+    description:
+      "Drill from file groups into symbols and their call relationships.",
+    icon: BrainCircuit,
+  },
 ];
 
 /**
@@ -55,11 +106,12 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
 
   const { generate, getState } = useVisualization(repoId);
   const { explain, getExplanation } = useExplanation(repoId);
-  
+
   // Controls the sliding AI Explanation right panel
   const [isExplanationOpen, setIsExplanationOpen] = useState(false);
 
-  const activeConfig = VIZ_CONFIG.find((c) => c.type === activeViz) || VIZ_CONFIG[0];
+  const activeConfig =
+    VIZ_CONFIG.find((c) => c.type === activeViz) || VIZ_CONFIG[0];
   const activeState = getState(activeViz);
   const activeExplanationState = getExplanation(activeViz);
   const costsTokens = TOKEN_COST.has(activeViz);
@@ -79,6 +131,7 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
       <div className="flex-1 flex bg-background relative shadow-inner">
         <FocusedVisualization
           type={activeViz}
+          repoId={repoId}
           config={activeConfig}
           state={activeState}
           explanationState={activeExplanationState}
@@ -96,4 +149,3 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
     </div>
   );
 }
-

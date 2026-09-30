@@ -444,6 +444,52 @@ select {
   box-shadow: 0 8px 24px -12px hsl(var(--shadow-color) / 0.4);
 }
 
+.architecture-flow-controls {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card) / 0.88);
+  box-shadow: 0 12px 32px -20px hsl(var(--shadow-color) / 0.65);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.architecture-flow-controls .react-flow__controls-button {
+  width: 34px;
+  height: 34px;
+  border-bottom: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+}
+
+.architecture-flow-controls .react-flow__controls-button:hover {
+  background: hsl(var(--muted) / 0.8);
+  color: hsl(var(--foreground));
+}
+
+.architecture-flow-controls .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.architecture-flow-minimap {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--card) / 0.92);
+  box-shadow: 0 12px 32px -20px hsl(var(--shadow-color) / 0.65);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.architecture-flow-minimap .react-flow__minimap-svg {
+  background: hsl(var(--card) / 0.92);
+}
+
+.architecture-flow-minimap .react-flow__minimap-mask {
+  stroke: hsl(var(--foreground) / 0.45);
+  stroke-width: 1;
+}
+
 /*
  * T12: a chart node that has keyboard focus has to show it.
  *

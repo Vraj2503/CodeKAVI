@@ -29,7 +29,9 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
       ),
     ]);
     if (result === null) {
-      console.warn("Auth session read timed out; sending request unauthenticated.");
+      console.warn(
+        "Auth session read timed out; sending request unauthenticated.",
+      );
       return {};
     }
     const token = result.data.session?.access_token;
@@ -100,6 +102,10 @@ export interface FileProfile {
   out_degree: number;
   importance_score: number;
   tags: string[];
+  loc?: number | null;
+  complexity?: number | null;
+  functions?: number | null;
+  complexity_source?: "cyclomatic" | "size_fallback" | null;
 }
 
 export interface RoleSummary {
@@ -197,11 +203,59 @@ export type VizType =
   | "architecture"
   | "dataflow"
   | "mindmap"
-  | "neural_network";
+  | "neural_network"
+  | "knowledge"
+  | "concentric_radar";
 
 export interface VizResponse {
   type: string;
   data: unknown;
+}
+
+// ── Knowledge Graph Types ──
+// Mirrors backend/rune/symbol_graph.py's return shape exactly: one flat,
+// function-level graph — the important symbols in the repo connected by
+// their real (possibly contracted) call relationships. No file tier.
+
+export interface KnowledgeSymbol {
+  id: string;
+  label: string;
+  type: string;
+  file: string;
+  line: number | null;
+  loc: number;
+  doc: string | null;
+  description: string | null;
+  signature: string | null;
+  is_async: boolean;
+  http: string | null;
+  external_calls: string[];
+  effects: string[];
+  in_degree: number;
+  out_degree: number;
+  role: string | null;
+  importance: number | null;
+}
+
+export interface KnowledgeSymbolEdge {
+  source: string;
+  target: string;
+  kind: "calls_direct" | "calls_transitive" | "inherits";
+  hops: number;
+  via?: string[];
+}
+
+export interface KnowledgeGraphPayload {
+  nodes: KnowledgeSymbol[];
+  edges: KnowledgeSymbolEdge[];
+  metadata: {
+    total_symbols: number;
+    important_symbols: number;
+    resolved_calls: number;
+    unresolved_calls: number;
+    edges_truncated: boolean;
+    unsupported_languages: string[];
+  };
 }
 
 // ── Neural Network Model Types ──
@@ -696,8 +750,13 @@ export async function fetchVisualization(
   }
 
   const authHeaders = await getAuthHeaders();
-  const isPost = type === "mindmap";
-  const vizPath = type === "neural_network" ? "nn" : type;
+  const isPost = type === "mindmap" || type === "architecture";
+  const vizPath =
+    type === "neural_network"
+      ? "nn"
+      : type === "concentric_radar"
+        ? "radar"
+        : type;
   const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}`;
 
   const res = await fetch(endpoint, {
@@ -707,7 +766,24 @@ export async function fetchVisualization(
       ...(isPost && { "Content-Type": "application/json" }),
     },
     ...(isPost && {
-      body: JSON.stringify({ use_llm: useLlm }),
+      body: JSON.stringify(
+        type === "architecture"
+          ? {
+              schema_version: "architecture.v2",
+              view: "overview",
+              detail: "standard",
+              include: { evidence: "inspector_only" },
+              layout: {
+                direction: "LR",
+                routing: "orthogonal",
+                max_nodes: 18,
+                max_edges: 26,
+                collapse_supporting_components: true,
+              },
+              enrichment: { mode: "static" },
+            }
+          : { use_llm: useLlm },
+      ),
     }),
     signal,
   });
@@ -723,6 +799,43 @@ export async function fetchVisualization(
     // ApiError, not Error: the status is what `describeFailure` classifies on,
     // and a bare message throws it away.
     throw new ApiError(res.status, err.detail || "");
+  }
+
+  return res.json();
+}
+
+export async function fetchRadarViz(repoId: string): Promise<VizResponse> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/visualize/radar/${repoId}`, {
+    headers: authHeaders,
+  });
+  if (!res.ok) throw new Error(`Radar viz failed: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Ask the knowledge graph to name the domain concepts behind its symbols.
+ *
+ * The GET already returns a cached overlay when one exists, so this is only
+ * for the first, billed pass. Separate from `fetchVisualization` because that
+ * one hardcodes `use_llm: false` — deliberately, so no chart spends tokens by
+ * merely being looked at.
+ */
+export async function enrichKnowledgeGraph(
+  repoId: string,
+  signal?: AbortSignal,
+): Promise<VizResponse> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/visualize/knowledge/${repoId}`, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ use_llm: true }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "" }));
+    throw new ApiError(res.status, err.detail?.message || err.detail || "");
   }
 
   return res.json();
@@ -860,6 +973,28 @@ export async function fetchTourNodeNarration(
 
   if (!res.ok) {
     return { narration: null };
+  }
+
+  return res.json();
+}
+export async function fetchArchitectureV2Graph(
+  repoId: string,
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<any> {
+  const authHeaders = await getAuthHeaders();
+  const res = await fetch(`${API_BASE}/visualize/architecture/${repoId}`, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (res.status === 202) throw new ApiError(202, "re-analyzing");
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "" }));
+    throw new ApiError(res.status, err.detail || "Architecture V2 request failed");
   }
 
   return res.json();

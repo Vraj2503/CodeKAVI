@@ -675,16 +675,15 @@ class ExplanationOrchestrator:
         return {"nodes": nodes, "edges": edges}
 
     def _auto_viz_architecture(self) -> dict:
-        """Build module-level architecture graph from file classifications."""
-        from rune.graph import build_semantic_module_graph
+        """Build the same responsibility-level manifest as the V2 endpoint."""
+        from rune.architecture import build_architecture_manifest
 
-        semantic = build_semantic_module_graph(
+        repo_id = os.path.basename(self.repo_path).rsplit("_", 1)[-1]
+        return build_architecture_manifest(
+            repo_id=repo_id,
             dep_data=self.analysis,
             file_profiles=self.classification or [],
-        )
-        # Member files per layer node, so the frontend can expand a layer in
-        # place — same payload the /visualize/architecture route returns.
-        return {**semantic["graph_json"], "modules": semantic["modules"]}
+        ).model_dump(by_alias=True)
 
     # ─────────────────────────────────────────
     # Helper methods

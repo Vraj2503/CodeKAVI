@@ -189,7 +189,9 @@ export function warmElkLayout(): void {
   void getElk();
 }
 
-async function layout(graph: ElkNode): Promise<LayoutResult> {
+/** Exported so other graphs (e.g. lib/knowledge/elkLayout.ts) share the one ELK
+ * bundle instance and grid-fallback behavior instead of re-bootstrapping it. */
+export async function layout(graph: ElkNode): Promise<LayoutResult> {
   const nodeBoxes = (graph.children ?? []).map((child) => ({
     id: child.id,
     width: child.width ?? FILE_NODE_WIDTH,
