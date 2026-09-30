@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mockup A: File-Clustered Node-Link</title>
+    <style>
+        :root {
+            --background: 40 30% 96.5%;
+            --foreground: 24 14% 10%;
+            --card: 42 42% 99%;
+            --card-foreground: 24 14% 10%;
+            --muted: 38 20% 92.5%;
+            --muted-foreground: 28 7% 42%;
+            --border: 33 16% 86%;
+            --signal: 26 90% 46%;
+            --destructive: 0 68% 45%;
+            --success: 148 55% 32%;
+            --viz-highlight: 26 90% 46%;
+            --viz-cat-1: 212 88% 45%;
+            --viz-cat-2: 129 54% 30%;
+            --viz-cat-3: 266 60% 52%;
+            --viz-cat-4: 26 84% 42%;
+            --viz-cat-5: 328 66% 46%;
+            --viz-cat-6: 209 84% 42%;
+            --viz-cat-7: 126 50% 29%;
+            --viz-cat-8: 267 52% 50%;
+            --viz-cat-ink: 0 0% 100%;
+            --viz-surface: 42 42% 99%;
+            --viz-ink: 24 14% 10%;
+            --viz-ink-dim: 28 7% 42%;
+            --viz-edge: 33 16% 86%;
+            --radius: 0.5rem;
+        }
+
+        [data-theme="dark"] {
+            --background: 30 9% 6%;
+            --foreground: 40 18% 94%;
+            --card: 30 8% 9%;
+            --card-foreground: 40 18% 94%;
+            --muted: 30 6% 14%;
+            --muted-foreground: 36 8% 62%;
+            --border: 32 7% 19%;
+            --signal: 34 96% 56%;
+            --destructive: 2 72% 58%;
+            --success: 148 52% 52%;
+            --viz-highlight: 34 96% 56%;
+            --viz-cat-1: 212 100% 67%;
+            --viz-cat-2: 129 49% 49%;
+            --viz-cat-3: 266 100% 77%;
+            --viz-cat-4: 26 85% 59%;
+            --viz-cat-5: 328 89% 72%;
+            --viz-cat-6: 209 100% 74%;
+            --viz-cat-7: 126 50% 45%;
+            --viz-cat-8: 267 80% 70%;
+            --viz-cat-ink: 0 0% 100%;
+            --viz-surface: 30 8% 9%;
+            --viz-ink: 40 18% 94%;
+            --viz-ink-dim: 36 8% 62%;
+            --viz-edge: 32 7% 19%;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: hsl(var(--background));
+            color: hsl(var(--foreground));
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        h1, h2, h3, h4 { font-weight: 600; }
+
+        .header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid hsl(var(--border));
+            background-color: hsl(var(--card));
+            z-index: 10;
+        }
+
+        .caption-block { margin-bottom: 1rem; }
+        .caption-title { font-size: 1.25rem; margin-bottom: 0.5rem; }
+        .caption-text { font-size: 0.875rem; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+        
+        .banners { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; }
+        
+        .banner-resolution {
+            background-color: hsl(38 90% 90%);
+            color: hsl(38 90% 20%);
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius);
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        [data-theme="dark"] .banner-resolution {
+            background-color: hsl(38 90% 20%);
+            color: hsl(38 90% 90%);
+        }
+
+        .banner-truncation {
+            font-size: 0.875rem;
+            color: hsl(var(--muted-foreground));
+            padding-left: 0.25rem;
+        }
+
+        .main-content { flex: 1; position: relative; display: flex; }
+
+        .graph-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background-image: radial-gradient(hsl(var(--muted-foreground) / 0.3) 1px, transparent 1px);
+            background-size: 20px 20px;
+            cursor: grab;
+        }
+        .graph-container:active { cursor: grabbing; }
+        .graph-content { position: absolute; transform-origin: 0 0; }
+
+        .empty-state {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: hsl(var(--background));
+            z-index: 20;
+        }
+        
+        .empty-icon {
+            width: 64px; height: 64px; border-radius: 50%;
+            background-color: hsl(var(--muted));
+            display: flex; align-items: center; justify-content: center;
+            margin-bottom: 1rem; color: hsl(var(--muted-foreground));
+        }
+
+        .empty-title { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .empty-text { color: hsl(var(--muted-foreground)); max-width: 400px; text-align: center; margin-bottom: 1.5rem; line-height: 1.5; }
+        
+        .empty-button {
+            padding: 0.5rem 1rem; background-color: hsl(var(--foreground));
+            color: hsl(var(--background)); border: none; border-radius: var(--radius);
+            font-weight: 500; cursor: pointer;
+        }
+
+        .detail-panel {
+            position: absolute; top: 0; left: -300px; width: 300px; height: 100%;
+            background-color: hsl(var(--card)); border-right: 1px solid hsl(var(--border));
+            transition: left 0.3s ease; z-index: 100; padding: 1.5rem;
+            box-shadow: 4px 0 15px rgba(0,0,0,0.05);
+            display: flex; flex-direction: column; gap: 1rem;
+        }
+        .detail-panel.open { left: 0; }
+        .panel-close { position: absolute; top: 1rem; right: 1rem; cursor: pointer; color: hsl(var(--muted-foreground)); }
+        .detail-item { display: flex; flex-direction: column; gap: 0.25rem; }
+        .detail-label { font-size: 0.75rem; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.05em; }
+        .detail-value { font-size: 0.875rem; }
+
+        .controls { position: absolute; bottom: 1.5rem; right: 1.5rem; display: flex; flex-direction: column; gap: 0.5rem; z-index: 10; }
+        .control-btn {
+            width: 32px; height: 32px; background-color: hsl(var(--card));
+            border: 1px solid hsl(var(--border)); border-radius: var(--radius);
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: hsl(var(--foreground));
+        }
+        .control-btn:hover { background-color: hsl(var(--muted)); }
+
+        .legend {
+            position: absolute; bottom: 1.5rem; left: 1.5rem; background-color: hsl(var(--card));
+            border: 1px solid hsl(var(--border)); border-radius: var(--radius);
+            padding: 1rem; z-index: 10; font-size: 0.75rem;
+            display: flex; flex-direction: column; gap: 0.75rem; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .legend-row { display: flex; align-items: center; gap: 0.5rem; }
+        .legend-shape { width: 12px; height: 12px; background-color: hsl(var(--viz-ink-dim)); }
+        .legend-circle { border-radius: 50%; }
+        .legend-rect { border-radius: 2px; }
+        .legend-diamond { transform: rotate(45deg); width: 10px; height: 10px; margin: 0 1px; }
+
+        .top-actions { position: absolute; top: 1rem; right: 1.5rem; display: flex; gap: 1rem; z-index: 20; }
+        .action-btn {
+            padding: 0.5rem 1rem; background-color: hsl(var(--card)); border: 1px solid hsl(var(--border));
+            border-radius: var(--radius); cursor: pointer; color: hsl(var(--foreground)); font-size: 0.875rem;
+        }
+        .action-btn:hover { background-color: hsl(var(--muted)); }
+
+        .file-cluster { fill: hsl(var(--card) / 0.5); stroke: hsl(var(--border)); stroke-width: 2; stroke-dasharray: 4 4; rx: 8; ry: 8; }
+        .cluster-label { font-size: 10px; fill: hsl(var(--muted-foreground)); font-family: monospace; }
+
+        .node { fill: hsl(var(--viz-ink-dim)); stroke: hsl(var(--background)); stroke-width: 1.5; cursor: pointer; transition: fill 0.2s; }
+        .node:hover, .node.highlighted { fill: hsl(var(--viz-highlight)); }
+
+        .edge { stroke: hsl(var(--viz-edge)); fill: none; stroke-width: 1; transition: stroke 0.2s, stroke-width 0.2s; }
+        .edge.inherits { stroke-width: 3; stroke-dasharray: none; }
+        .edge.inherits-inner { stroke: hsl(var(--background)); stroke-width: 1; fill: none; }
+        .edge.highlighted { stroke: hsl(var(--viz-highlight)); stroke-width: 2; z-index: 10; }
+        .edge.inherits.highlighted { stroke: hsl(var(--viz-highlight)); stroke-width: 4; }
+        
+        .faded { opacity: 0.15; transition: opacity 0.2s; }
+    </style>
+</head>
+<body>
+    <div class="top-actions">
+        <button class="action-btn" id="emptyStateToggle">Show Empty State</button>
+        <button class="action-btn" id="themeToggle">Toggle Dark Mode</button>
+    </div>
+
+    <div class="header">
+        <div class="caption-block">
+            <h1 class="caption-title">Mockup A: File-Clustered Node-Link</h1>
+            <p class="caption-text">
+                <strong>Organizing idea:</strong> Nodes are grouped into file clusters. Each cluster shows the filename. Within clusters, nodes are positioned by a simple force simulation. Edges connect nodes across and within clusters.<br>
+                <strong>Problems prioritized:</strong> 1. Layout (File clusters), 4. Encoding (Shape=kind, Size=importance, Color=neutral), 2. Resolution rate (Banner), 3. Truncation (Banner text), 5. Inheritance (Double-line edge).<br>
+                <strong>React Flow compatibility:</strong> Renderable by ArchitectureGraph with modifications: file clusters as group nodes, symbol nodes as a new custom node type.
+            </p>
+        </div>
+        <div class="banners">
+            <div class="banner-resolution">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                29% of call sites resolved · 71% of calls could not be traced to a definition and are not shown
+            </div>
+            <div class="banner-truncation">
+                Showing top 150 of 657 symbols by connectivity · 488 symbols with low connectivity are hidden
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="detail-panel" id="detailPanel">
+            <div class="panel-close" id="closePanel">✕</div>
+            <h3 id="panelName">Symbol Name</h3>
+            <div class="detail-item">
+                <span class="detail-label">Kind</span>
+                <span class="detail-value" id="panelKind">function</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">File</span>
+                <span class="detail-value" id="panelFile">file.py</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Role</span>
+                <span class="detail-value" id="panelRole">leaf</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Importance</span>
+                <span class="detail-value" id="panelImportance">10.5</span>
+            </div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+            <div class="empty-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            </div>
+            <h2 class="empty-title">No symbols to display</h2>
+            <p class="empty-text">This repository uses languages that CodeKavi doesn't parse for symbol-level analysis yet. The file-level architecture view is still available.</p>
+            <button class="empty-button">View Architecture →</button>
+        </div>
+
+        <div class="graph-container" id="graphContainer">
+            <div class="graph-content" id="graphContent">
+                <svg id="graphSvg" width="4000" height="4000">
+                    <g id="edgeGroup"></g>
+                    <g id="clusterGroup"></g>
+                    <g id="nodeGroup"></g>
+                </svg>
+            </div>
+        </div>
+
+        <div class="legend">
+            <div class="legend-row">
+                <div class="legend-shape legend-circle"></div>
+                <span>Function</span>
+            </div>
+            <div class="legend-row">
+                <div class="legend-shape legend-rect"></div>
+                <span>Class</span>
+            </div>
+            <div class="legend-row">
+                <div class="legend-shape legend-diamond"></div>
+                <span>Method</span>
+            </div>
+            <div class="legend-row">
+                <span>Size = Importance</span>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="control-btn" id="zoomIn">+</div>
+            <div class="control-btn" id="zoomOut">-</div>
+            <div class="control-btn" id="zoomFit">□</div>
+        </div>
+    </div>
+
+    <script>
+        const nodesData = [{"id": "n0", "name": "Class0.method0", "kind": "method", "role": "leaf", "file": "codekavi/indexer/search.py", "importance": 9.757081734954443}, {"id": "n1", "name": "function_1", "kind": "function", "role": "shared_utility", "file": "codekavi/utils/strings.py", "importance": 3.526420263027687}, {"id": "n2", "name": "Class2", "kind": "class", "role": "test", "file": "codekavi/plugins/manager.py", "importance": 13.024567026398158}, {"id": "n3", "name": "function_3", "kind": "function", "role": "test", "file": "codekavi/graph/export.py", "importance": 8.691444391771672}, {"id": "n4", "name": "Class4.method4", "kind": "method", "role": "test", "file": "codekavi/config.py", "importance": 48.88264123627586}, {"id": "n5", "name": "function_5", "kind": "function", "role": "test", "file": "codekavi/graph/builder.py", "importance": 14.610647620054147}, {"id": "n6", "name": "Class6.method6", "kind": "method", "role": "leaf", "file": "codekavi/config.py", "importance": 49.53200946828828}, {"id": "n7", "name": "function_7", "kind": "function", "role": "shared_utility", "file": "codekavi/indexer/store.py", "importance": 10.554255021951706}, {"id": "n8", "name": "function_8", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/parser.py", "importance": 3.964588618849573}, {"id": "n9", "name": "Class9.method9", "kind": "method", "role": "test", "file": "tests/test_main.py", "importance": 13.853176421777514}, {"id": "n10", "name": "function_10", "kind": "function", "role": "test", "file": "tests/test_cli.py", "importance": 3.1554777989086036}, {"id": "n11", "name": "function_11", "kind": "function", "role": "leaf", "file": "codekavi/indexer/cache.py", "importance": 10.056999909641718}, {"id": "n12", "name": "Class12", "kind": "class", "role": "leaf", "file": "codekavi/analyzer/visitor.py", "importance": 6.277907533788117}, {"id": "n13", "name": "Class13.method13", "kind": "method", "role": "test", "file": "codekavi/utils/fs.py", "importance": 9.266336998056042}, {"id": "n14", "name": "function_14", "kind": "function", "role": "leaf", "file": "codekavi/config.py", "importance": 4.301727530705575}, {"id": "n15", "name": "function_15", "kind": "function", "role": "leaf", "file": "codekavi/plugins/manager.py", "importance": 14.311329982078332}, {"id": "n16", "name": "function_16", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 7.3387833200312995}, {"id": "n17", "name": "function_17", "kind": "function", "role": "internal_helper", "file": "codekavi/config.py", "importance": 12.676624917899641}, {"id": "n18", "name": "Class18", "kind": "class", "role": "test", "file": "tests/test_parser.py", "importance": 14.618221882749525}, {"id": "n19", "name": "Class19", "kind": "class", "role": "leaf", "file": "codekavi/utils/strings.py", "importance": 43.93752044275592}, {"id": "n20", "name": "function_20", "kind": "function", "role": "internal_helper", "file": "codekavi/graph/layout.py", "importance": 9.052762838768047}, {"id": "n21", "name": "function_21", "kind": "function", "role": "leaf", "file": "codekavi/graph/traversal.py", "importance": 13.740781699727236}, {"id": "n22", "name": "Class4.method22", "kind": "method", "role": "test", "file": "codekavi/indexer/search.py", "importance": 7.445950192475464}, {"id": "n23", "name": "function_23", "kind": "function", "role": "shared_utility", "file": "codekavi/indexer/cache.py", "importance": 13.890616208923262}, {"id": "n24", "name": "function_24", "kind": "function", "role": "shared_utility", "file": "codekavi/models/db.py", "importance": 47.264383079762084}, {"id": "n25", "name": "function_25", "kind": "function", "role": "test", "file": "tests/test_cli.py", "importance": 11.954377108390833}, {"id": "n26", "name": "function_26", "kind": "function", "role": "leaf", "file": "codekavi/cli.py", "importance": 14.002346625951176}, {"id": "n27", "name": "Class9.method27", "kind": "method", "role": "test", "file": "tests/test_main.py", "importance": 8.478441098187394}, {"id": "n28", "name": "Class28", "kind": "class", "role": "internal_helper", "file": "codekavi/analyzer/pipeline.py", "importance": 7.248115125279291}, {"id": "n29", "name": "function_29", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/visitor.py", "importance": 13.42412032797408}, {"id": "n30", "name": "function_30", "kind": "function", "role": "core_module", "file": "codekavi/models/graph.py", "importance": 7.731510797889209}, {"id": "n31", "name": "function_31", "kind": "function", "role": "test", "file": "tests/test_cli.py", "importance": 10.257439942978237}, {"id": "n32", "name": "function_32", "kind": "function", "role": "leaf", "file": "codekavi/utils/fs.py", "importance": 4.207930567553317}, {"id": "n33", "name": "Class15.method33", "kind": "method", "role": "leaf", "file": "codekavi/models/graph.py", "importance": 8.319886220042047}, {"id": "n34", "name": "function_34", "kind": "function", "role": "internal_helper", "file": "codekavi/indexer/sync.py", "importance": 48.06303911220387}, {"id": "n35", "name": "function_35", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/pipeline.py", "importance": 4.363113682882132}, {"id": "n36", "name": "function_36", "kind": "function", "role": "leaf", "file": "codekavi/plugins/manager.py", "importance": 9.402659439451703}, {"id": "n37", "name": "function_37", "kind": "function", "role": "shared_utility", "file": "codekavi/analyzer/pipeline.py", "importance": 7.64215030402772}, {"id": "n38", "name": "function_38", "kind": "function", "role": "leaf", "file": "codekavi/graph/export.py", "importance": 5.291620478939512}, {"id": "n39", "name": "Class39", "kind": "class", "role": "core_module", "file": "codekavi/analyzer/resolver.py", "importance": 12.49847429824082}, {"id": "n40", "name": "Class4.method40", "kind": "method", "role": "test", "file": "tests/test_graph.py", "importance": 3.193539359324287}, {"id": "n41", "name": "function_41", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/pipeline.py", "importance": 4.294838332716038}, {"id": "n42", "name": "function_42", "kind": "function", "role": "leaf", "file": "codekavi/graph/layout.py", "importance": 4.924486600622466}, {"id": "n43", "name": "Class43", "kind": "class", "role": "test", "file": "tests/test_parser.py", "importance": 7.620927246730454}, {"id": "n44", "name": "Class8.method44", "kind": "method", "role": "shared_utility", "file": "codekavi/indexer/sync.py", "importance": 33.75009358124138}, {"id": "n45", "name": "function_45", "kind": "function", "role": "leaf", "file": "codekavi/graph/optimize.py", "importance": 47.350469959396975}, {"id": "n46", "name": "function_46", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/parser.py", "importance": 12.023298936641208}, {"id": "n47", "name": "function_47", "kind": "function", "role": "leaf", "file": "codekavi/routes/api.py", "importance": 13.997922949537614}, {"id": "n48", "name": "function_48", "kind": "function", "role": "leaf", "file": "codekavi/plugins/manager.py", "importance": 10.45008906087712}, {"id": "n49", "name": "function_49", "kind": "function", "role": "leaf", "file": "codekavi/models/user.py", "importance": 14.850946448125235}, {"id": "n50", "name": "Class50", "kind": "class", "role": "internal_helper", "file": "codekavi/plugins/base.py", "importance": 8.651286559407652}, {"id": "n51", "name": "Class15.method51", "kind": "method", "role": "leaf", "file": "codekavi/main.py", "importance": 7.1153960743549085}, {"id": "n52", "name": "function_52", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 14.703956910187864}, {"id": "n53", "name": "function_53", "kind": "function", "role": "test", "file": "codekavi/graph/builder.py", "importance": 7.007605088823899}, {"id": "n54", "name": "Class0.method54", "kind": "method", "role": "leaf", "file": "codekavi/utils/strings.py", "importance": 6.82457544565624}, {"id": "n55", "name": "function_55", "kind": "function", "role": "leaf", "file": "codekavi/utils/strings.py", "importance": 5.933627844803619}, {"id": "n56", "name": "Class2.method56", "kind": "method", "role": "test", "file": "codekavi/utils/logger.py", "importance": 11.144279036483765}, {"id": "n57", "name": "function_57", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 12.534107119031896}, {"id": "n58", "name": "Class58", "kind": "class", "role": "test", "file": "codekavi/utils/metrics.py", "importance": 7.941289233963287}, {"id": "n59", "name": "Class59", "kind": "class", "role": "internal_helper", "file": "codekavi/graph/export.py", "importance": 10.2997680788314}, {"id": "n60", "name": "Class6.method60", "kind": "method", "role": "core_module", "file": "codekavi/analyzer/scope.py", "importance": 10.064460143106661}, {"id": "n61", "name": "function_61", "kind": "function", "role": "leaf", "file": "codekavi/graph/builder.py", "importance": 11.16365505042462}, {"id": "n62", "name": "function_62", "kind": "function", "role": "core_module", "file": "codekavi/models/graph.py", "importance": 8.49342457819266}, {"id": "n63", "name": "function_63", "kind": "function", "role": "test", "file": "tests/test_utils.py", "importance": 4.7866432692491525}, {"id": "n64", "name": "Class64", "kind": "class", "role": "test", "file": "codekavi/main.py", "importance": 36.98568573269694}, {"id": "n65", "name": "function_65", "kind": "function", "role": "internal_helper", "file": "codekavi/models/user.py", "importance": 12.509806601629101}, {"id": "n66", "name": "Class66", "kind": "class", "role": "test", "file": "tests/test_utils.py", "importance": 35.34112430301137}, {"id": "n67", "name": "function_67", "kind": "function", "role": "leaf", "file": "codekavi/main.py", "importance": 13.417432060273434}, {"id": "n68", "name": "function_68", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/pipeline.py", "importance": 5.851199943975637}, {"id": "n69", "name": "Class69", "kind": "class", "role": "leaf", "file": "codekavi/utils/fs.py", "importance": 12.648281533399938}, {"id": "n70", "name": "function_70", "kind": "function", "role": "internal_helper", "file": "codekavi/graph/builder.py", "importance": 11.118034698921205}, {"id": "n71", "name": "function_71", "kind": "function", "role": "core_module", "file": "codekavi/config.py", "importance": 7.0117125437011545}, {"id": "n72", "name": "function_72", "kind": "function", "role": "shared_utility", "file": "codekavi/models/graph.py", "importance": 9.358081397950299}, {"id": "n73", "name": "Class1.method73", "kind": "method", "role": "test", "file": "tests/test_main.py", "importance": 8.616971591304214}, {"id": "n74", "name": "function_74", "kind": "function", "role": "internal_helper", "file": "codekavi/routes/api.py", "importance": 9.70516531377362}, {"id": "n75", "name": "function_75", "kind": "function", "role": "test", "file": "tests/test_utils.py", "importance": 5.530825682931534}, {"id": "n76", "name": "function_76", "kind": "function", "role": "leaf", "file": "codekavi/models/db.py", "importance": 5.773249236439796}, {"id": "n77", "name": "function_77", "kind": "function", "role": "leaf", "file": "codekavi/models/node.py", "importance": 4.486402283658835}, {"id": "n78", "name": "function_78", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/resolver.py", "importance": 5.2526400365208765}, {"id": "n79", "name": "function_79", "kind": "function", "role": "core_module", "file": "codekavi/graph/export.py", "importance": 5.832563153108714}, {"id": "n80", "name": "Class8.method80", "kind": "method", "role": "test", "file": "tests/test_parser.py", "importance": 11.401156636252344}, {"id": "n81", "name": "function_81", "kind": "function", "role": "leaf", "file": "codekavi/graph/builder.py", "importance": 6.085950301123608}, {"id": "n82", "name": "function_82", "kind": "function", "role": "leaf", "file": "codekavi/utils/metrics.py", "importance": 7.5818300114067085}, {"id": "n83", "name": "Class83", "kind": "class", "role": "test", "file": "codekavi/utils/logger.py", "importance": 3.5177444797159794}, {"id": "n84", "name": "function_84", "kind": "function", "role": "leaf", "file": "codekavi/utils/fs.py", "importance": 3.0005247220839726}, {"id": "n85", "name": "Class13.method85", "kind": "method", "role": "core_module", "file": "codekavi/utils/helpers.py", "importance": 47.60058917674162}, {"id": "n86", "name": "function_86", "kind": "function", "role": "leaf", "file": "codekavi/utils/fs.py", "importance": 7.72147634245942}, {"id": "n87", "name": "function_87", "kind": "function", "role": "leaf", "file": "codekavi/utils/metrics.py", "importance": 8.255968494922108}, {"id": "n88", "name": "Class16.method88", "kind": "method", "role": "internal_helper", "file": "codekavi/main.py", "importance": 6.9269695964328974}, {"id": "n89", "name": "function_89", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/visitor.py", "importance": 8.56432267947509}, {"id": "n90", "name": "function_90", "kind": "function", "role": "shared_utility", "file": "codekavi/graph/layout.py", "importance": 5.413846503538073}, {"id": "n91", "name": "Class1.method91", "kind": "method", "role": "shared_utility", "file": "codekavi/indexer/store.py", "importance": 13.617078222517907}, {"id": "n92", "name": "function_92", "kind": "function", "role": "test", "file": "codekavi/analyzer/scope.py", "importance": 9.941211957095083}, {"id": "n93", "name": "function_93", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 10.182697755869397}, {"id": "n94", "name": "function_94", "kind": "function", "role": "leaf", "file": "codekavi/graph/layout.py", "importance": 12.915544988242761}, {"id": "n95", "name": "Class95", "kind": "class", "role": "shared_utility", "file": "codekavi/models/node.py", "importance": 11.359653178967719}, {"id": "n96", "name": "function_96", "kind": "function", "role": "internal_helper", "file": "codekavi/main.py", "importance": 4.903211033352033}, {"id": "n97", "name": "function_97", "kind": "function", "role": "shared_utility", "file": "codekavi/models/graph.py", "importance": 13.829336781347113}, {"id": "n98", "name": "function_98", "kind": "function", "role": "internal_helper", "file": "codekavi/routes/api.py", "importance": 7.192647655765876}, {"id": "n99", "name": "function_99", "kind": "function", "role": "shared_utility", "file": "codekavi/utils/strings.py", "importance": 4.665961883464182}, {"id": "n100", "name": "function_100", "kind": "function", "role": "test", "file": "tests/test_graph.py", "importance": 44.842021911809084}, {"id": "n101", "name": "function_101", "kind": "function", "role": "leaf", "file": "codekavi/main.py", "importance": 5.270469858499343}, {"id": "n102", "name": "function_102", "kind": "function", "role": "leaf", "file": "codekavi/indexer/store.py", "importance": 7.052127889727932}, {"id": "n103", "name": "Class13.method103", "kind": "method", "role": "core_module", "file": "codekavi/analyzer/resolver.py", "importance": 10.914980635137411}, {"id": "n104", "name": "function_104", "kind": "function", "role": "leaf", "file": "codekavi/models/graph.py", "importance": 39.35281863908704}, {"id": "n105", "name": "function_105", "kind": "function", "role": "test", "file": "tests/test_parser.py", "importance": 9.358933645341768}, {"id": "n106", "name": "Class16.method106", "kind": "method", "role": "shared_utility", "file": "codekavi/graph/export.py", "importance": 10.51939063500884}, {"id": "n107", "name": "function_107", "kind": "function", "role": "test", "file": "tests/test_graph.py", "importance": 13.088332655821098}, {"id": "n108", "name": "function_108", "kind": "function", "role": "shared_utility", "file": "codekavi/models/graph.py", "importance": 36.08652945876585}, {"id": "n109", "name": "Class1.method109", "kind": "method", "role": "leaf", "file": "codekavi/indexer/sync.py", "importance": 7.424132393624906}, {"id": "n110", "name": "function_110", "kind": "function", "role": "leaf", "file": "codekavi/models/node.py", "importance": 8.257905672940133}, {"id": "n111", "name": "function_111", "kind": "function", "role": "internal_helper", "file": "codekavi/utils/logger.py", "importance": 13.20966751445783}, {"id": "n112", "name": "function_112", "kind": "function", "role": "test", "file": "codekavi/models/edge.py", "importance": 11.704681337867953}, {"id": "n113", "name": "function_113", "kind": "function", "role": "leaf", "file": "codekavi/config.py", "importance": 6.283354676647068}, {"id": "n114", "name": "function_114", "kind": "function", "role": "test", "file": "tests/test_utils.py", "importance": 10.060284837378166}, {"id": "n115", "name": "function_115", "kind": "function", "role": "shared_utility", "file": "codekavi/utils/metrics.py", "importance": 6.936040453622965}, {"id": "n116", "name": "Class8.method116", "kind": "method", "role": "shared_utility", "file": "codekavi/utils/helpers.py", "importance": 4.889808192855336}, {"id": "n117", "name": "function_117", "kind": "function", "role": "internal_helper", "file": "codekavi/graph/builder.py", "importance": 14.290148577527852}, {"id": "n118", "name": "function_118", "kind": "function", "role": "shared_utility", "file": "codekavi/analyzer/resolver.py", "importance": 12.520862821802785}, {"id": "n119", "name": "function_119", "kind": "function", "role": "core_module", "file": "codekavi/plugins/manager.py", "importance": 5.198919996448831}, {"id": "n120", "name": "function_120", "kind": "function", "role": "leaf", "file": "codekavi/indexer/sync.py", "importance": 9.19536141637267}, {"id": "n121", "name": "function_121", "kind": "function", "role": "leaf", "file": "codekavi/analyzer/parser.py", "importance": 14.466079513099256}, {"id": "n122", "name": "function_122", "kind": "function", "role": "test", "file": "tests/test_utils.py", "importance": 11.922963056604821}, {"id": "n123", "name": "function_123", "kind": "function", "role": "test", "file": "tests/test_utils.py", "importance": 13.259521231278981}, {"id": "n124", "name": "function_124", "kind": "function", "role": "internal_helper", "file": "codekavi/indexer/cache.py", "importance": 14.315099472057447}, {"id": "n125", "name": "Class125", "kind": "class", "role": "leaf", "file": "codekavi/graph/builder.py", "importance": 3.035017921064699}, {"id": "n126", "name": "function_126", "kind": "function", "role": "test", "file": "codekavi/graph/traversal.py", "importance": 8.08846608967929}, {"id": "n127", "name": "function_127", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 8.917183129058333}, {"id": "n128", "name": "function_128", "kind": "function", "role": "leaf", "file": "codekavi/utils/metrics.py", "importance": 3.536393993488782}, {"id": "n129", "name": "Class3.method129", "kind": "method", "role": "shared_utility", "file": "codekavi/main.py", "importance": 10.301592589682398}, {"id": "n130", "name": "function_130", "kind": "function", "role": "leaf", "file": "codekavi/indexer/search.py", "importance": 9.465952004981908}, {"id": "n131", "name": "function_131", "kind": "function", "role": "shared_utility", "file": "codekavi/utils/helpers.py", "importance": 13.720932484365875}, {"id": "n132", "name": "function_132", "kind": "function", "role": "leaf", "file": "codekavi/graph/builder.py", "importance": 12.937128514727972}, {"id": "n133", "name": "function_133", "kind": "function", "role": "test", "file": "tests/test_graph.py", "importance": 3.3440761866300015}, {"id": "n134", "name": "function_134", "kind": "function", "role": "leaf", "file": "codekavi/routes/web.py", "importance": 14.31106423465781}, {"id": "n135", "name": "function_135", "kind": "function", "role": "leaf", "file": "codekavi/models/graph.py", "importance": 10.151753923478498}, {"id": "n136", "name": "function_136", "kind": "function", "role": "leaf", "file": "codekavi/indexer/query.py", "importance": 9.674451802450914}, {"id": "n137", "name": "Class137", "kind": "class", "role": "shared_utility", "file": "codekavi/plugins/base.py", "importance": 3.983443960548726}, {"id": "n138", "name": "function_138", "kind": "function", "role": "leaf", "file": "codekavi/indexer/store.py", "importance": 5.594181717648764}, {"id": "n139", "name": "function_139", "kind": "function", "role": "core_module", "file": "codekavi/plugins/manager.py", "importance": 7.767936301237221}, {"id": "n140", "name": "Class14.method140", "kind": "method", "role": "leaf", "file": "codekavi/indexer/search.py", "importance": 7.970758632239089}, {"id": "n141", "name": "function_141", "kind": "function", "role": "internal_helper", "file": "codekavi/models/user.py", "importance": 14.600660973534815}, {"id": "n142", "name": "function_142", "kind": "function", "role": "leaf", "file": "codekavi/graph/traversal.py", "importance": 6.8841217486065105}, {"id": "n143", "name": "function_143", "kind": "function", "role": "shared_utility", "file": "codekavi/utils/metrics.py", "importance": 48.441781136804266}, {"id": "n144", "name": "function_144", "kind": "function", "role": "leaf", "file": "codekavi/models/user.py", "importance": 4.326494230281066}, {"id": "n145", "name": "function_145", "kind": "function", "role": "core_module", "file": "codekavi/models/db.py", "importance": 6.841076206782047}, {"id": "n146", "name": "Class146", "kind": "class", "role": "leaf", "file": "codekavi/graph/optimize.py", "importance": 42.75152972559692}, {"id": "n147", "name": "function_147", "kind": "function", "role": "leaf", "file": "codekavi/indexer/search.py", "importance": 4.835962108187275}, {"id": "n148", "name": "Class4.method148", "kind": "method", "role": "core_module", "file": "codekavi/analyzer/resolver.py", "importance": 30.10518805569448}, {"id": "n149", "name": "function_149", "kind": "function", "role": "leaf", "file": "codekavi/graph/export.py", "importance": 5.774909256351226}];
+        const edgesData = [{"source": "n58", "target": "n91", "type": "call"}, {"source": "n117", "target": "n74", "type": "call"}, {"source": "n99", "target": "n82", "type": "call"}, {"source": "n76", "target": "n21", "type": "call"}, {"source": "n119", "target": "n110", "type": "call"}, {"source": "n98", "target": "n146", "type": "call"}, {"source": "n79", "target": "n33", "type": "call"}, {"source": "n29", "target": "n50", "type": "call"}, {"source": "n149", "target": "n47", "type": "call"}, {"source": "n99", "target": "n93", "type": "call"}, {"source": "n4", "target": "n13", "type": "call"}, {"source": "n82", "target": "n60", "type": "call"}, {"source": "n70", "target": "n23", "type": "call"}, {"source": "n101", "target": "n69", "type": "call"}, {"source": "n5", "target": "n113", "type": "call"}, {"source": "n88", "target": "n103", "type": "call"}, {"source": "n147", "target": "n113", "type": "call"}, {"source": "n35", "target": "n40", "type": "call"}, {"source": "n121", "target": "n127", "type": "call"}, {"source": "n65", "target": "n122", "type": "call"}, {"source": "n49", "target": "n15", "type": "call"}, {"source": "n13", "target": "n108", "type": "call"}, {"source": "n24", "target": "n72", "type": "call"}, {"source": "n148", "target": "n98", "type": "call"}, {"source": "n46", "target": "n78", "type": "call"}, {"source": "n107", "target": "n22", "type": "call"}, {"source": "n136", "target": "n120", "type": "call"}, {"source": "n147", "target": "n57", "type": "call"}, {"source": "n127", "target": "n39", "type": "call"}, {"source": "n22", "target": "n105", "type": "call"}, {"source": "n146", "target": "n125", "type": "call"}, {"source": "n40", "target": "n83", "type": "call"}, {"source": "n95", "target": "n41", "type": "call"}, {"source": "n64", "target": "n80", "type": "call"}, {"source": "n74", "target": "n127", "type": "call"}, {"source": "n63", "target": "n71", "type": "call"}, {"source": "n71", "target": "n16", "type": "call"}, {"source": "n14", "target": "n10", "type": "call"}, {"source": "n52", "target": "n50", "type": "call"}, {"source": "n22", "target": "n61", "type": "call"}, {"source": "n33", "target": "n98", "type": "call"}, {"source": "n22", "target": "n95", "type": "call"}, {"source": "n118", "target": "n125", "type": "call"}, {"source": "n137", "target": "n129", "type": "call"}, {"source": "n146", "target": "n0", "type": "call"}, {"source": "n47", "target": "n102", "type": "call"}, {"source": "n99", "target": "n17", "type": "call"}, {"source": "n90", "target": "n147", "type": "call"}, {"source": "n116", "target": "n48", "type": "call"}, {"source": "n17", "target": "n32", "type": "call"}, {"source": "n146", "target": "n131", "type": "call"}, {"source": "n142", "target": "n29", "type": "call"}, {"source": "n10", "target": "n32", "type": "call"}, {"source": "n82", "target": "n80", "type": "call"}, {"source": "n91", "target": "n94", "type": "call"}, {"source": "n41", "target": "n68", "type": "call"}, {"source": "n61", "target": "n68", "type": "call"}, {"source": "n113", "target": "n128", "type": "call"}, {"source": "n16", "target": "n43", "type": "call"}, {"source": "n111", "target": "n37", "type": "call"}, {"source": "n127", "target": "n130", "type": "call"}, {"source": "n14", "target": "n8", "type": "call"}, {"source": "n96", "target": "n42", "type": "call"}, {"source": "n70", "target": "n101", "type": "call"}, {"source": "n7", "target": "n79", "type": "call"}, {"source": "n111", "target": "n80", "type": "call"}, {"source": "n112", "target": "n120", "type": "call"}, {"source": "n86", "target": "n98", "type": "call"}, {"source": "n3", "target": "n56", "type": "call"}, {"source": "n24", "target": "n105", "type": "call"}, {"source": "n141", "target": "n11", "type": "call"}, {"source": "n14", "target": "n128", "type": "call"}, {"source": "n65", "target": "n114", "type": "call"}, {"source": "n112", "target": "n67", "type": "call"}, {"source": "n15", "target": "n110", "type": "call"}, {"source": "n103", "target": "n14", "type": "call"}, {"source": "n81", "target": "n131", "type": "call"}, {"source": "n98", "target": "n9", "type": "call"}, {"source": "n60", "target": "n111", "type": "call"}, {"source": "n103", "target": "n47", "type": "call"}, {"source": "n124", "target": "n57", "type": "call"}, {"source": "n50", "target": "n117", "type": "call"}, {"source": "n95", "target": "n48", "type": "call"}, {"source": "n51", "target": "n142", "type": "call"}, {"source": "n37", "target": "n91", "type": "call"}, {"source": "n26", "target": "n98", "type": "call"}, {"source": "n20", "target": "n75", "type": "call"}, {"source": "n131", "target": "n112", "type": "call"}, {"source": "n104", "target": "n11", "type": "call"}, {"source": "n112", "target": "n63", "type": "call"}, {"source": "n11", "target": "n4", "type": "call"}, {"source": "n79", "target": "n70", "type": "call"}, {"source": "n112", "target": "n113", "type": "call"}, {"source": "n29", "target": "n68", "type": "call"}, {"source": "n68", "target": "n30", "type": "call"}, {"source": "n6", "target": "n107", "type": "call"}, {"source": "n118", "target": "n135", "type": "call"}, {"source": "n112", "target": "n52", "type": "call"}, {"source": "n149", "target": "n78", "type": "call"}, {"source": "n136", "target": "n128", "type": "call"}, {"source": "n64", "target": "n9", "type": "call"}, {"source": "n0", "target": "n68", "type": "call"}, {"source": "n134", "target": "n104", "type": "call"}, {"source": "n149", "target": "n50", "type": "call"}, {"source": "n22", "target": "n121", "type": "call"}, {"source": "n18", "target": "n76", "type": "call"}, {"source": "n73", "target": "n36", "type": "call"}, {"source": "n23", "target": "n129", "type": "call"}, {"source": "n22", "target": "n42", "type": "call"}, {"source": "n116", "target": "n82", "type": "call"}, {"source": "n7", "target": "n9", "type": "call"}, {"source": "n7", "target": "n23", "type": "call"}, {"source": "n76", "target": "n74", "type": "call"}, {"source": "n12", "target": "n38", "type": "call"}, {"source": "n89", "target": "n134", "type": "call"}, {"source": "n87", "target": "n75", "type": "call"}, {"source": "n144", "target": "n46", "type": "call"}, {"source": "n50", "target": "n2", "type": "inherits"}, {"source": "n2", "target": "n50", "type": "inherits"}, {"source": "n66", "target": "n59", "type": "inherits"}];
+        const files = ["codekavi/main.py", "codekavi/cli.py", "codekavi/config.py", "codekavi/routes/api.py", "codekavi/routes/web.py", "codekavi/routes/auth.py", "codekavi/models/user.py", "codekavi/models/graph.py", "codekavi/models/node.py", "codekavi/models/edge.py", "codekavi/models/db.py", "tests/test_main.py", "tests/test_graph.py", "tests/test_parser.py", "tests/test_cli.py", "tests/test_utils.py", "codekavi/utils/fs.py", "codekavi/utils/logger.py", "codekavi/utils/helpers.py", "codekavi/utils/metrics.py", "codekavi/utils/strings.py", "codekavi/graph/builder.py", "codekavi/graph/layout.py", "codekavi/graph/traversal.py", "codekavi/graph/export.py", "codekavi/graph/optimize.py", "codekavi/analyzer/pipeline.py", "codekavi/analyzer/parser.py", "codekavi/analyzer/resolver.py", "codekavi/analyzer/visitor.py", "codekavi/analyzer/scope.py", "codekavi/indexer/store.py", "codekavi/indexer/cache.py", "codekavi/indexer/query.py", "codekavi/indexer/search.py", "codekavi/indexer/sync.py", "codekavi/plugins/base.py", "codekavi/plugins/manager.py"];
+        
+        const nodesByFile = {};
+        files.forEach(f => nodesByFile[f] = []);
+        nodesData.forEach(n => {
+            if(nodesByFile[n.file]) nodesByFile[n.file].push(n);
+        });
+        
+        const COLS = 6;
+        const PADDING = 40;
+        const clusterLayout = {};
+        
+        let currentX = 50;
+        let currentY = 50;
+        let maxRowH = 0;
+        
+        const sortedFiles = Object.keys(nodesByFile).sort((a, b) => {
+            const impA = nodesByFile[a].reduce((sum, n) => sum + n.importance, 0);
+            const impB = nodesByFile[b].reduce((sum, n) => sum + n.importance, 0);
+            return impB - impA;
+        });
+
+        let colIdx = 0;
+        sortedFiles.forEach(file => {
+            const fNodes = nodesByFile[file];
+            if (fNodes.length === 0) return;
+            
+            const area = fNodes.length * 2000; 
+            const side = Math.max(120, Math.sqrt(area));
+            
+            clusterLayout[file] = {
+                x: currentX,
+                y: currentY,
+                w: side,
+                h: side
+            };
+            
+            fNodes.forEach(n => {
+                const r = 6 + ((n.importance - 3) / 50) * 18;
+                n.r = Math.max(6, Math.min(24, r));
+                n.x = currentX + 20 + Math.random() * (side - 40);
+                n.y = currentY + 30 + Math.random() * (side - 60);
+            });
+            
+            currentX += side + PADDING;
+            maxRowH = Math.max(maxRowH, side);
+            
+            colIdx++;
+            if (colIdx >= COLS) {
+                colIdx = 0;
+                currentX = 50;
+                currentY += maxRowH + PADDING;
+                maxRowH = 0;
+            }
+        });
+        
+        const svg = document.getElementById('graphSvg');
+        const clusterGroup = document.getElementById('clusterGroup');
+        const nodeGroup = document.getElementById('nodeGroup');
+        const edgeGroup = document.getElementById('edgeGroup');
+        
+        Object.keys(clusterLayout).forEach(file => {
+            const layout = clusterLayout[file];
+            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute('x', layout.x);
+            rect.setAttribute('y', layout.y);
+            rect.setAttribute('width', layout.w);
+            rect.setAttribute('height', layout.h);
+            rect.setAttribute('class', 'file-cluster');
+            
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute('x', layout.x + 10);
+            text.setAttribute('y', layout.y + 20);
+            text.setAttribute('class', 'cluster-label');
+            text.textContent = file;
+
+            const countText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            countText.setAttribute('x', layout.x + layout.w - 10);
+            countText.setAttribute('y', layout.y + 20);
+            countText.setAttribute('class', 'cluster-label');
+            countText.setAttribute('text-anchor', 'end');
+            countText.textContent = nodesByFile[file].length;
+            
+            g.appendChild(rect);
+            g.appendChild(text);
+            g.appendChild(countText);
+            clusterGroup.appendChild(g);
+        });
+        
+        const nodeMap = {};
+        
+        nodesData.forEach(n => {
+            if (!n.x) return;
+            nodeMap[n.id] = n;
+            
+            const el = document.createElementNS("http://www.w3.org/2000/svg", 
+                n.kind === 'function' ? 'circle' : (n.kind === 'class' ? 'rect' : 'polygon')
+            );
+            
+            el.setAttribute('class', 'node');
+            el.setAttribute('data-id', n.id);
+            
+            if (n.kind === 'function') {
+                el.setAttribute('cx', n.x);
+                el.setAttribute('cy', n.y);
+                el.setAttribute('r', n.r);
+            } else if (n.kind === 'class') {
+                el.setAttribute('x', n.x - n.r);
+                el.setAttribute('y', n.y - n.r);
+                el.setAttribute('width', n.r * 2);
+                el.setAttribute('height', n.r * 2);
+                el.setAttribute('rx', 4);
+                el.setAttribute('ry', 4);
+            } else {
+                const s = n.r * 1.4;
+                el.setAttribute('points', `${n.x},${n.y - s} ${n.x + s},${n.y} ${n.x},${n.y + s} ${n.x - s},${n.y}`);
+            }
+            
+            nodeGroup.appendChild(el);
+            n.el = el;
+        });
+        
+        edgesData.forEach(e => {
+            const source = nodeMap[e.source];
+            const target = nodeMap[e.target];
+            if (!source || !target) return;
+            
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute('class', `edge ${e.type === 'inherits' ? 'inherits' : ''}`);
+            path.setAttribute('data-source', e.source);
+            path.setAttribute('data-target', e.target);
+            
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const dr = Math.sqrt(dx * dx + dy * dy);
+            
+            const d = `M${source.x},${source.y} A${dr},${dr} 0 0,1 ${target.x},${target.y}`;
+            path.setAttribute('d', d);
+            
+            edgeGroup.appendChild(path);
+            e.el = path;
+
+            if (e.type === 'inherits') {
+                const innerPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                innerPath.setAttribute('class', 'edge inherits-inner');
+                innerPath.setAttribute('d', d);
+                edgeGroup.appendChild(innerPath);
+                e.innerEl = innerPath;
+            }
+        });
+        
+        const detailPanel = document.getElementById('detailPanel');
+        
+        nodeGroup.addEventListener('mouseover', e => {
+            if (e.target.classList.contains('node')) {
+                const id = e.target.getAttribute('data-id');
+                const relatedNodes = new Set([id]);
+                
+                edgesData.forEach(edge => {
+                    if (edge.source === id || edge.target === id) {
+                        relatedNodes.add(edge.source);
+                        relatedNodes.add(edge.target);
+                        if(edge.el) edge.el.classList.add('highlighted');
+                        if(edge.innerEl) edge.innerEl.classList.add('highlighted');
+                    } else {
+                        if(edge.el) edge.el.classList.add('faded');
+                        if(edge.innerEl) edge.innerEl.classList.add('faded');
+                    }
+                });
+                
+                nodesData.forEach(n => {
+                    if (n.el) {
+                        if (relatedNodes.has(n.id)) {
+                            n.el.classList.add('highlighted');
+                            n.el.classList.remove('faded');
+                        } else {
+                            n.el.classList.add('faded');
+                            n.el.classList.remove('highlighted');
+                        }
+                    }
+                });
+                
+                clusterGroup.classList.add('faded');
+            }
+        });
+        
+        nodeGroup.addEventListener('mouseout', e => {
+            if (e.target.classList.contains('node')) {
+                edgesData.forEach(edge => {
+                    if(edge.el) {
+                        edge.el.classList.remove('highlighted');
+                        edge.el.classList.remove('faded');
+                    }
+                    if(edge.innerEl) {
+                        edge.innerEl.classList.remove('highlighted');
+                        edge.innerEl.classList.remove('faded');
+                    }
+                });
+                nodesData.forEach(n => {
+                    if (n.el) {
+                        n.el.classList.remove('highlighted');
+                        n.el.classList.remove('faded');
+                    }
+                });
+                clusterGroup.classList.remove('faded');
+            }
+        });
+        
+        nodeGroup.addEventListener('click', e => {
+            if (e.target.classList.contains('node')) {
+                const id = e.target.getAttribute('data-id');
+                const n = nodeMap[id];
+                
+                document.getElementById('panelName').textContent = n.name;
+                document.getElementById('panelKind').textContent = n.kind;
+                document.getElementById('panelFile').textContent = n.file;
+                document.getElementById('panelRole').textContent = n.role;
+                document.getElementById('panelImportance').textContent = n.importance.toFixed(2);
+                
+                detailPanel.classList.add('open');
+            }
+        });
+        
+        document.getElementById('closePanel').addEventListener('click', () => {
+            detailPanel.classList.remove('open');
+        });
+        
+        let scale = 1;
+        let panX = 0;
+        let panY = 0;
+        let isDragging = false;
+        let startX, startY;
+        
+        const graphContent = document.getElementById('graphContent');
+        const container = document.getElementById('graphContainer');
+        
+        function updateTransform() {
+            graphContent.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+        }
+        
+        container.addEventListener('mousedown', e => {
+            if(e.button !== 0) return;
+            isDragging = true;
+            startX = e.clientX - panX;
+            startY = e.clientY - panY;
+        });
+        
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            panX = e.clientX - startX;
+            panY = e.clientY - startY;
+            updateTransform();
+        });
+        
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+        
+        container.addEventListener('wheel', e => {
+            e.preventDefault();
+            const xs = (e.clientX - panX) / scale;
+            const ys = (e.clientY - panY) / scale;
+            
+            const delta = -e.deltaY;
+            (delta > 0) ? (scale *= 1.1) : (scale /= 1.1);
+            scale = Math.max(0.1, Math.min(scale, 10));
+            
+            panX = e.clientX - xs * scale;
+            panY = e.clientY - ys * scale;
+            
+            updateTransform();
+        }, {passive: false});
+        
+        document.getElementById('zoomIn').addEventListener('click', () => {
+            scale *= 1.2;
+            updateTransform();
+        });
+        
+        document.getElementById('zoomOut').addEventListener('click', () => {
+            scale /= 1.2;
+            updateTransform();
+        });
+        
+        document.getElementById('zoomFit').addEventListener('click', () => {
+            scale = 0.5;
+            panX = 100;
+            panY = 100;
+            updateTransform();
+        });
+        
+        document.getElementById('themeToggle').addEventListener('click', () => {
+            const html = document.documentElement;
+            if (html.getAttribute('data-theme') === 'dark') {
+                html.setAttribute('data-theme', 'light');
+            } else {
+                html.setAttribute('data-theme', 'dark');
+            }
+        });
+        
+        const emptyState = document.getElementById('emptyState');
+        let emptyStateVisible = false;
+        document.getElementById('emptyStateToggle').addEventListener('click', (e) => {
+            emptyStateVisible = !emptyStateVisible;
+            if(emptyStateVisible) {
+                emptyState.style.display = 'flex';
+                e.target.textContent = 'Hide Empty State';
+            } else {
+                emptyState.style.display = 'none';
+                e.target.textContent = 'Show Empty State';
+            }
+        });
+        
+        setTimeout(() => {
+            scale = 0.4;
+            panX = 100;
+            panY = 100;
+            updateTransform();
+        }, 100);
+    </script>
+</body>
+</html>
