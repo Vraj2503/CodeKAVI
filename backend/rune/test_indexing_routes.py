@@ -128,6 +128,7 @@ def pipeline(monkeypatch):
         mermaid={"file_level": "", "module_level": ""},
         selected_files=[],
         nn_models=[],
+        symbol_graph={"nodes": [], "edges": []},
     )
 
     async def fake_pipeline(*args, **kwargs):
