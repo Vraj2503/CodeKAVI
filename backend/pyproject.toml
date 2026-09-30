@@ -64,7 +64,13 @@ no_implicit_optional = true
 testpaths = ["rune"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# Integration tests call live services and spend quota. backend/.env holds real credentials,
+# so "skip when unconfigured" is not enough on its own: deselect them unless asked for with
+# `pytest rune/ -m integration` (a later -m replaces this one).
+addopts = "-v --tb=short -m 'not integration'"
+markers = [
+    "integration: calls live services or needs downloaded models; deselected by default, run with -m integration",
+]
 
 # ─────────────────────────────────────────
 # coverage
