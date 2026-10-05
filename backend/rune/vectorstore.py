@@ -275,27 +275,35 @@ class ZillizClient:
         repo_id: str,
         limit: int = 5,
         layer_filter: str | None = None,
+        embedding_identity: str = "cloudflare",
+        document_prefix: str | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Embeds the query using Cloudflare, searches Zilliz, and returns the
-        top 'limit' matching code chunks.
-        """
+        """Embed with the index's recorded provider and search only its vector space."""
+        # Import here to avoid a module-level embedding/vectorstore cycle.
+        from rune.embedding import (
+            EmbeddingProviderUnavailable,
+            get_embedding_provider,
+            validate_embedding_identity,
+        )
+
+        try:
+            embedding_identity = validate_embedding_identity(embedding_identity)
+        except ValueError as e:
+            raise EmbeddingProviderUnavailable("unknown", "embedding_identity_invalid") from e
+        provider = get_embedding_provider(embedding_identity, document_prefix=document_prefix)
+
         if not self.collection:
             self.collection = self.setup_collection()
 
         assert self.collection is not None
 
-        # Import providers here to avoid circular imports
-        from rune.embedding import CloudflareEmbedding
-
-        cf_client = CloudflareEmbedding()
-
-        # 1. Embed query with Cloudflare
+        # 1. Embed the query in exactly the embedding space that built this index.
         try:
-            q_cf_texts = await cf_client.embed_texts([query])
+            query_vector = await provider.embed_query(query)
+        except EmbeddingProviderUnavailable:
+            raise
         except Exception as e:
-            logger.error(f"Error during query embedding: {e}")
-            return []
+            raise EmbeddingProviderUnavailable(embedding_identity, "embedding_query_failed") from e
 
         search_params = {"metric_type": "COSINE", "params": {}}
         repo_id = _validate_repo_id(repo_id)
@@ -334,26 +342,25 @@ class ZillizClient:
                 logger.warning(f"Search failed for {provider_name}: {e}")
                 return []
 
-        # 2. Search Cloudflare namespace
-        if isinstance(q_cf_texts, list) and q_cf_texts:
-            cf_results = await asyncio.to_thread(do_search, q_cf_texts[0], "cloudflare")
-            for hits in cf_results:
-                for hit in hits:
-                    all_hits.append(
-                        {
-                            "file_path": hit.entity.get("file_path"),
-                            "role": hit.entity.get("role"),
-                            "language": hit.entity.get("language", ""),
-                            "layer": hit.entity.get("layer", ""),
-                            "start_line": hit.entity.get("start_line", 0),
-                            "end_line": hit.entity.get("end_line", 0),
-                            "text": hit.entity.get("text"),
-                            "provider": hit.entity.get("provider"),
-                            "score": hit.distance,
-                        }
-                    )
+        # 2. Search only the matching provider/model/pooling namespace.
+        provider_results = await asyncio.to_thread(do_search, query_vector, embedding_identity)
+        for hits in provider_results:
+            for hit in hits:
+                all_hits.append(
+                    {
+                        "file_path": hit.entity.get("file_path"),
+                        "role": hit.entity.get("role"),
+                        "language": hit.entity.get("language", ""),
+                        "layer": hit.entity.get("layer", ""),
+                        "start_line": hit.entity.get("start_line", 0),
+                        "end_line": hit.entity.get("end_line", 0),
+                        "text": hit.entity.get("text"),
+                        "provider": hit.entity.get("provider"),
+                        "score": hit.distance,
+                    }
+                )
 
-        # 3. Combine and sort
+        # 3. Sort the one compatible provider namespace
         # Distance metric is COSINE in Milvus/Zilliz: hit.distance IS cosine similarity — higher is more similar.
         all_hits.sort(key=lambda x: x["score"], reverse=True)
 

@@ -246,7 +246,16 @@ class FakeZilliz:
     def __init__(self) -> None:
         self.searched: list[str] = []
 
-    async def search(self, query, repo_id, limit=5, layer_filter=None):
+    async def search(
+        self,
+        query,
+        repo_id,
+        limit=5,
+        layer_filter=None,
+        embedding_identity="cloudflare",
+        document_prefix=None,
+        **kwargs,
+    ):
         self.searched.append(repo_id)
         return []
 

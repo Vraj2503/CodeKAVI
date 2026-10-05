@@ -21,7 +21,7 @@ points at the analysis whose vectors it shares, and its status is read there.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -45,6 +45,13 @@ class IndexOutcome:
     attempted: int = 0
     inserted: int = 0
     error: str | None = None  # short reason code when indexing could not run at all
+    # Excluded from equality so Phase-0 tests comparing counts keep their
+    # useful small assertions while callers can still persist this metadata.
+    embedding_identity: str | None = field(default=None, compare=False)
+    embedding_seconds: float = field(default=0.0, compare=False)
+    insert_seconds: float = field(default=0.0, compare=False)
+    fallback_from: str | None = field(default=None, compare=False)
+    document_prefix: str = field(default="", compare=False)
 
 
 def make_status(
@@ -53,6 +60,11 @@ def make_status(
     attempted: int | None = None,
     inserted: int | None = None,
     reason: str | None = None,
+    embedding_identity: str | None = None,
+    embedding_seconds: float | None = None,
+    insert_seconds: float | None = None,
+    fallback_from: str | None = None,
+    document_prefix: str | None = None,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {"status": status, "updated_at": datetime.now(UTC).isoformat(timespec="seconds")}
     if attempted is not None:
@@ -61,6 +73,16 @@ def make_status(
         record["chunks_inserted"] = inserted
     if reason:
         record["reason"] = reason
+    if embedding_identity:
+        record["embedding_identity"] = embedding_identity
+    if embedding_seconds is not None:
+        record["embedding_seconds"] = round(embedding_seconds, 3)
+    if insert_seconds is not None:
+        record["insert_seconds"] = round(insert_seconds, 3)
+    if fallback_from:
+        record["fallback_from"] = fallback_from
+    if document_prefix:
+        record["document_prefix"] = document_prefix
     return record
 
 
@@ -73,7 +95,17 @@ def status_from_outcome(outcome: IndexOutcome) -> dict[str, Any]:
         status = PARTIAL
     else:
         status = COMPLETE
-    return make_status(status, attempted=outcome.attempted, inserted=outcome.inserted, reason=outcome.error)
+    return make_status(
+        status,
+        attempted=outcome.attempted,
+        inserted=outcome.inserted,
+        reason=outcome.error,
+        embedding_identity=outcome.embedding_identity,
+        embedding_seconds=outcome.embedding_seconds if outcome.embedding_identity else None,
+        insert_seconds=outcome.insert_seconds if outcome.embedding_identity else None,
+        fallback_from=outcome.fallback_from,
+        document_prefix=outcome.document_prefix if outcome.document_prefix else None,
+    )
 
 
 def vector_repo_id(result: dict[str, Any] | None, repo_id: str) -> str:
@@ -87,6 +119,12 @@ async def resolve_index_status(cache: Any, result: dict[str, Any] | None, repo_i
     if owner != repo_id:
         result = await run_sync(cache.get, owner)
     return (result or {}).get("index_status")
+
+
+async def resolve_embedding_identity(cache: Any, result: dict[str, Any] | None, repo_id: str) -> str:
+    """Embedding space for the vector owner; old status records mean Cloudflare."""
+    status = await resolve_index_status(cache, result, repo_id)
+    return (status or {}).get("embedding_identity") or "cloudflare"
 
 
 async def record_index_status(cache: Any, repo_id: str, status: dict[str, Any]) -> None:
@@ -118,6 +156,26 @@ def _elapsed(updated_at: Any) -> str | None:
     if minutes < 48 * 60:
         return f"{minutes // 60} hours"
     return f"{minutes // (24 * 60)} days"
+
+
+def chat_embedding_unavailable_message(identity: str, reason: str = "") -> str:
+    """Explain a provider mismatch/outage rather than pretending a search was empty."""
+    if reason == "local_document_prefix_mismatch":
+        return (
+            f"The document prefix used to index this repository does not match the current configuration ({identity}). "
+            "Re-analyze the repository or restore LOCAL_EMBEDDING_DOCUMENT_PREFIX."
+        )
+    if reason == "local_tokenizer_unavailable":
+        return (
+            f"The tokenizer for local embedding model ({identity}) is unavailable. "
+            "Download it or re-analyze the repository with a configured provider."
+        )
+    if identity == "cloudflare":
+        return "The Cloudflare embedding service that indexed this repository is unavailable or not configured."
+    return (
+        f"The local embedding model ({identity}) that indexed this repository is unavailable or its "
+        "configuration changed. Start that model again or re-analyze the repository with a configured provider."
+    )
 
 
 def chat_unavailable_message(status: dict[str, Any] | None) -> str:
