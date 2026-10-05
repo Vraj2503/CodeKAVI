@@ -1,8 +1,10 @@
 import asyncio
+import bisect
 import hashlib
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from dotenv import load_dotenv
@@ -10,7 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from rune.config import detect_language
 from rune.config import detect_layer as _detect_layer
-from rune.embedding import CloudflareEmbedding
+from rune.embedding import EmbeddingProviderUnavailable, select_index_embedding_provider
 from rune.exceptions import IndexingError
 from rune.index_status import INTERRUPTED, IndexOutcome, make_status, record_index_status, status_from_outcome
 from rune.settings import settings
@@ -61,14 +63,95 @@ def _chunk_line_spans(content: str, chunks: list[str], file_path: str) -> list[t
     return spans
 
 
+def _local_token_chunks(content: str, embedder: Any) -> list[str]:
+    """Split exact source substrings so each local request fits its tokenizer.
+
+    Tokenizes content in a single pass with token character offsets (S1), preserving
+    exact slices of content for _chunk_line_spans.
+    """
+    if not content:
+        return []
+
+    doc_prefix_tokens = embedder.document_token_count("")
+    chunk_tokens = getattr(embedder, "chunk_tokens", 512)
+    target_tokens = max(16, chunk_tokens - doc_prefix_tokens)
+    overlap_tokens = max(0, min(settings.local_embedding_chunk_overlap_tokens, target_tokens - 1))
+
+    encoding = embedder.tokenizer.encode(content)
+    text_offsets = [o for o in encoding.offsets if o[0] < o[1]]
+    num_tokens = len(text_offsets)
+
+    if num_tokens <= target_tokens:
+        return [content]
+
+    chunks: list[str] = []
+    t_start = 0
+    starts = [o[0] for o in text_offsets]
+    ends = [o[1] for o in text_offsets]
+
+    while t_start < num_tokens:
+        t_end = min(t_start + target_tokens, num_tokens)
+        char_start = starts[t_start]
+        char_end = ends[t_end - 1]
+
+        if t_end < num_tokens:
+            boundary = -1
+            for sep in ("\n\n", "\n"):
+                pos = content.rfind(sep, char_start + 1, char_end)
+                if pos > char_start + (char_end - char_start) // 2:
+                    boundary = pos + len(sep) if pos + len(sep) <= char_end else pos
+                    break
+            if boundary <= char_start:
+                pos = content.rfind(" ", char_start + 1, char_end)
+                if pos > char_start:
+                    boundary = pos
+            if boundary > char_start:
+                char_end = boundary
+
+        chunk = content[char_start:char_end]
+        if not chunk:
+            break
+        chunks.append(chunk)
+
+        if t_end >= num_tokens:
+            break
+
+        t_cut = bisect.bisect_left(ends, char_end, lo=t_start, hi=t_end)
+        if overlap_tokens == 0:
+            t_start = max(t_start + 1, t_cut)
+        else:
+            t_start = max(t_start + 1, t_cut - overlap_tokens)
+            if t_start < num_tokens:
+                c_start = starts[t_start]
+                nl = content.find("\n", c_start, min(char_end, c_start + 100))
+                if nl != -1 and nl + 1 < char_end:
+                    idx = bisect.bisect_left(starts, nl + 1, lo=t_start, hi=t_cut)
+                    if idx < t_cut:
+                        t_start = idx
+
+    return chunks
+
+
+def _chunks_for_provider(content: str, embedder: Any) -> list[str]:
+    """Keep Cloudflare's character splitter unchanged; local uses tokenizer limits."""
+    if not getattr(embedder, "is_local", False):
+        return RecursiveCharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=200,
+            length_function=len,
+            is_separator_regex=False,
+        ).split_text(content)
+    return _local_token_chunks(content, embedder)
+
+
 async def _flush_batch(
     collection: Any,
-    embedder: CloudflareEmbedding,
+    embedder: Any,
     repo_id: str,
     texts: list[str],
     metadata: list[dict[str, Any]],
-) -> int:
-    """Embed and insert one batch; return how many rows were persisted.
+) -> tuple[int, float, float]:
+    """Embed and insert one batch; return rows plus embedding/insert seconds.
 
     The caller hands this batch over and never touches ``texts`` or
     ``metadata`` again, so nothing mutable is shared across the awaits below
@@ -76,8 +159,12 @@ async def _flush_batch(
     logged and reported as 0 rows persisted rather than raised.
     """
     batch_len = len(texts)
+    embedding_seconds = 0.0
+    insert_seconds = 0.0
     try:
+        embedding_started = time.perf_counter()
         embeddings = await embedder.embed_texts(texts)
+        embedding_seconds = time.perf_counter() - embedding_started
         # M-23: insert_data below zips embeddings against metadata
         # positionally with no length check — if Cloudflare returns
         # fewer/misordered vectors, chunks get stored against the wrong
@@ -85,7 +172,7 @@ async def _flush_batch(
         # Fail the whole batch loudly instead so it's counted as lost.
         if len(embeddings) != batch_len:
             raise IndexingError(f"embedding count {len(embeddings)} != texts {batch_len} for {repo_id}")
-        provider_name = "cloudflare"
+        provider_name = getattr(embedder, "identity", "cloudflare")
 
         insert_data = [
             [m["id"] for m in metadata],
@@ -101,19 +188,21 @@ async def _flush_batch(
             embeddings,
         ]
 
+        insert_started = time.perf_counter()
         mr = await asyncio.to_thread(collection.insert, insert_data)
+        insert_seconds = time.perf_counter() - insert_started
         # M-14: don't assume a full insert just because insert() didn't
         # raise — a partial insert (fewer primary_keys than rows sent)
         # would otherwise silently count as "N/N inserted".
         verified = len(getattr(mr, "primary_keys", []) or [])
         if verified and verified != batch_len:
             logger.warning(f"Partial insert for {repo_id}: {verified}/{batch_len} rows persisted")
-        return verified or batch_len
+        return verified or batch_len, embedding_seconds, insert_seconds
 
     except Exception as e:
         logger.error(f"Failed batch of {batch_len} chunks after {MAX_RETRIES} attempts: {e}")
         logger.warning(f"Lost {batch_len} chunks: {e}")
-        return 0
+        return 0, embedding_seconds, insert_seconds
 
 
 async def index_repository(
@@ -127,38 +216,37 @@ async def index_repository(
     """
     logger.info(f"Starting vector indexing for repo {repo_id}…")
 
+    # Select and (for LM Studio) preflight the provider before clearing this
+    # repo. A local outage can therefore fall back for the *entire* index.
+    try:
+        selection = await select_index_embedding_provider(repo_id)
+    except EmbeddingProviderUnavailable as e:
+        logger.warning("Embedding provider unavailable before indexing %s: %s", repo_id, e.reason)
+        return IndexOutcome(error=e.reason)
+    embedder = selection.provider
+    embedding_identity = getattr(embedder, "identity", "cloudflare")
+
     # 1. Setup Collection & Client
     try:
         collection = zilliz_client.setup_collection()
     except Exception as e:
         logger.error(f"Failed to setup Zilliz collection: {e}")
-        return IndexOutcome(error="vector_store_unavailable")
+        return IndexOutcome(error="vector_store_unavailable", embedding_identity=embedding_identity)
 
-    try:
-        cf_client = CloudflareEmbedding()
-    except ValueError as e:
-        logger.warning(f"Embedding configuration missing: {e}. Skipping indexing.")
-        return IndexOutcome(error="embedding_not_configured")
-
-    # Clear old data for this repo
+    # Clear old data for this repo only after provider selection succeeds.
     zilliz_client.clear_repo(repo_id)
 
-    # 2. Text Splitter - optimized for code
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=200,
-        length_function=len,
-        is_separator_regex=False,
-    )
-
     # Batch accumulators
+    batch_size = settings.local_embedding_batch_size if getattr(embedder, "is_local", False) else BATCH_SIZE
     batch_texts: list[str] = []
     batch_metadata: list[dict[str, Any]] = []
     attempted = 0
     inserted = 0
+    embedding_seconds = 0.0
+    insert_seconds = 0.0
 
     async def dispatch() -> None:
-        nonlocal batch_texts, batch_metadata, attempted, inserted
+        nonlocal batch_texts, batch_metadata, attempted, inserted, embedding_seconds, insert_seconds
         if not batch_texts:
             return
         # Snapshot-and-hand-off: take the accumulated batch and start fresh
@@ -169,11 +257,21 @@ async def index_repository(
         batch_texts, batch_metadata = [], []
         attempted += len(texts)
 
-        persisted = await _flush_batch(collection, cf_client, repo_id, texts, metadata)
+        persisted, batch_embedding_seconds, batch_insert_seconds = await _flush_batch(
+            collection, embedder, repo_id, texts, metadata
+        )
+        embedding_seconds += batch_embedding_seconds
+        insert_seconds += batch_insert_seconds
         inserted += persisted
         if persisted:
-            logger.info(f"  Inserted {persisted} chunks via cloudflare (Total: {inserted}/{attempted})")
-            if settings.indexer_batch_delay_s > 0:
+            logger.info(
+                "  Inserted %s chunks via %s (Total: %s/%s)",
+                persisted,
+                embedding_identity,
+                inserted,
+                attempted,
+            )
+            if not getattr(embedder, "is_local", False) and settings.indexer_batch_delay_s > 0:
                 await asyncio.sleep(settings.indexer_batch_delay_s)
 
     # 3. Process each file
@@ -214,7 +312,7 @@ async def index_repository(
             logger.warning(f"File skipped in indexer: content is empty for {file_path}")
             continue
 
-        chunks = text_splitter.split_text(content)
+        chunks = await asyncio.to_thread(_chunks_for_provider, content, embedder)
         spans = _chunk_line_spans(content, chunks, file_path)
 
         # Consistent stable hash for file
@@ -223,9 +321,10 @@ async def index_repository(
         for i, (chunk, (start_line, end_line)) in enumerate(zip(chunks, spans, strict=True)):
             chunk_id = f"{repo_id[:20]}_{file_hash}_{i}"
 
-            encoded_chunk = chunk.encode("utf-8")
-            if len(encoded_chunk) > 65000:
-                chunk = encoded_chunk[:65000].decode("utf-8", "ignore")
+            # Apply 65,000-byte cap on stored text for Zilliz VARCHAR(65535) limit (R4b)
+            encoded = chunk.encode("utf-8")
+            if len(encoded) > 65000:
+                chunk = encoded[:65000].decode("utf-8", "ignore")
 
             batch_texts.append(chunk)
             batch_metadata.append(
@@ -241,7 +340,7 @@ async def index_repository(
                 }
             )
 
-            if len(batch_texts) >= BATCH_SIZE:
+            if len(batch_texts) >= batch_size:
                 await dispatch()
 
     # Flush remaining
@@ -257,7 +356,15 @@ async def index_repository(
     else:
         logger.info(summary)
 
-    return IndexOutcome(attempted=attempted, inserted=inserted)
+    return IndexOutcome(
+        attempted=attempted,
+        inserted=inserted,
+        embedding_identity=embedding_identity,
+        document_prefix=getattr(embedder, "document_prefix", ""),
+        embedding_seconds=embedding_seconds,
+        insert_seconds=insert_seconds,
+        fallback_from=selection.fallback_from,
+    )
 
 
 async def index_repository_and_record(

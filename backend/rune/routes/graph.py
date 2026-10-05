@@ -12,14 +12,16 @@ module formats, still used by ArchitectureGraph.tsx / DependencyGraph.tsx).
 
 import hashlib
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
+from rune.embedding import EmbeddingProviderUnavailable
 from rune.graph_assembler import assemble_graph
-from rune.index_status import vector_repo_id
+from rune.index_status import resolve_embedding_identity, resolve_index_status, vector_repo_id
 from rune.limiter import per_minute
 from rune.quota import get_token_tracker
 from rune.routes._errors import internal_error
@@ -27,6 +29,8 @@ from rune.routes.dependencies import get_cache
 from rune.routes.visualize import _load_repo
 from rune.tour_generator import assemble_diff_tour, assemble_question_tour, assemble_tour
 from rune.utils import run_sync
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -95,7 +99,20 @@ async def get_repo_question_tour(
 
     try:
         graph = await run_sync(assemble_graph, result)
-        search_results = await zilliz_client.search(q, vector_repo_id(result, repo_id), limit=8)
+        try:
+            embedding_identity = await resolve_embedding_identity(cache, result, repo_id)
+            index_status = await resolve_index_status(cache, result, repo_id)
+            doc_prefix = (index_status or {}).get("document_prefix")
+            search_results = await zilliz_client.search(
+                q,
+                vector_repo_id(result, repo_id),
+                limit=8,
+                embedding_identity=embedding_identity,
+                document_prefix=doc_prefix,
+            )
+        except EmbeddingProviderUnavailable as e:
+            logger.warning("Vector search unavailable for tour (%s): %s", repo_id, e)
+            search_results = []
         payload = assemble_question_tour(graph, search_results)
     except Exception as e:
         raise internal_error(e, context="get_repo_question_tour: assembly failed") from e
@@ -184,7 +201,16 @@ async def get_repo_tour_node_narration(
     narration = None
     if zilliz_client.uri and zilliz_client.token:
         try:
-            results = await zilliz_client.search(node_id, vector_repo_id(result, repo_id), limit=8)
+            embedding_identity = await resolve_embedding_identity(cache, result, repo_id)
+            index_status = await resolve_index_status(cache, result, repo_id)
+            doc_prefix = (index_status or {}).get("document_prefix")
+            results = await zilliz_client.search(
+                node_id,
+                vector_repo_id(result, repo_id),
+                limit=8,
+                embedding_identity=embedding_identity,
+                document_prefix=doc_prefix,
+            )
             chunks = [r for r in results if r.get("file_path") == node_id][:3]
             if chunks:
                 from rune.llm import get_provider

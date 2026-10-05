@@ -12,8 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
+from rune.embedding import EmbeddingProviderUnavailable
 from rune.exceptions import RateLimitError
-from rune.index_status import chat_unavailable_message, resolve_index_status, vector_repo_id
+from rune.index_status import (
+    chat_embedding_unavailable_message,
+    chat_unavailable_message,
+    resolve_embedding_identity,
+    resolve_index_status,
+    vector_repo_id,
+)
 from rune.limiter import per_minute
 from rune.llm import get_provider
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
@@ -148,19 +155,33 @@ async def chat_repo(
         # 2. Retrieve Context from Zilliz (network I/O, now natively async).
         # A deduplicated analysis searches the vectors it shares with its origin.
         search_repo_id = vector_repo_id(result, repo_id)
-        if is_technical:
-            results = await zilliz_client.search(
-                body.query,
-                search_repo_id,
-                limit=8,
-                layer_filter="exclude_frontend",
-            )
-        else:
-            results = await zilliz_client.search(
-                body.query,
-                search_repo_id,
-                limit=5,
-            )
+        embedding_identity = await resolve_embedding_identity(cache, result, repo_id)
+        index_status = await resolve_index_status(cache, result, repo_id)
+        doc_prefix = (index_status or {}).get("document_prefix")
+        try:
+            if is_technical:
+                results = await zilliz_client.search(
+                    body.query,
+                    search_repo_id,
+                    limit=8,
+                    layer_filter="exclude_frontend",
+                    embedding_identity=embedding_identity,
+                    document_prefix=doc_prefix,
+                )
+            else:
+                results = await zilliz_client.search(
+                    body.query,
+                    search_repo_id,
+                    limit=5,
+                    embedding_identity=embedding_identity,
+                    document_prefix=doc_prefix,
+                )
+        except EmbeddingProviderUnavailable as e:
+            return {
+                "success": False,
+                "error": chat_embedding_unavailable_message(e.identity, e.reason),
+                "index_status": index_status,
+            }
 
         if not results:
             # Say why there's nothing to search (still indexing, failed, ...)

@@ -96,8 +96,14 @@ def fakes(monkeypatch):
     collection = FakeCollection()
     zilliz = FakeZilliz(collection)
     embedder = FakeEmbedder()
+
+    async def _fake_select(repo_id: str = "", *args, **kwargs):
+        from rune.embedding import EmbeddingSelection
+
+        return EmbeddingSelection(embedder)
+
     monkeypatch.setattr(indexer, "zilliz_client", zilliz)
-    monkeypatch.setattr(indexer, "CloudflareEmbedding", lambda: embedder)
+    monkeypatch.setattr(indexer, "select_index_embedding_provider", _fake_select)
     monkeypatch.setattr(settings, "indexer_batch_delay_s", 0.0)
     return collection, embedder, zilliz
 

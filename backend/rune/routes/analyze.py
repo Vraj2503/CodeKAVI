@@ -24,6 +24,7 @@ from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.classifier import classify_files, summarize_roles
 from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
+from rune.embedding import indexing_embedding_is_configured
 from rune.file_selector import SmartFileSelector
 from rune.fingerprint import ChangeClassification
 from rune.graph import (
@@ -512,9 +513,7 @@ async def analyze(
         # L-15: gate on the credentials indexing actually uses (Cloudflare
         # embeddings + Zilliz), not gemini_api_key — otherwise we schedule an
         # index task that is guaranteed to no-op when Cloudflare creds are unset.
-        indexing_enabled = bool(
-            settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri
-        )
+        indexing_enabled = bool(settings.zilliz_uri and indexing_embedding_is_configured())
 
         # Store session and results in 3-tier cache (memory + Redis + Supabase)
         result_data = {
@@ -794,9 +793,7 @@ async def analyze_stream(
             nn_models = pipeline_result.nn_models
 
             # L-15: gate on the credentials indexing actually uses.
-            indexing_enabled = bool(
-                settings.cloudflare_account_id and settings.cloudflare_api_token and settings.zilliz_uri
-            )
+            indexing_enabled = bool(settings.zilliz_uri and indexing_embedding_is_configured())
 
             # Store session and results in 3-tier cache
             stream_result_data = {
