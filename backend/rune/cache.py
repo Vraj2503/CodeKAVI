@@ -307,7 +307,13 @@ class AnalysisCache:
                 f'"result_json": {json_str}}}'
             )
 
-            with httpx.Client(timeout=10.0) as client:
+            # The body is the whole analysis, often several MB. A flat 10s
+            # timeout failed the upload on a slow link ("The write operation
+            # timed out"), leaving the result, and its index_status, only in
+            # this process's memory. Connect fast; give the upload and the
+            # server's processing of a large JSON body room.
+            timeout = httpx.Timeout(10.0, write=120.0, read=60.0)
+            with httpx.Client(timeout=timeout) as client:
                 response = client.post(url, headers=headers, content=payload_str)
                 response.raise_for_status()
         except Exception as e:
