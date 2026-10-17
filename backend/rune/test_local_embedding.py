@@ -261,7 +261,7 @@ async def test_stored_text_byte_cap(fake_tokenizer, tmp_path, monkeypatch):
         model="text-embedding-bge-large-en-v1.5",
         tokenizer=fake_tokenizer,
     )
-    embedder.embed_texts = AsyncMock(return_value=[[0.1] * 1024])
+    monkeypatch.setattr(embedder, "embed_texts", AsyncMock(return_value=[[0.1] * 1024]))
 
     monkeypatch.setattr("rune.indexer.zilliz_client.setup_collection", lambda: collection)
     monkeypatch.setattr("rune.indexer.zilliz_client.clear_repo", lambda r: None)
@@ -582,7 +582,7 @@ async def test_index_repository_local_embedder(fake_tokenizer, tmp_path, monkeyp
         model="text-embedding-bge-large-en-v1.5",
         tokenizer=fake_tokenizer,
     )
-    fake_embedder.embed_texts = AsyncMock(return_value=[[0.05] * 1024])
+    monkeypatch.setattr(fake_embedder, "embed_texts", AsyncMock(return_value=[[0.05] * 1024]))
 
     monkeypatch.setattr(
         "rune.indexer.select_index_embedding_provider",
@@ -625,7 +625,8 @@ async def test_vectorstore_search_local_provider_filter(fake_tokenizer, monkeypa
         model="text-embedding-bge-large-en-v1.5",
         tokenizer=fake_tokenizer,
     )
-    embedder.embed_query = AsyncMock(return_value=[0.1] * 1024)
+    embed_query = AsyncMock(return_value=[0.1] * 1024)
+    monkeypatch.setattr(embedder, "embed_query", embed_query)
 
     mock_col = MagicMock()
     mock_col.search = MagicMock(return_value=[[]])
@@ -640,7 +641,7 @@ async def test_vectorstore_search_local_provider_filter(fake_tokenizer, monkeypa
             repo_id="0123456789ab",
             embedding_identity="bge-large-en-v1.5:cls",
         )
-        assert embedder.embed_query.call_count == 1
+        assert embed_query.call_count == 1
         search_args = mock_col.search.call_args[1]
         expr = search_args["expr"]
         assert "provider == 'bge-large-en-v1.5:cls'" in expr

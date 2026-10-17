@@ -301,7 +301,7 @@ class LocalEmbedding:
         )
         self.tokenizer_path = tokenizer_path if tokenizer_path is not None else settings.local_embedding_tokenizer_path
         self._custom_tokenizer = tokenizer
-        self._loaded_tokenizer = None
+        self._loaded_tokenizer: Any = None  # tokenizers.Tokenizer, imported on first use
         if not self.base_url or not self.model:
             raise ValueError("LOCAL_EMBEDDING_BASE_URL and LOCAL_EMBEDDING_MODEL must be configured")
         self.spec = _local_model_spec(
@@ -439,7 +439,7 @@ class LocalEmbedding:
 
 @dataclass(frozen=True)
 class EmbeddingSelection:
-    provider: object
+    provider: Any  # duck-typed: CloudflareEmbedding, LocalEmbedding, or a test fake
     fallback_from: str | None = None
 
 
@@ -463,7 +463,7 @@ def get_embedding_provider(identity: str, document_prefix: str | None = None):
     """Build or return the cached provider that produced ``identity``; never substitute another."""
     identity = validate_embedding_identity(identity)
     if identity == CLOUDFLARE_IDENTITY:
-        cache_key = ("cloudflare", settings.cloudflare_account_id, settings.cloudflare_api_token)
+        cache_key: tuple[Any, ...] = ("cloudflare", settings.cloudflare_account_id, settings.cloudflare_api_token)
         provider = _cached_providers.get(cache_key)
         if provider is None:
             provider = CloudflareEmbedding()
