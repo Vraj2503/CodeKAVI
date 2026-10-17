@@ -397,7 +397,12 @@ async def index_repository(
     if skipped_tests:
         logger.info(f"Left {skipped_tests} test/fixture files out of the index for {repo_id} (INDEX_EXCLUDE_TESTS)")
     lost = attempted - inserted
-    summary = f"Finished indexing for {repo_id}: {inserted}/{attempted} chunks inserted in {index_seconds:.1f}s"
+    # The breakdown lands in the log even if recording index_status fails.
+    # Inserts overlap embedding (T9), so the parts add up to more than the total.
+    summary = (
+        f"Finished indexing for {repo_id}: {inserted}/{attempted} chunks inserted in {index_seconds:.1f}s "
+        f"(embedding {embedding_seconds:.1f}s, inserts {insert_seconds:.1f}s)"
+    )
     if attempted == 0:
         logger.error(f"{summary} — no chunks were attempted; RAG will serve empty contexts for this repo")
     elif lost > 0:
