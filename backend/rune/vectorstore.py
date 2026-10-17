@@ -310,7 +310,8 @@ class ZillizClient:
 
         base_expr = f"repo_id == '{repo_id}'"
         if layer_filter == "exclude_frontend":
-            base_expr += ' and layer not in ["frontend", "test"]'
+            # "tests" is what the indexer stores (detect_layer / is_test_path); "test" never matched.
+            base_expr += ' and layer not in ["frontend", "tests"]'
 
         all_hits = []
         collection = self.collection

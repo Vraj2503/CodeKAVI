@@ -11,17 +11,22 @@ shows up as a column that no longer lines up with its ids.
 import asyncio
 import hashlib
 import logging
+import threading
+import time
 from typing import Any
 
 import pytest
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from rune import indexer
+from rune.config import is_test_path
 from rune.index_status import IndexOutcome
 from rune.settings import settings
 
 REPO_ID = "abcdef012345"
-TEXT_COL = 8  # position of the chunk text column in insert_data
+FILE_COL = 2  # positions of columns in insert_data
+LAYER_COL = 5
+TEXT_COL = 8
 
 
 def _source(tag: str, n_funcs: int) -> str:
@@ -192,6 +197,176 @@ async def test_an_unreachable_vector_store_reports_why_indexing_could_not_start(
 
     assert outcome == IndexOutcome(error="vector_store_unavailable")
     assert embedder.calls == []
+
+
+# ── Overlapped inserts (T9) ──
+
+
+class GatedCollection(FakeCollection):
+    """The first insert holds its worker thread until the gate opens."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = threading.Event()
+        self.first_insert_started = threading.Event()
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._lock = threading.Lock()
+
+    def insert(self, data: list[Any]) -> _MutationResult:
+        with self._lock:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            if not self.first_insert_started.is_set():
+                self.first_insert_started.set()
+                self.gate.wait(timeout=5)
+            else:
+                time.sleep(0.005)  # widen the window for a second insert to overlap
+            return super().insert(data)
+        finally:
+            with self._lock:
+                self.in_flight -= 1
+
+
+@pytest.fixture
+def gated(fakes, monkeypatch):
+    _, embedder, zilliz = fakes
+    collection = GatedCollection()
+    zilliz.collection = collection
+    return collection, embedder
+
+
+@pytest.mark.asyncio
+async def test_the_next_batch_is_embedded_while_the_previous_insert_runs(repo, gated):
+    root, _, profiles = repo
+    collection, embedder = gated
+    real_embed = embedder.embed_texts
+
+    async def embed_and_open_gate(texts: list[str]) -> list[list[float]]:
+        if len(embedder.calls) == 1:  # the second batch: the first insert is still held
+            collection.gate.set()
+        return await real_embed(texts)
+
+    embedder.embed_texts = embed_and_open_gate
+    started = time.perf_counter()
+
+    outcome = await indexer.index_repository(REPO_ID, profiles, root)
+
+    # Sequential flushing would hold the first insert until its 5s timeout.
+    assert time.perf_counter() - started < 4
+    assert outcome.inserted == outcome.attempted > 2 * indexer.BATCH_SIZE
+    assert outcome.index_seconds > 0
+
+
+@pytest.mark.asyncio
+async def test_inserts_never_run_concurrently_and_land_in_batch_order(repo, gated):
+    root, _, profiles = repo
+    collection, embedder = gated
+    collection.gate.set()
+
+    await indexer.index_repository(REPO_ID, profiles, root)
+
+    assert collection.max_in_flight == 1
+    inserted_ids = [chunk_id for data in collection.inserts for chunk_id in data[0]]
+    embedded_texts = [text for call in embedder.calls for text in call]
+    assert [text for data in collection.inserts for text in data[TEXT_COL]] == embedded_texts
+    assert len(inserted_ids) == len(set(inserted_ids))
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_leaves_no_insert_running_unattended(repo, gated):
+    root, _, profiles = repo
+    collection, _ = gated
+    before = asyncio.all_tasks()
+
+    task = asyncio.create_task(indexer.index_repository(REPO_ID, profiles, root))
+    await asyncio.to_thread(collection.first_insert_started.wait, 5)
+    task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        leftover = [t for t in asyncio.all_tasks() - before if t is not asyncio.current_task() and not t.done()]
+        assert leftover == []
+    finally:
+        collection.gate.set()  # let the held worker thread finish
+
+
+# ── Test files ──
+
+
+@pytest.fixture
+def repo_with_tests(tmp_path):
+    files = {"pkg/alpha.py": _source("alpha", 5), "tests/test_alpha.py": _source("check", 5)}
+    for rel, content in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return str(tmp_path), [{"path": rel, "role_label": "Core Logic"} for rel in files]
+
+
+@pytest.mark.asyncio
+async def test_test_files_are_left_out_of_the_index_by_default(repo_with_tests, fakes):
+    root, profiles = repo_with_tests
+    collection, _, _ = fakes
+
+    await indexer.index_repository(REPO_ID, profiles, root)
+
+    assert {path for data in collection.inserts for path in data[FILE_COL]} == {"pkg/alpha.py"}
+
+
+@pytest.mark.asyncio
+async def test_with_exclusion_off_test_files_are_indexed_under_the_tests_layer(repo_with_tests, fakes, monkeypatch):
+    root, profiles = repo_with_tests
+    collection, _, _ = fakes
+    monkeypatch.setattr(settings, "index_exclude_tests", False)
+
+    await indexer.index_repository(REPO_ID, profiles, root)
+
+    layers = {
+        path: layer for data in collection.inserts for path, layer in zip(data[FILE_COL], data[LAYER_COL], strict=True)
+    }
+    assert set(layers) == {"pkg/alpha.py", "tests/test_alpha.py"}
+    assert layers["tests/test_alpha.py"] == "tests"  # what chat's layer filter excludes
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/test_cache.py",
+        "backend/rune/test_indexer.py",
+        "frontend/components/__tests__/AnalysisProgress.test.tsx",
+        "packages/react-reconciler/src/__tests__/ReactIncremental-test.js",
+        "packages/react/src/ReactChildren-test.internal.js",
+        "pkg/handler_test.go",
+        "src/test/java/com/acme/HandlerTest.java",
+        "spec/models/user_spec.rb",
+        "app/widget.spec.ts",
+        "fixtures/dom/src/index.js",
+        "src/__mocks__/fs.js",
+        "conftest.py",
+        "src/setupTests.js",
+    ],
+)
+def test_test_paths_are_recognised(path):
+    assert is_test_path(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "packages/react-reconciler/src/ReactFiberHooks.js",
+        "packages/shared/ReactFeatureFlags.js",
+        "src/latest.js",
+        "tools/contest.py",
+        "scripts/jest/TestFlags.js",
+        "api/openapi-spec.yaml",
+        "docs/spec.md",
+        "backend/rune/attestation.py",
+    ],
+)
+def test_source_paths_are_not_mistaken_for_tests(path):
+    assert not is_test_path(path)
 
 
 # ── Chunk line numbers ──

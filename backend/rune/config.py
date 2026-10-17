@@ -4,6 +4,7 @@ during repository traversal.
 """
 
 import os
+import re
 
 # Base directory where cloned repos are stored
 CLONE_BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cloned_repos")
@@ -291,6 +292,42 @@ def detect_layer(file_path: str) -> str:
         if any(kw in path_lower for kw in keywords):
             return layer
     return "other"
+
+
+# Test code and test fixtures, by directory name or file-name convention.
+_TEST_DIRS = frozenset(
+    {
+        "test",
+        "tests",
+        "__tests__",
+        "__test__",
+        "__mocks__",
+        "__fixtures__",
+        "fixtures",
+        "e2e",
+        "testdata",
+        "__snapshots__",
+    }
+)
+# On the file name minus its last extension: test_x.py, test.py, x_test.go, x-test.js,
+# x-test.internal.js, x.test.ts, x.spec.ts, x_spec.rb. A separator must sit on both sides
+# of "test", so latest.js and contest.py are not tests, and "-spec" alone (openapi-spec.yaml) is not.
+_TEST_STEM = re.compile(r"^tests?([._-]|$)|[._-]tests?([._-]|$)|[._]specs?([._-]|$)", re.IGNORECASE)
+_CAMEL_TEST_STEM = re.compile(r"[a-z0-9]Tests?$")  # FooTest.java, FooTests.cs, setupTests.js
+
+
+def is_test_path(file_path: str) -> bool:
+    """Whether a repo-relative path is test code or a test fixture.
+
+    Path-based on purpose: detect_layer() returns the first keyword it meets, so
+    ``react-devtools-shared/src/__tests__/store-test.js`` comes back "utils"
+    (from "shared"), and the classifier's patterns miss fixture apps.
+    """
+    *dirs, name = file_path.replace("\\", "/").split("/")
+    if any(d.lower() in _TEST_DIRS for d in dirs) or name == "conftest.py":
+        return True
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    return bool(_TEST_STEM.search(stem) or _CAMEL_TEST_STEM.search(stem))
 
 
 # ─────────────────────────────────────────────
