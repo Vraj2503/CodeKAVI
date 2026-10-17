@@ -50,6 +50,9 @@ class IndexOutcome:
     embedding_identity: str | None = field(default=None, compare=False)
     embedding_seconds: float = field(default=0.0, compare=False)
     insert_seconds: float = field(default=0.0, compare=False)
+    # Wall time of the chunk/embed/insert loop. Inserts overlap embedding (T9),
+    # so this is less than embedding_seconds + insert_seconds.
+    index_seconds: float = field(default=0.0, compare=False)
     fallback_from: str | None = field(default=None, compare=False)
     document_prefix: str = field(default="", compare=False)
 
@@ -63,6 +66,7 @@ def make_status(
     embedding_identity: str | None = None,
     embedding_seconds: float | None = None,
     insert_seconds: float | None = None,
+    index_seconds: float | None = None,
     fallback_from: str | None = None,
     document_prefix: str | None = None,
 ) -> dict[str, Any]:
@@ -79,6 +83,8 @@ def make_status(
         record["embedding_seconds"] = round(embedding_seconds, 3)
     if insert_seconds is not None:
         record["insert_seconds"] = round(insert_seconds, 3)
+    if index_seconds is not None:
+        record["index_seconds"] = round(index_seconds, 3)
     if fallback_from:
         record["fallback_from"] = fallback_from
     if document_prefix:
@@ -103,6 +109,7 @@ def status_from_outcome(outcome: IndexOutcome) -> dict[str, Any]:
         embedding_identity=outcome.embedding_identity,
         embedding_seconds=outcome.embedding_seconds if outcome.embedding_identity else None,
         insert_seconds=outcome.insert_seconds if outcome.embedding_identity else None,
+        index_seconds=outcome.index_seconds if outcome.embedding_identity else None,
         fallback_from=outcome.fallback_from,
         document_prefix=outcome.document_prefix if outcome.document_prefix else None,
     )

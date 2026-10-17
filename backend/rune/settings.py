@@ -128,6 +128,11 @@ class Settings(BaseSettings):
         validation_alias="INDEXER_BATCH_DELAY_S",
         description="Seconds to pause between embedding batches. Set to 0 for testing speed.",
     )
+    # Leave test code and fixtures (config.is_test_path) out of the vector index.
+    # Tests describe each feature in plain sentences, so they outrank the code that
+    # implements it: on React (52% of chunks are tests) top-5 retrieval of the right
+    # file went from 13% to 50% without them, and indexing does half the work.
+    index_exclude_tests: bool = Field(default=True, validation_alias="INDEX_EXCLUDE_TESTS")
     # Cost per 1k tokens by provider. Used by TokenTracker to populate
     # ``estimated_cost_usd`` in log records. Order-of-magnitude figures —
     # actual Groq/Gemini pricing varies by tier.

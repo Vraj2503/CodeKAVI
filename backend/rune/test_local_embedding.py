@@ -104,7 +104,7 @@ def test_validate_embedding_identity():
     assert validate_embedding_identity("bge-large-en-v1.5:cls") == "bge-large-en-v1.5:cls"
     assert validate_embedding_identity("qwen3-embedding-0.6b:last-token") == "qwen3-embedding-0.6b:last-token"
 
-    with pytest.raises(ValueError, match="Invalid embedding identity|Unrecognised embedding identity"):
+    with pytest.raises(ValueError, match=r"Invalid embedding identity|Unrecognised embedding identity"):
         validate_embedding_identity("cloudflare' OR 1=1 --")
 
     with pytest.raises(ValueError, match="Unrecognised embedding identity"):
