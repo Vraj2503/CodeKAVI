@@ -50,6 +50,39 @@ const STAGES = [
   { key: "complete", label: "Analysis complete", icon: Check },
 ];
 
+/**
+ * One backend analysis per repo URL at a time.
+ *
+ * In development, React Strict Mode mounts this component, unmounts it and
+ * mounts it again, so the stream effect below runs twice. The cleanup used to
+ * only ignore the first run's events — its request kept going, so every click
+ * cost the backend two full analyses (two clones, two indexing jobs). A second
+ * run now joins the request the first one started instead of opening another.
+ */
+interface InFlightAnalysis {
+  result: Promise<AnalyzeResponse>;
+  listeners: Set<(event: AnalysisProgressEvent) => void>;
+}
+
+const inFlightAnalyses = new Map<string, InFlightAnalysis>();
+
+function joinAnalysis(repoUrl: string): InFlightAnalysis {
+  const existing = inFlightAnalyses.get(repoUrl);
+  if (existing) return existing;
+
+  const listeners = new Set<(event: AnalysisProgressEvent) => void>();
+  const flight: InFlightAnalysis = {
+    listeners,
+    result: analyzeRepoStream(repoUrl, (event) => {
+      listeners.forEach((listener) => listener(event));
+    }).finally(() => {
+      inFlightAnalyses.delete(repoUrl);
+    }),
+  };
+  inFlightAnalyses.set(repoUrl, flight);
+  return flight;
+}
+
 export function AnalysisProgress({
   repoUrl,
   onComplete,
@@ -90,16 +123,18 @@ export function AnalysisProgress({
     }
   }, []);
 
-  // Start the analysis stream
+  // Start the analysis stream, or join the one already running for this URL
   useEffect(() => {
     let cancelled = false;
+    const flight = joinAnalysis(repoUrl);
+    const listener = (event: AnalysisProgressEvent) => {
+      if (!cancelled) handleProgress(event);
+    };
+    flight.listeners.add(listener);
 
     (async () => {
       try {
-        const data = await analyzeRepoStream(repoUrl, (event) => {
-          if (cancelled) return;
-          handleProgress(event);
-        });
+        const data = await flight.result;
 
         if (cancelled) return;
 
@@ -122,6 +157,7 @@ export function AnalysisProgress({
 
     return () => {
       cancelled = true;
+      flight.listeners.delete(listener);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoUrl]);
