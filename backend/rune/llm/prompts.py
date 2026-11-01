@@ -323,18 +323,22 @@ def build_dataflow_prompt(
     string (paired with SYSTEM_DATAFLOW_ANALYST) since the caller uses
     provider.generate_with_usage(system_prompt, user_prompt), not the
     Message-list style used by the explanation prompts above.
+
+    ``adjacency_summary`` is used as given: the caller chooses and caps the
+    import lines (``routes.visualize._dataflow_import_lines``), each one
+    ``a [what a does] -> b [what b does]``.
     """
     entry_str = ", ".join(f"`{e}`" for e in entry_points[:10]) or "None detected"
     role_str = ", ".join(f"{role} ({count})" for role, count in role_summary.items())
-    adjacency_str = "\n".join(f"  - {line}" for line in adjacency_summary[:30]) or "  (none)"
+    adjacency_str = "\n".join(f"  - {line}" for line in adjacency_summary) or "  (none)"
     lang_str = ", ".join(languages) or "Unknown"
 
     return f"""Analyze the data flow in this codebase and return a JSON object describing how data moves through the application.
 
 Context:
 - Entry points: {entry_str}
-- File roles: {role_str}
-- Import graph (sample):
+- File roles (number of files): {role_str}
+- Imports between the most important files (`a -> b` means a imports b; the brackets say what each file does):
 {adjacency_str}
 - Detected languages: {lang_str}
 - Repo type hint: {repo_type}
@@ -370,7 +374,7 @@ Rules:
 - For ML pipelines: Data Loading -> Preprocessing -> Feature Engineering -> Model Training -> Evaluation -> Inference
 - For web apps: Client Request -> Routing -> Authentication -> Business Logic -> Data Access -> Response
 - Maximum 15 nodes, 25 edges
-- source_files must reference actual file paths from the provided file roles"""
+- source_files must be file paths exactly as they appear in the entry points and imports above"""
 
 
 # ─────────────────────────────────────────────

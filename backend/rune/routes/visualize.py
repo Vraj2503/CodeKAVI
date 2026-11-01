@@ -32,7 +32,8 @@ from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.config import detect_layer as _detect_layer
-from rune.graph import export_graph_json
+from rune.config import is_test_path
+from rune.graph import ROLE_TO_LAYER, export_graph_json
 from rune.limiter import per_minute
 from rune.routes._errors import internal_error
 from rune.routes.dependencies import get_cache
@@ -468,6 +469,57 @@ async def visualize_architecture(
 # ─────────────────────────────────────────
 
 
+# The imports the dataflow LLM sees. They used to be the first 30 files in
+# dict order (alphabetical, more or less) with only the first import of each,
+# as bare `a -> b` pairs: 30 of CodeKAVI's 383 edges, and no hint of what any
+# file does, while the prompt asked the model to cite files by role.
+DATAFLOW_MAX_IMPORT_LINES = 60
+DATAFLOW_MAX_IMPORTS_PER_FILE = 6
+
+
+def _dataflow_import_lines(dep_data: dict[str, Any], file_profiles: list[dict[str, Any]]) -> list[str]:
+    """One labelled line per import edge, for the dataflow prompt.
+
+    Entry points first, then every other file by importance, each with up to
+    DATAFLOW_MAX_IMPORTS_PER_FILE of its imports, most important first. Test
+    files are left out at both ends: they import everything and carry no data
+    flow. Each file is labelled with what it does — its classifier role when
+    that names an architectural one, else its layer from the path (the rule the
+    architecture view uses), else nothing — so the model can group files into
+    stages and cite real paths.
+    """
+    profiles = {p["path"]: p for p in file_profiles if p.get("path")}
+    adjacency = dep_data.get("adjacency") or {}
+
+    def importance(path: str) -> float:
+        return float((profiles.get(path) or {}).get("importance_score") or 0)
+
+    def labelled(path: str) -> str:
+        profile = profiles.get(path) or {}
+        role = profile.get("role") or ""
+        if ROLE_TO_LAYER.get(role, "other") != "other":
+            return f"{path} [{profile.get('role_label') or role}]"
+        layer = _detect_layer(path)
+        return path if layer == "other" else f"{path} [{layer}]"  # "[other]" tells the model nothing
+
+    entries = [ep.get("file", "") for ep in dep_data.get("entry_points") or []]
+    entries = list(dict.fromkeys(p for p in entries if p in adjacency and not is_test_path(p)))
+    others = sorted(
+        (p for p in adjacency if p not in entries and not is_test_path(p)), key=lambda p: (-importance(p), p)
+    )
+
+    lines: list[str] = []
+    for source in [*entries, *others]:
+        targets = adjacency[source]
+        targets = targets if isinstance(targets, list | set | tuple) else [targets]
+        ranked = sorted((t for t in targets if t != source and not is_test_path(t)), key=lambda t: (-importance(t), t))
+        for target in ranked[:DATAFLOW_MAX_IMPORTS_PER_FILE]:
+            lines.append(f"{labelled(source)} -> {labelled(target)}")
+            if len(lines) == DATAFLOW_MAX_IMPORT_LINES:
+                return lines
+    return lines
+
+
 @router.get("/visualize/dataflow/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def visualize_dataflow(
     request: Request,
@@ -528,13 +580,13 @@ async def visualize_dataflow(
                 from rune.llm.providers import get_provider
 
                 role_summary = summarize_roles(profile_objs)["role_counts"]
-                adjacency_summary = [
-                    f"{src} -> {tgt}"
-                    for src, targets in list(analysis.get("adjacency", {}).items())[:30]
-                    for tgt in (targets if isinstance(targets, list) else [])[:1]
-                ]
+                adjacency_summary = _dataflow_import_lines(analysis, file_profiles)
                 languages = sorted({fp.get("language", "Unknown") for fp in file_profiles})
-                entry_points = [ep.get("file", "") for ep in analysis.get("entry_points", [])]
+                entry_points = [
+                    ep["file"]
+                    for ep in analysis.get("entry_points", [])
+                    if ep.get("file") and not is_test_path(ep["file"])
+                ]
 
                 prompt = build_dataflow_prompt(
                     entry_points=entry_points,
