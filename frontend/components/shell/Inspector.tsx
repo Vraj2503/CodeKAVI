@@ -196,7 +196,7 @@ function Stat({ label, value }: { label: string; value: string | number }) {
 
 function VizIndex({ repoId }: { repoId: string }) {
   const searchParams = useSearchParams();
-  const active = searchParams.get("type") || "dependencies";
+  const active = searchParams.get("type") || "concentric_radar";
 
   /*
     Every chart is always listed, Neural Network included. Hiding it when

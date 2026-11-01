@@ -5,8 +5,6 @@ const sectionTitles: Record<string, string> = {
   architecture: "🏗️ Architecture",
   components: "🧩 Components",
   data_flow: "🌊 Data Flow",
-  dependencies: "🔗 Dependencies",
-  complexity: "🔥 Complexity",
   patterns: "🧬 Patterns",
   mindmap: "🧠 Mind Map",
 };
