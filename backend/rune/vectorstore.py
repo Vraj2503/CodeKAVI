@@ -274,7 +274,6 @@ class ZillizClient:
         query: str,
         repo_id: str,
         limit: int = 5,
-        layer_filter: str | None = None,
         embedding_identity: str = "cloudflare",
         document_prefix: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -309,9 +308,6 @@ class ZillizClient:
         repo_id = _validate_repo_id(repo_id)
 
         base_expr = f"repo_id == '{repo_id}'"
-        if layer_filter == "exclude_frontend":
-            # "tests" is what the indexer stores (detect_layer / is_test_path); "test" never matched.
-            base_expr += ' and layer not in ["frontend", "tests"]'
 
         all_hits = []
         collection = self.collection

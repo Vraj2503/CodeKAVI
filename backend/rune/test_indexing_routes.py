@@ -245,18 +245,19 @@ class FakeZilliz:
 
     def __init__(self) -> None:
         self.searched: list[str] = []
+        self.calls: list[dict] = []  # anything beyond the real signature lands here too
 
     async def search(
         self,
         query,
         repo_id,
         limit=5,
-        layer_filter=None,
         embedding_identity="cloudflare",
         document_prefix=None,
         **kwargs,
     ):
         self.searched.append(repo_id)
+        self.calls.append({"limit": limit, **kwargs})
         return []
 
 
@@ -282,6 +283,19 @@ def test_chat_on_a_shared_analysis_searches_the_origin_vectors_and_says_why_it_f
     assert body["success"] is False
     assert "Indexing failed" in body["error"]
     assert body["index_status"]["status"] == "failed"
+
+
+def test_a_technical_question_gets_more_chunks_and_no_layer_is_dropped(app, cache, zilliz):
+    # Dropping "frontend" for technical questions never helped on the eval set and
+    # cost answers (a UI library's own code is frontend), so no layer filter is sent.
+    cache.set(NEW, _analysis("user-b", index_status=make_status("complete")))
+    cache.set_session_path(NEW, "/clones/demo")
+    client = client_for(app, "user-b")
+
+    client.post(f"/api/chat/{NEW}", json={"query": "how is the api wired?"})  # "api": technical
+    client.post(f"/api/chat/{NEW}", json={"query": "what does this do?"})
+
+    assert zilliz.calls == [{"limit": 8}, {"limit": 5}]
 
 
 def test_chat_on_a_repo_that_is_still_indexing_says_so(app, cache, zilliz):

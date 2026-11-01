@@ -85,8 +85,7 @@ async def chat_repo(
     RAG endpoint that searches the Zilliz vector store for relevant code context
     and answers the user's question using the LLM.
 
-    For technical/architecture questions, retrieves more chunks (top_k=8)
-    and filters out frontend/test code for higher relevance.
+    For technical/architecture questions, retrieves more chunks (top_k=8).
 
     T4.1 — quota gate. Raises HTTP 429 with ``quota_exceeded`` if the
     authenticated user is over their daily token budget (only enforced
@@ -159,23 +158,19 @@ async def chat_repo(
         index_status = await resolve_index_status(cache, result, repo_id)
         doc_prefix = (index_status or {}).get("document_prefix")
         try:
-            if is_technical:
-                results = await zilliz_client.search(
-                    body.query,
-                    search_repo_id,
-                    limit=8,
-                    layer_filter="exclude_frontend",
-                    embedding_identity=embedding_identity,
-                    document_prefix=doc_prefix,
-                )
-            else:
-                results = await zilliz_client.search(
-                    body.query,
-                    search_repo_id,
-                    limit=5,
-                    embedding_identity=embedding_identity,
-                    document_prefix=doc_prefix,
-                )
+            # Technical questions get more context, unfiltered. They used to drop
+            # every chunk labelled "frontend", but replaying the eval questions found
+            # no question where that helped, and it cost answers: a UI library's own
+            # code is frontend, and so, before whole-word labels, was any backend
+            # file with a UI word in its path (vectorstore.py). Tests are already
+            # left out of the index.
+            results = await zilliz_client.search(
+                body.query,
+                search_repo_id,
+                limit=8 if is_technical else 5,
+                embedding_identity=embedding_identity,
+                document_prefix=doc_prefix,
+            )
         except EmbeddingProviderUnavailable as e:
             return {
                 "success": False,
