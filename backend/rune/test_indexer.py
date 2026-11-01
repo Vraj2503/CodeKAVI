@@ -443,6 +443,13 @@ class FakeCache:
         self.sets.append((repo_id, result))
         self.results[repo_id] = result
 
+    def update(self, repo_id: str, fields: dict) -> bool:
+        current = self.get(repo_id)
+        if current is None:
+            return False
+        self.set(repo_id, {**current, **fields})
+        return True
+
 
 def _stub_index_repository(monkeypatch, behaviour):
     async def fake(repo_id, file_profiles, clone_path):

@@ -11,6 +11,7 @@ so subsequent reads are faster.
 
 import json
 import logging
+import threading
 from typing import Any
 
 from cachetools import LRUCache, TTLCache
@@ -32,6 +33,11 @@ _REDIS_SIG_PREFIX = "rune:sig:"
 # forcing transparent re-analysis. Current bump: fix UnboundLocalError in
 # analyze route that cached empty (zero-edge) dep graphs on the FULL_UPDATE path.
 ANALYSIS_VERSION = "3"
+
+# Writes to one repo's record are serialized by a lock picked from this pool
+# (striped by repo_id, so the pool stays fixed-size however many repos pass
+# through). Two repos sharing a stripe just take turns.
+_WRITE_LOCK_STRIPES = 64
 
 
 def _make_serializable(obj: Any) -> Any:
@@ -83,6 +89,13 @@ class AnalysisCache:
         # L3: Supabase (lazy init)
         self._supabase = None
         self._supabase_available = None
+
+        # T23: every write takes its repo's lock, so an update's
+        # read-merge-write can't interleave with another write in this
+        # process, and L2/L3 receive one repo's writes in the order L1 did:
+        # a slow upload can't land after a newer one and roll the persisted
+        # record back.
+        self._write_locks = [threading.Lock() for _ in range(_WRITE_LOCK_STRIPES)]
 
     # ── Redis connection (lazy) ──
 
@@ -182,7 +195,46 @@ class AnalysisCache:
         return None
 
     def set(self, repo_id: str, result: dict) -> None:
-        """Write to all 3 tiers."""
+        """Write a whole record to all 3 tiers.
+
+        For a record built from scratch. A writer that loaded the record and
+        worked on it for a while wants ``update``: writing back what it
+        loaded would erase whatever changed in between.
+        """
+        with self._write_lock(repo_id):
+            self._write(repo_id, result)
+
+    def update(self, repo_id: str, fields: dict[str, Any]) -> bool:
+        """Replace only ``fields`` on the record as it is now; False if there is none.
+
+        The LLM overlays and the indexing outcome each load the record, spend
+        seconds (indexing: minutes) on their own work, then save one key.
+        Saving the copy they loaded used to erase what another writer saved
+        meanwhile — a stale "pending" over "complete", so chat said "still
+        being indexed" for a fully indexed repo (P4). This re-reads the
+        record under the repo's write lock and replaces only the given keys,
+        so updates to different keys all survive. The record a reader is
+        holding is never mutated.
+        """
+        with self._write_lock(repo_id):
+            current = self.get(repo_id)
+            if current is None:
+                return False
+            self._write(repo_id, {**current, **fields})
+            return True
+
+    def delete(self, repo_id: str) -> None:
+        """Evict from all 3 tiers."""
+        with self._write_lock(repo_id):
+            self._memory.pop(repo_id, None)
+            self._redis_delete(repo_id)
+            self._supabase_delete(repo_id)
+
+    def _write_lock(self, repo_id: str) -> threading.Lock:
+        return self._write_locks[hash(repo_id) % _WRITE_LOCK_STRIPES]
+
+    def _write(self, repo_id: str, result: dict) -> None:
+        """Write to all 3 tiers. Callers hold the repo's write lock."""
         serializable = _make_serializable(result)
         serializable["_analysis_version"] = ANALYSIS_VERSION
 
@@ -193,12 +245,6 @@ class AnalysisCache:
         json_str = json.dumps(serializable)
         self._redis_set_raw(repo_id, json_str)
         self._supabase_set_raw(repo_id, json_str, result.get("repo_name", ""), result.get("owner", ""))
-
-    def delete(self, repo_id: str) -> None:
-        """Evict from all 3 tiers."""
-        self._memory.pop(repo_id, None)
-        self._redis_delete(repo_id)
-        self._supabase_delete(repo_id)
 
     # ── Session path tracking (replaces active_sessions dict) ──
 

@@ -135,16 +135,17 @@ async def resolve_embedding_identity(cache: Any, result: dict[str, Any] | None, 
 
 
 async def record_index_status(cache: Any, repo_id: str, status: dict[str, Any]) -> None:
-    """Best-effort: attach ``status`` to the cached analysis result for ``repo_id``."""
+    """Best-effort: attach ``status`` to the cached analysis result for ``repo_id``.
+
+    Replaces only ``index_status`` on the record as it is when indexing ends
+    (T23), so an LLM overlay saved while the index ran survives.
+    """
     try:
-        result = await run_sync(cache.get, repo_id)
-        if not result:
+        if not await run_sync(cache.update, repo_id, {"index_status": status}):
             logger.warning(
                 f"Index status '{status['status']}' for {repo_id} not recorded: no cached analysis to attach it to"
             )
             return
-        # Copy rather than mutate: the L1 entry is shared with concurrent readers.
-        await run_sync(cache.set, repo_id, {**result, "index_status": status})
         logger.info(f"Recorded index status '{status['status']}' for {repo_id}")
     except Exception as e:
         logger.warning(f"Failed to record index status '{status['status']}' for {repo_id}: {e}")

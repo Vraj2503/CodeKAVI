@@ -32,6 +32,13 @@ class FakeCache:
         self.sets.append((repo_id, result))
         self.results[repo_id] = result
 
+    def update(self, repo_id, fields):
+        current = self.get(repo_id)
+        if current is None:
+            return False
+        self.set(repo_id, {**current, **fields})
+        return True
+
 
 # ── Classifying an outcome ──
 

@@ -556,8 +556,10 @@ async def visualize_dataflow(
                 enriched = export_semantic_dataflow(analysis, file_profiles, llm_enrichment=parsed)
                 if enriched["metadata"]["is_llm_enriched"]:
                     dataflow_data = enriched
-                    result["dataflow_llm"] = enriched
-                    await run_sync(cache.set, repo_id, result)
+                    # Save only this key, onto the record as it is now: `result` was
+                    # loaded before the LLM call, and indexing may have recorded its
+                    # outcome since (T23).
+                    await run_sync(cache.update, repo_id, {"dataflow_llm": enriched})
                 else:
                     fallback_reason = "invalid_llm_response"
             except Exception as e:
@@ -1158,8 +1160,8 @@ async def enrich_knowledge_graph(
         return {"type": "knowledge", "data": _with_concepts(graph, _empty_concepts("llm_failed"))}
 
     if overlay["descriptions"]:
-        result["knowledge_llm"] = overlay
-        await run_sync(cache.set, repo_id, result)
+        # Only this key, onto the record as it is now — see the dataflow route (T23).
+        await run_sync(cache.update, repo_id, {"knowledge_llm": overlay})
 
     return {"type": "knowledge", "data": _with_concepts(graph, overlay)}
 
