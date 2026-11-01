@@ -27,6 +27,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from rune.analyzer import SUPPORTED_LANGUAGES
+from rune.architecture import build_architecture_manifest
+from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.config import detect_layer as _detect_layer
@@ -37,8 +39,6 @@ from rune.routes.dependencies import get_cache
 from rune.session import ensure_repo_loaded
 from rune.settings import settings
 from rune.utils import run_sync
-from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
-from rune.architecture import build_architecture_manifest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -356,7 +356,10 @@ async def visualize_complexity(
 # 3. Architecture Graph (NO LLM)
 # ─────────────────────────────────────────
 
-@router.post("/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))], response_model=ArchitectureResponse)
+
+@router.post(
+    "/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))], response_model=ArchitectureResponse
+)
 async def visualize_architecture_v2(
     request: Request,
     repo_id: str,
@@ -374,10 +377,7 @@ async def visualize_architecture_v2(
     file_profiles = result.get("file_profiles", [])
 
     manifest = build_architecture_manifest(
-        repo_id=repo_id,
-        dep_data=dep_data,
-        file_profiles=file_profiles,
-        request_params=body
+        repo_id=repo_id, dep_data=dep_data, file_profiles=file_profiles, request_params=body
     )
 
     return ArchitectureResponse(data=manifest)
@@ -693,21 +693,32 @@ def _build_static_mindmap(classification: list) -> dict:
 _ROLE_TIER: dict[str, int] = {
     "entry_point": 0,
     "router": 1,
-    "core_module": 2, "orchestrator": 2, "ml_pipeline": 2, "ml_training": 2,
-    "shared_utility": 3, "internal_helper": 3,
-    "config": 4, "type_definition": 4, "data": 4, "ml_model": 4,
-    "barrel": 4, "leaf": 4, "build": 4, "documentation": 4,
+    "core_module": 2,
+    "orchestrator": 2,
+    "ml_pipeline": 2,
+    "ml_training": 2,
+    "shared_utility": 3,
+    "internal_helper": 3,
+    "config": 4,
+    "type_definition": 4,
+    "data": 4,
+    "ml_model": 4,
+    "barrel": 4,
+    "leaf": 4,
+    "build": 4,
+    "documentation": 4,
     "test": 5,
 }
 
 _RADAR_TIERS = [
-    {"level": 0, "name": "Hub: Entry Points",         "radius": 55,  "color": "#a855f7"},
-    {"level": 1, "name": "API: Routes & Controllers",  "radius": 140, "color": "#38bdf8"},
-    {"level": 2, "name": "Core: Domain Logic",         "radius": 235, "color": "#818cf8"},
-    {"level": 3, "name": "Services: Utils & Helpers",   "radius": 335, "color": "#2dd4bf"},
+    {"level": 0, "name": "Hub: Entry Points", "radius": 55, "color": "#a855f7"},
+    {"level": 1, "name": "API: Routes & Controllers", "radius": 140, "color": "#38bdf8"},
+    {"level": 2, "name": "Core: Domain Logic", "radius": 235, "color": "#818cf8"},
+    {"level": 3, "name": "Services: Utils & Helpers", "radius": 335, "color": "#2dd4bf"},
     {"level": 4, "name": "Foundation: Config & Models", "radius": 420, "color": "#ec4899"},
-    {"level": 5, "name": "Verification: Tests",         "radius": 495, "color": "#94a3b8"},
+    {"level": 5, "name": "Verification: Tests", "radius": 495, "color": "#94a3b8"},
 ]
+
 
 def _assign_radar_coords(modules: list[dict]) -> None:
     by_tier: dict[int, list[dict]] = {}
@@ -742,12 +753,8 @@ async def visualize_radar(
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
     file_profiles = result.get("file_profiles", [])
-    
-    sorted_profiles = sorted(
-        file_profiles, 
-        key=lambda fp: fp.get("importance_score", 0), 
-        reverse=True
-    )
+
+    sorted_profiles = sorted(file_profiles, key=lambda fp: fp.get("importance_score", 0), reverse=True)
     if len(sorted_profiles) > _RADAR_MAX_MODULES:
         sorted_profiles = sorted_profiles[:_RADAR_MAX_MODULES]
 
@@ -760,7 +767,7 @@ async def visualize_radar(
         path = sym.get("file")
         if path and path in included_paths:
             symbols_by_file.setdefault(path, []).append(sym)
-            
+
     for path, syms in symbols_by_file.items():
         syms.sort(key=lambda x: x.get("complexity") or 0, reverse=True)
         symbols_by_file[path] = syms[:5]
@@ -776,17 +783,17 @@ async def visualize_radar(
             continue
         role = fp.get("role", "other")
         tier = _ROLE_TIER.get(role, 4)
-        
+
         cc = fp.get("complexity") or 0
         loc = fp.get("loc") or 0
         is_hotspot = cc >= 50
-        
+
         if is_hotspot:
             hotspot_count += 1
         total_cc += cc
         if 0 <= tier < 6:
             tier_counts[tier] += 1
-            
+
         syms_raw = symbols_by_file.get(path, [])
         syms_clean = [
             {
@@ -794,13 +801,13 @@ async def visualize_radar(
                 "kind": s.get("kind", ""),
                 "line": s.get("line", 0),
                 "complexity": s.get("complexity") or 0,
-                "doc": s.get("doc")
+                "doc": s.get("doc"),
             }
             for s in syms_raw
         ]
-        
+
         name = os.path.basename(path)
-        
+
         m = {
             "id": path,
             "name": name,
@@ -816,7 +823,7 @@ async def visualize_radar(
             "is_hotspot": is_hotspot,
             "inbound": [p for p in fp.get("used_by", []) if p in included_paths],
             "outbound": [p for p in fp.get("depends_on", []) if p in included_paths],
-            "symbols": syms_clean
+            "symbols": syms_clean,
         }
         modules.append(m)
 
@@ -826,19 +833,17 @@ async def visualize_radar(
         del m["label"]
 
     _assign_radar_coords(modules)
-    
+
     all_edges = []
     cc_lookup = {m["id"]: m["cc"] for m in modules}
-    
+
     for m in modules:
         source = m["id"]
         for target in m["outbound"]:
-            all_edges.append({
-                "source": source,
-                "target": target,
-                "weight": cc_lookup.get(source, 0) + cc_lookup.get(target, 0)
-            })
-            
+            all_edges.append(
+                {"source": source, "target": target, "weight": cc_lookup.get(source, 0) + cc_lookup.get(target, 0)}
+            )
+
     all_edges.sort(key=lambda e: e["weight"], reverse=True)
     edges = [{"source": e["source"], "target": e["target"]} for e in all_edges[:_RADAR_MAX_EDGES]]
 
@@ -855,9 +860,9 @@ async def visualize_radar(
                 "total_modules": total_modules,
                 "avg_cc": avg_cc,
                 "hotspot_count": hotspot_count,
-                "tier_counts": tier_counts
-            }
-        }
+                "tier_counts": tier_counts,
+            },
+        },
     }
 
 
