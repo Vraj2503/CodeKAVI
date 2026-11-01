@@ -567,6 +567,8 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
     }
     case "neural_network":
       return <NeuralNetworkViz data={data} />;
+    case "concentric_radar":
+      return <ConcentricRadarViz data={data} />;
     default:
       return (
         <p className="text-muted-foreground text-center py-12">

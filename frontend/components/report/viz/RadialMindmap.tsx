@@ -398,6 +398,9 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
         nodeUpdate.on("click", function (event, d) {
           event.stopPropagation();
           const node = d as TreeNode;
+          const canToggle = !!(node.children || node._children);
+          if (!canToggle) return;
+
           if (node.children) {
             node._children = node.children as TreeNode[];
             node.children = undefined;
@@ -408,6 +411,10 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
             assignBranchIndices(hierarchy);
           }
           update(node);
+          // Reframe the visible tree after the layout transition: expansion
+          // gives the new branches room, and collapsing brings the remaining
+          // map back into focus.
+          fitToScreen(hierarchy);
         });
 
         // Tooltip positioning
