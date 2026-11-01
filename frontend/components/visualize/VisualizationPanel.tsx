@@ -3,8 +3,6 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  GitBranch,
-  BarChart3,
   Layers,
   ArrowRightLeft,
   Brain,
@@ -30,28 +28,11 @@ export type VizConfigItem = {
 
 export const VIZ_CONFIG: VizConfigItem[] = [
   {
-    type: "dependencies",
-    label: "Dependency Graph",
-    description:
-      "Visualize file-to-file import relationships and identify dependency hubs.",
-    icon: GitBranch,
-  },
-  {
     type: "concentric_radar",
     label: "Complexity Radar",
     description:
       "Concentric architectural tiers with dependency arcs and McCabe complexity hull.",
     icon: Radar,
-  },
-  // Says what the two channels actually encode. The old copy promised
-  // "complexity by importance score", which named a metric the chart has never
-  // drawn — importance is graph centrality, not complexity.
-  {
-    type: "complexity",
-    label: "Complexity Treemap",
-    description:
-      "Files sized by bytes, colored by cyclomatic complexity — spot maintenance hotspots.",
-    icon: BarChart3,
   },
   {
     type: "architecture",
@@ -102,7 +83,7 @@ const TOKEN_COST: ReadonlySet<VizType> = new Set<VizType>(["dataflow"]);
 
 export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   const searchParams = useSearchParams();
-  const activeViz = (searchParams.get("type") as VizType) || "dependencies";
+  const activeViz = (searchParams.get("type") as VizType) || "concentric_radar";
 
   const { generate, getState } = useVisualization(repoId);
   const { explain, getExplanation } = useExplanation(repoId);

@@ -56,7 +56,7 @@ export function useSSE(callbacks: SSECallbacks) {
         setPhase("Starting mock analysis");
         setMessage("Initializing");
 
-        const sections = ["overview", "architecture", "components", "data_flow", "dependencies", "complexity", "patterns", "mindmap"];
+        const sections = ["overview", "architecture", "components", "data_flow", "patterns", "mindmap"];
         let step = 0;
 
         const interval = setInterval(() => {

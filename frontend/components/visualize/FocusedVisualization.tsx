@@ -22,13 +22,6 @@ import { FailureState } from "@/components/FailureState";
 import { DownloadMenu } from "./DownloadMenu";
 
 // Lazy-load D3 viz components
-const DependencyGraph = dynamic(
-  () =>
-    import("@/components/report/viz/DependencyGraph").then(
-      (m) => m.DependencyGraph,
-    ),
-  { ssr: false, loading: () => <VizSkeleton /> },
-);
 const ArchitectureGraph = dynamic(
   () =>
     import("@/components/report/viz/ArchitectureGraph").then(
@@ -41,10 +34,6 @@ const DataFlowGraph = dynamic(
     import("@/components/report/viz/DataFlowGraph").then(
       (m) => m.DataFlowGraph,
     ),
-  { ssr: false, loading: () => <VizSkeleton /> },
-);
-const TreemapViz = dynamic(
-  () => import("@/components/report/viz/TreemapViz").then((m) => m.TreemapViz),
   { ssr: false, loading: () => <VizSkeleton /> },
 );
 const RadialMindmap = dynamic(
@@ -133,12 +122,11 @@ function EmptyViz({
   unresolvedEdges: boolean;
 }) {
   // Suggest a chart that does not depend on the thing that just came back
-  // empty. The treemap needs no edges at all, so it is the safe fallback when
-  // the dependency graph is itself the empty one.
+  // empty. Architecture is a safe fallback for most empty views.
   const suggestion: { type: VizType; label: string } =
-    type === "dependencies"
-      ? { type: "complexity", label: "Complexity Treemap" }
-      : { type: "dependencies", label: "Dependency Graph" };
+    type === "dataflow"
+      ? { type: "architecture", label: "Architecture Graph" }
+      : { type: "dataflow", label: "Data Flow Diagram" };
 
   // Neural Network is listed for every repository, so this view is the only
   // place an empty result can be explained. The generic line below would be a
@@ -544,15 +532,6 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
           repoId={repoId}
         />
       );
-    case "dependencies":
-      return (
-        <DependencyGraph
-          nodes={data.nodes || []}
-          edges={data.edges || []}
-          moduleGraph={data.module_graph}
-          modules={data.modules}
-        />
-      );
     case "architecture":
       return (
         <ArchitectureGraph data={data} />
@@ -561,8 +540,6 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
       return (
         <DataFlowGraph nodes={data.nodes || []} edges={data.edges || []} />
       );
-    case "complexity":
-      return <TreemapViz data={data} />;
     case "concentric_radar":
       return <ConcentricRadarViz data={data} />;
     case "mindmap":
@@ -580,7 +557,6 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
 
 function hasUnresolvedEdges(type: VizType, data: any) {
   switch (type) {
-    case "dependencies":
     case "dataflow":
       return !!data?.nodes?.length && !data?.edges?.length;
     default:
@@ -591,15 +567,12 @@ function hasUnresolvedEdges(type: VizType, data: any) {
 function isEmptyVisualization(type: VizType, data: any) {
   if (!data) return true;
   switch (type) {
-    case "dependencies":
     case "dataflow":
       return (
         !data.nodes || data.nodes.length === 0 || hasUnresolvedEdges(type, data)
       );
     case "concentric_radar":
       return !data.modules || data.modules.length === 0;
-    case "complexity":
-      return !data.children || data.children.length === 0;
     case "mindmap":
       return (
         !data.root || !data.root.children || data.root.children.length === 0
