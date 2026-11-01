@@ -353,8 +353,7 @@ async def index_repository(
 
             # Consistent stable hash for file
             file_hash = hashlib.md5(file_path.encode()).hexdigest()[:10]
-            # With exclusion off, label tests by path so chat's layer filter can still drop them.
-            layer = "tests" if is_test_path(file_path) else _detect_layer(file_path)
+            layer = _detect_layer(file_path)  # "tests" for test paths, if exclusion is off
 
             for i, (chunk, (start_line, end_line)) in enumerate(zip(chunks, spans, strict=True)):
                 chunk_id = f"{repo_id[:20]}_{file_hash}_{i}"

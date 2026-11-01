@@ -250,28 +250,44 @@ EMBEDDING_DIMENSION = 1024
 # Layer detection (single canonical copy)
 # ─────────────────────────────────────────────
 # Used by indexer.py, orchestrator.py, and visualize.py.
-# Change this list to update layer detection across the whole app.
+# Change _LAYER_WORDS to update layer detection across the whole app.
 
-
-def detect_layer(file_path: str) -> str:
-    """
-    Detect architectural layer from file path keywords.
-    Used for metadata-based filtering in RAG retrieval and visualization grouping.
-    """
-    path_lower = file_path.lower()
-    checks = [
-        (["route", "controller", "api", "endpoint", "view", "screen", "page"], "routes"),
-        (["model", "schema", "entity", "type", "interface", "dto"], "models"),
-        (["service", "logic", "handler", "pipeline", "rag", "middleware", "orchestrat"], "services"),
-        (["db", "database", "repo", "migration", "prisma", "drizzle", "sequelize"], "database"),
-        (["util", "helper", "lib", "common", "shared", "tool", "script", "cli"], "utils"),
-        (["config", "setting", "constant", "env"], "config"),
-        (
-            [
+# First layer whose words appear in the path wins. Whole words only: matching
+# substrings filed requirements.txt under "frontend" (req-ui-rements), every
+# component under components/report/ under "database" (repo-rt), every
+# "client" under "utils" (cli) and vectorstore.py under "frontend" (store),
+# which chat then dropped from technical questions about vector search.
+_LAYER_WORDS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("routes", frozenset({"route", "router", "routing", "controller", "api", "endpoint", "view", "screen", "page"})),
+    ("models", frozenset({"model", "schema", "entity", "type", "interface", "dto"})),
+    (
+        "services",
+        frozenset(
+            {
+                "service",
+                "logic",
+                "handler",
+                "pipeline",
+                "rag",
+                "middleware",
+                "orchestrator",
+                "orchestration",
+                "orchestrate",
+            }
+        ),
+    ),
+    ("database", frozenset({"db", "database", "repository", "migration", "prisma", "drizzle", "sequelize"})),
+    ("utils", frozenset({"util", "utility", "helper", "lib", "common", "shared", "tool", "tooling", "script", "cli"})),
+    ("config", frozenset({"config", "configuration", "tsconfig", "jsconfig", "setting", "constant", "env"})),
+    (
+        "frontend",
+        frozenset(
+            {
                 "component",
                 "layout",
                 "ui",
                 "css",
+                "scss",
                 "style",
                 "theme",
                 "hook",
@@ -283,13 +299,57 @@ def detect_layer(file_path: str) -> str:
                 "asset",
                 "static",
                 "public",
-            ],
-            "frontend",
+            }
         ),
-        (["test", "spec", "__test__", "__spec__"], "tests"),
-    ]
-    for keywords, layer in checks:
-        if any(kw in path_lower for kw in keywords):
+    ),
+)
+# UI words name UI code only in languages UI is written in: a Python
+# symbol_store.py or state_machine.py is not frontend.
+_SERVER_SIDE_EXTENSIONS = frozenset(
+    {".py", ".pyi", ".go", ".rs", ".java", ".kt", ".scala", ".rb", ".php", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp"}
+    | {".ex", ".exs", ".sql"}
+)
+_NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
+# ReactFiberHooks -> React|Fiber|Hooks; DOMPlugin -> DOM|Plugin
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _path_words(file_path: str) -> set[str]:
+    """Lower-case words of a path: directory names and the file name, extension
+    included ("a.css" yields "css"), split on separators and camel case. Each
+    word is also added in singular form (hooks -> hook, entities -> entity)."""
+    words: set[str] = set()
+    for part in file_path.replace("\\", "/").split("/"):
+        for chunk in _NON_ALNUM.split(part):
+            for word in _CAMEL_BOUNDARY.split(chunk):
+                word = word.lower()
+                if not word:
+                    continue
+                words.add(word)
+                if word.endswith("ies") and len(word) > 4:
+                    words.add(word[:-3] + "y")
+                elif word.endswith("s") and len(word) > 3:
+                    words.add(word[:-1])
+    return words
+
+
+def detect_layer(file_path: str) -> str:
+    """
+    Architectural layer of a file, from the words in its path.
+
+    Used for metadata-based filtering in RAG retrieval and visualization
+    grouping. Test code is "tests" whatever else its path says (see
+    is_test_path); otherwise the first layer in _LAYER_WORDS with a word in
+    the path wins, and "other" when none has.
+    """
+    if is_test_path(file_path):
+        return "tests"
+    words = _path_words(file_path)
+    server_side = os.path.splitext(file_path)[1].lower() in _SERVER_SIDE_EXTENSIONS
+    for layer, layer_words in _LAYER_WORDS:
+        if layer == "frontend" and server_side:
+            continue
+        if not words.isdisjoint(layer_words):
             return layer
     return "other"
 
@@ -319,9 +379,10 @@ _CAMEL_TEST_STEM = re.compile(r"[a-z0-9]Tests?$")  # FooTest.java, FooTests.cs, 
 def is_test_path(file_path: str) -> bool:
     """Whether a repo-relative path is test code or a test fixture.
 
-    Path-based on purpose: detect_layer() returns the first keyword it meets, so
-    ``react-devtools-shared/src/__tests__/store-test.js`` comes back "utils"
-    (from "shared"), and the classifier's patterns miss fixture apps.
+    detect_layer() checks this first, so a test file is "tests" whatever other
+    words its path holds (``react-devtools-shared/src/__tests__/store-test.js``
+    would otherwise be "utils", from "shared"). The classifier's own test
+    patterns miss fixture apps.
     """
     *dirs, name = file_path.replace("\\", "/").split("/")
     if any(d.lower() in _TEST_DIRS for d in dirs) or name == "conftest.py":
