@@ -481,19 +481,28 @@ export function mockVizResponse(type: string) {
       };
 
     case "mindmap": {
-      // Shape must match the backend exactly: visualize.py returns
-      // {"data": {"root": root}}, and isEmptyVisualization requires
-      // data.root.children. Returning the root bare (as this mock used to)
-      // makes every mind map report "No Data Available".
+      // Shape must match the backend's updated schema:
+      //   data.root  — tree root node
+      //   data.meta  — provenance flags
       //
-      // Structure mirrors _build_static_mindmap: root -> role group -> files,
-      // with each file node carrying `id` set to the BARE FILENAME, exactly as
-      // the backend does (visualize.py:437).
-      const role = (name: string, files: string[]) => ({
+      // Leaf nodes carry a `path` field (full relative path as returned by
+      // the upgraded _build_static_mindmap and the LLM builder). The mock
+      // exercises:
+      //   • Full paths on all leaves (tooltip regression)
+      //   • Duplicate basenames across roles (join-key uniqueness regression)
+      //   • Three-level nesting on one branch (expand/collapse depth)
+      const leaf = (name: string, dir: string) => ({
         name,
-        id: name,
+        id: `${dir}/${name}`,
         label: name,
-        children: files.map((f) => ({ name: f, id: f, label: f })),
+        path: `${dir}/${name}`,
+      });
+
+      const branch = (name: string, items: ReturnType<typeof leaf>[]) => ({
+        name,
+        id: name.toLowerCase().replace(/\s+/g, "_"),
+        label: name,
+        children: items,
       });
 
       return {
@@ -502,17 +511,58 @@ export function mockVizResponse(type: string) {
           id: "root",
           label: "Codebase",
           children: [
-            // `index.ts` appears under three roles and `utils.ts` under two.
-            // That is a regression fixture, not filler: the bare-filename id
-            // is what collides in RadialMindmap's D3 join key, so these
-            // duplicates reproduce B1 (nodes merging/vanishing on expand).
-            // T5 is not verified until every one of these stays on screen.
-            role("Routes", ["auth.routes.ts", "api.routes.ts", "index.ts"]),
-            role("Models", ["User.ts", "Order.ts", "index.ts"]),
-            role("Services", ["OrderService.ts", "utils.ts", "index.ts"]),
-            role("Utilities", ["format.ts", "utils.ts", "constants.ts"]),
-            role("Tests", ["auth.spec.ts", "order.spec.ts"]),
+            // `index.ts` under three roless — duplicate basename regression (B1).
+            branch("Routing", [
+              leaf("auth.routes.ts", "src/routes"),
+              leaf("api.routes.ts",  "src/routes"),
+              leaf("index.ts",       "src/routes"),
+            ]),
+            branch("Domain Models", [
+              leaf("User.ts",    "src/models"),
+              leaf("Order.ts",   "src/models"),
+              leaf("index.ts",   "src/models"),   // duplicate basename, different path
+            ]),
+            branch("Services", [
+              leaf("OrderService.ts", "src/services"),
+              leaf("utils.ts",        "src/services"),
+              leaf("index.ts",        "src/services"), // third duplicate
+            ]),
+            // Three-level nesting: branch → sub-branch → leaves
+            {
+              name: "Infrastructure",
+              id: "infrastructure",
+              label: "Infrastructure",
+              children: [
+                {
+                  name: "Database",
+                  id: "infra_database",
+                  label: "Database",
+                  children: [
+                    leaf("postgres.ts", "src/database"),
+                    leaf("redis.ts",    "src/database"),
+                  ],
+                },
+                {
+                  name: "Auth",
+                  id: "infra_auth",
+                  label: "Auth",
+                  children: [
+                    leaf("jwt.ts",  "src/utils"),
+                    leaf("hash.ts", "src/utils"),
+                  ],
+                },
+              ],
+            },
+            branch("Testing", [
+              leaf("auth.spec.ts",  "tests"),
+              leaf("order.spec.ts", "tests"),
+              leaf("utils.ts",      "tests"), // duplicate basename, different role
+            ]),
           ],
+        },
+        meta: {
+          is_llm_enriched: false,
+          cached: false,
         },
       };
     }

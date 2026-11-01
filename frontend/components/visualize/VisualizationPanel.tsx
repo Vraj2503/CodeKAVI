@@ -62,7 +62,7 @@ export const VIZ_CONFIG: VizConfigItem[] = [
     type: "mindmap",
     label: "Mind Map",
     description:
-      "Radial mind map of the codebase structure, categories, and patterns.",
+      "Navigable mind map of the analyzed codebase — semantic categories, progressive reveal, and pan/zoom canvas.",
     icon: Brain,
   },
   {

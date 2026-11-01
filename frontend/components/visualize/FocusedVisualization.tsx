@@ -556,8 +556,29 @@ function renderVisualization(type: VizType, data: any, repoId: string) {
       );
     case "complexity":
       return <TreemapViz data={data} />;
-    case "mindmap":
-      return <RadialMindmap root={data.root || data} />;
+    case "mindmap": {
+      // Pass the root node and expose a provenance badge when the backend
+      // fell back to the static layout (e.g. quota exceeded, LLM error).
+      const fallbackReason = data.meta?.fallback_reason as string | undefined;
+      return (
+        <div className="relative w-full h-full">
+          <RadialMindmap root={data.root || data} />
+          {fallbackReason && (
+            <div
+              aria-label="Mind map is using a static layout"
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/90 border border-border/60 text-xs text-muted-foreground pointer-events-none backdrop-blur-sm"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+                <circle cx="5" cy="5" r="4" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M5 3v2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <circle cx="5" cy="7" r="0.6" fill="currentColor" />
+              </svg>
+              Static layout
+            </div>
+          )}
+        </div>
+      );
+    }
     case "neural_network":
       return <NeuralNetworkViz data={data} />;
     default:
