@@ -401,19 +401,77 @@ class AnalysisCache:
         ``signature`` (i.e. an ``owner/name@sha`` string), or ``None`` if no
         prior user analyzed that exact commit.
 
-        Order: L1 in-memory → L2 Redis (read-only — we don't promote signature
-        hits into other L1 entries since the ``repo_id`` linkage is the
-        canonical index).
+        Order: L1 in-memory → L2 Redis → L3 Supabase, where each analysis
+        records its own ``repo_signature`` (read-only — we don't promote
+        signature hits into other L1 entries since the ``repo_id`` linkage is
+        the canonical index). Without L3 the index was lost on every restart,
+        and with Redis after a day, and an unchanged commit was analyzed and
+        embedded all over again.
         """
         repo_id = self._signatures.get(signature)
         if not repo_id:
-            repo_id = self._redis_get_signature(signature)
+            repo_id = self._redis_get_signature(signature) or self._supabase_find_signature(signature)
             if not repo_id:
                 return None
             self._signatures[signature] = repo_id
 
         result = self.get(repo_id)
         return (repo_id, result) if result else None
+
+    def _supabase_find_signature(self, signature: str) -> str | None:
+        """repo_id of the newest saved analysis that recorded ``signature``.
+
+        Also filters on the plain ``owner``/``repo_name`` columns, so Postgres
+        only unpacks the (multi-MB) ``result_json`` of that repo's analyses.
+        """
+        sb = self._get_supabase()
+        prefix, _, sha = signature.rpartition("@")
+        owner, _, repo_name = prefix.partition("/")
+        if not sb or not (owner and repo_name and sha):
+            return None
+        try:
+            response = (
+                sb.table("analysis_cache")
+                .select("repo_id")
+                .eq("owner", owner)
+                .eq("repo_name", repo_name)
+                .eq("result_json->>repo_signature", signature)
+                .order("updated_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            rows = getattr(response, "data", None) or []
+            return rows[0]["repo_id"] if rows else None
+        except Exception as e:
+            logger.warning(f"Supabase signature lookup failed for {signature}: {e}")
+            return None
+
+    # ── What the tiers hold (for vector_reclaim) ──
+
+    def memory_records(self) -> list[tuple[str, dict]]:
+        """A snapshot of the L1 records, including any whose L3 save failed."""
+        for _ in range(3):
+            try:
+                return list(self._memory.items())
+            except RuntimeError:  # resized by another thread mid-iteration
+                continue
+        return list(self._memory.items())
+
+    def redis_record_ids(self) -> frozenset[str] | None:
+        """repo_ids with a record in Redis: empty without Redis, None if it's configured but unreachable.
+
+        (frozenset because inside this class ``set`` names the method above.)
+        """
+        if not settings.redis_url:
+            return frozenset()
+        r = self._get_redis()
+        if r is None:
+            return None
+        return frozenset(key.removeprefix(_REDIS_PREFIX) for key in r.scan_iter(match=f"{_REDIS_PREFIX}*", count=1000))
+
+    def supabase_client(self) -> Any:
+        """The L3 client, or None when Supabase isn't configured or reachable."""
+        return self._get_supabase()
 
     def register_signature(self, signature: str, repo_id: str) -> None:
         """

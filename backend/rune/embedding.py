@@ -518,6 +518,26 @@ def indexing_embedding_is_configured() -> bool:
     return False
 
 
+def configured_index_embedding() -> tuple[str, str] | None:
+    """(identity, document_prefix) a new index would be built with, or None if none is configured.
+
+    Configuration only, no network: when a commit was already analyzed, its
+    index is reused only if it was built this same way, so changing the model,
+    pooling or prompt forces a fresh index. A fallback taken at index time is
+    not predicted here; an index built by the fallback simply won't match.
+    """
+    provider_name = settings.embedding_provider.strip().lower()
+    if provider_name == "cloudflare":
+        return CLOUDFLARE_IDENTITY, ""
+    if provider_name == "local":
+        try:
+            local = LocalEmbedding()
+        except ValueError:
+            return None
+        return local.identity, local.document_prefix
+    return None
+
+
 async def select_index_embedding_provider(repo_id: str = "") -> EmbeddingSelection:
     """Choose once for a whole index; local failures fall back before any rows are written."""
     provider_name = settings.embedding_provider.strip().lower()

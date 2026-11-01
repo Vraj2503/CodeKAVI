@@ -62,7 +62,17 @@ async def lifespan(app: FastAPI):
     app.state.task_registry = task_registry
 
     cleanup_old_repos(max_age_hours=MAX_REPO_AGE_HOURS)
+
+    # T5: delete vector sets nothing references any more. In the background,
+    # since Zilliz can be slow to connect and the job waits before deleting.
+    reclaim_task: asyncio.Task | None = None
+    if settings.reclaim_orphan_vectors and settings.zilliz_uri:
+        from rune.vector_reclaim import reclaim_orphan_vectors_at_startup
+
+        reclaim_task = asyncio.create_task(reclaim_orphan_vectors_at_startup(cache))
     yield
+    if reclaim_task is not None:
+        reclaim_task.cancel()  # it deletes nothing until its last step, so stopping it early is safe
     # Shutdown — H-02: wait (bounded) for tracked BackgroundTasks (e.g.
     # save_analysis, index_repository) to finish before draining the
     # executors they depend on, so a repo is never left half-indexed.

@@ -133,6 +133,14 @@ class Settings(BaseSettings):
     # implements it: on React (52% of chunks are tests) top-5 retrieval of the right
     # file went from 13% to 50% without them, and indexing does half the work.
     index_exclude_tests: bool = Field(default=True, validation_alias="INDEX_EXCLUDE_TESTS")
+    # T5: analyzing a commit that was already analyzed and fully indexed with
+    # today's embedding model reuses that analysis and its vectors instead of
+    # re-embedding the repo. Set false to always re-analyze, e.g. while
+    # changing the pipeline (or send `force: true` with one request).
+    analyze_reuse_unchanged_commits: bool = Field(default=True, validation_alias="ANALYZE_REUSE_UNCHANGED_COMMITS")
+    # T5: at startup, delete vector sets nothing references any more (no saved
+    # analysis in any tier, no session, no deduplicated analysis borrowing them).
+    reclaim_orphan_vectors: bool = Field(default=True, validation_alias="RECLAIM_ORPHAN_VECTORS")
     # Cost per 1k tokens by provider. Used by TokenTracker to populate
     # ``estimated_cost_usd`` in log records. Order-of-magnitude figures —
     # actual Groq/Gemini pricing varies by tier.

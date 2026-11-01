@@ -188,7 +188,19 @@ def test_the_stream_reports_index_status_in_its_final_event(app, cache, clone, p
 # ── Deduplicated analyses ──
 
 
-def test_a_deduplicated_analysis_is_saved_for_the_new_user_and_shares_the_origin_vectors(app, cache, clone):
+@pytest.fixture
+def cloudflare_index(monkeypatch):
+    """A fresh index would be built as an index with no recorded identity was: Cloudflare, no prefix."""
+    monkeypatch.setattr(analyze_routes, "configured_index_embedding", lambda: ("cloudflare", ""))
+
+
+def _events(response) -> list[dict]:
+    return [json.loads(line[len("data: ") :]) for line in response.text.splitlines() if line.startswith("data: ")]
+
+
+def test_a_deduplicated_analysis_is_saved_for_the_new_user_and_shares_the_origin_vectors(
+    app, cache, clone, cloudflare_index
+):
     cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=make_status("complete")))
     cache.register_signature(SIGNATURE, ORIGIN)
 
@@ -204,6 +216,7 @@ def test_a_deduplicated_analysis_is_saved_for_the_new_user_and_shares_the_origin
     assert clone_path == clone["clone_path"]
     assert saved["owner_user_id"] == "user-b"
     assert (saved["vector_repo_id"], saved["_origin_repo_id"]) == (ORIGIN, ORIGIN)
+    assert saved["repo_signature"] == SIGNATURE  # findable after a restart
     assert "index_status" not in saved  # always read live from the vector owner
 
     assert body["index_status"]["status"] == "complete"
@@ -211,18 +224,78 @@ def test_a_deduplicated_analysis_is_saved_for_the_new_user_and_shares_the_origin
     assert cache.resolve_signature(SIGNATURE)[0] == ORIGIN
 
 
-def test_deduplicating_a_shared_analysis_points_at_the_vectors_underneath(app, cache, clone):
-    cache.set(ROOT, _analysis("user-a", _origin_repo_id=ROOT, index_status=make_status("partial")))
+def test_deduplicating_a_shared_analysis_points_at_the_vectors_underneath(app, cache, clone, cloudflare_index):
+    cache.set(ROOT, _analysis("user-a", _origin_repo_id=ROOT, index_status=make_status("complete")))
     cache.set(ORIGIN, _analysis("user-c", _origin_repo_id=ROOT, vector_repo_id=ROOT))
     cache.register_signature(SIGNATURE, ORIGIN)
 
     response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
 
     assert response.status_code == 200, response.text
-    assert response.json()["index_status"]["status"] == "partial"
+    assert response.json()["index_status"]["status"] == "complete"
     saved = cache.get(NEW)
     assert (saved["vector_repo_id"], saved["_origin_repo_id"]) == (ROOT, ROOT)
     assert cache.resolve_signature(SIGNATURE)[0] == ROOT
+
+
+def test_the_stream_reuses_an_unchanged_fully_indexed_commit(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    events = _events(response)
+    assert [event["stage"] for event in events] == ["cloning", "complete"]  # no analysis stages
+    result = events[-1]["data"]["result"]
+    assert (result["repo_id"], result["deduplicated"], result["index_status"]["status"]) == (NEW, True, "complete")
+    assert pipeline == []  # nothing embedded: no new vector set
+    saved = cache.get(NEW)
+    assert (saved["vector_repo_id"], saved["owner_user_id"], saved["repo_signature"]) == (ORIGIN, "user-b", SIGNATURE)
+
+
+@pytest.mark.parametrize(
+    ("earlier", "request_extra", "reuse_enabled"),
+    [
+        (make_status("pending"), {}, True),  # still indexing, or died mid-index
+        (make_status("partial"), {}, True),
+        ({**make_status("complete"), "embedding_identity": "bge-large-en-v1.5:cls"}, {}, True),  # another model
+        ({**make_status("complete"), "document_prefix": "passage: "}, {}, True),  # another document prompt
+        (make_status("complete"), {"force": True}, True),
+        (make_status("complete"), {}, False),  # ANALYZE_REUSE_UNCHANGED_COMMITS=false
+    ],
+    ids=["pending", "partial", "other-model", "other-prefix", "force", "reuse-off"],
+)
+def test_the_stream_analyzes_afresh_unless_the_earlier_index_is_as_good_as_a_new_one(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, earlier, request_extra, reuse_enabled
+):
+    _configure_indexing(monkeypatch, True)
+    monkeypatch.setattr(settings, "analyze_reuse_unchanged_commits", reuse_enabled)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=earlier))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL, **request_extra})
+
+    assert response.status_code == 200, response.text
+    stages = [event["stage"] for event in _events(response)]
+    assert "traversing" in stages and "indexing" in stages
+    assert pipeline == [(NEW, clone["clone_path"], cache)]
+    assert cache.get(NEW)["repo_signature"] == SIGNATURE  # a fresh analysis records its commit too
+
+
+def test_analyze_follows_the_same_rule(app, cache, clone, pipeline, cloudflare_index, monkeypatch):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=make_status("partial")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert "deduplicated" not in response.json()
+    assert pipeline == [(NEW, clone["clone_path"], cache)]
 
 
 def test_restore_reports_the_status_of_the_vectors_an_analysis_shares(app, cache):

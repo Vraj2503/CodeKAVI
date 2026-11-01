@@ -24,7 +24,7 @@ from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.classifier import classify_files, summarize_roles
 from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
-from rune.embedding import indexing_embedding_is_configured
+from rune.embedding import configured_index_embedding, indexing_embedding_is_configured
 from rune.file_selector import SmartFileSelector
 from rune.fingerprint import ChangeClassification
 from rune.graph import (
@@ -34,7 +34,7 @@ from rune.graph import (
     export_graph_json,
     export_mermaid,
 )
-from rune.index_status import NOT_CONFIGURED, PENDING, make_status, resolve_index_status
+from rune.index_status import COMPLETE, NOT_CONFIGURED, PENDING, make_status, resolve_index_status
 from rune.indexer import index_repository_and_record
 from rune.limiter import per_minute
 from rune.logging_config import repo_id_ctx
@@ -332,6 +332,96 @@ async def _run_pipeline(
 # ── Routes ──
 
 
+async def _reuse_unchanged_commit(
+    cache: AnalysisCache, clone_info: dict, user_id: str, github_url: str, *, force: bool
+) -> dict | None:
+    """Answer from an earlier analysis of this exact commit; None to run the pipeline.
+
+    T4.4 shared analyses across users on /analyze only. T5 uses it on both
+    routes, because the stream re-analyzed an unchanged commit on every click
+    and re-embedded the repo into a duplicate vector set. Reused only when
+    that is as good as a fresh run: the cached analysis is the current version
+    (``resolve_signature`` checks), and its vectors are completely indexed
+    with the embedding identity and document prefix a fresh index would use.
+
+    This request's repo_id then gets a copy of the analysis, owned by this
+    user, with ``vector_repo_id`` pointing at the vectors. Nothing is
+    analyzed or embedded. The repo_id stays the freshly allocated, opaque one.
+    """
+    signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
+    if not signature or force or not settings.analyze_reuse_unchanged_commits:
+        return None
+    resolved = await _run_sync(cache.resolve_signature, signature)
+    if not resolved:
+        return None
+    indexed_repo_id, earlier = resolved
+    status = await resolve_index_status(cache, earlier, indexed_repo_id) or {}
+    built_with = (status.get("embedding_identity") or "cloudflare", status.get("document_prefix") or "")
+    if status.get("status") != COMPLETE or built_with != configured_index_embedding():
+        logger.info(
+            f"Not reusing the earlier analysis of {signature}: its index is {status.get('status')} "
+            f"via {built_with}; a fresh one would use {configured_index_embedding()}."
+        )
+        return None
+
+    repo_id = clone_info["repo_id"]
+    logger.info(f"Reusing the analysis of {signature} from {indexed_repo_id}: nothing re-analyzed or re-embedded.")
+    # H-01: keep the signature pinned to the ORIGIN repo_id (the one whose
+    # result is actually cached), not this request's freshly cloned repo_id.
+    # Without ``_origin_repo_id`` persisted on first write, this fell back to
+    # ``repo_id`` and re-pointed the shared signature index at a repo_id whose
+    # result was never cached — an ownership-transfer that broke dedup for
+    # every later caller.
+    origin_repo_id = earlier.get("_origin_repo_id", indexed_repo_id)
+    await _run_sync(cache.register_signature, signature, origin_repo_id)
+
+    # This request's repo_id has no analysis or vectors of its own. Save the
+    # shared analysis under it, owned by this user, pointing ``vector_repo_id``
+    # at the analysis whose vectors hold the code. Without this, every later
+    # call on this repo_id misses the cache, re-analyzes from disk, and chat
+    # has nothing to search. Saved before responding (not as a background
+    # task) so an immediate follow-up can't trigger that re-analysis and lose
+    # the pointer.
+    shared = {k: v for k, v in earlier.items() if k not in ("index_status", "_analysis_version")}
+    shared.update(
+        repo_name=clone_info["repo_name"],
+        owner=clone_info["owner"],
+        owner_user_id=user_id,
+        _origin_repo_id=origin_repo_id,
+        vector_repo_id=earlier.get("vector_repo_id") or indexed_repo_id,
+        repo_signature=signature,
+    )
+    await _run_sync(save_analysis, repo_id, clone_info["clone_path"], shared, cache)
+    repo_data = earlier.get("repo_data", {}) or {
+        "total_files": 0,
+        "total_size": 0,
+        "total_size_formatted": "0 B",
+        "languages": {},
+        "tree": [],
+        "files": [],
+        "skipped_files": [],
+    }
+    return {
+        "success": True,
+        "repo_id": repo_id,
+        "repo_name": clone_info["repo_name"],
+        "owner": clone_info["owner"],
+        "github_url": github_url,
+        "deduplicated": True,
+        "signature": signature,
+        **repo_data,
+        "dependencies": earlier.get("dep_data", {}),
+        "file_profiles": earlier.get("file_profiles", []),
+        "role_summary": earlier.get("role_summary", {}),
+        "graph": earlier.get("graph_json", {}),
+        "module_graph": earlier.get("module_graph", {}),
+        "cycles": {"has_cycles": False, "cycles": []},
+        "mermaid": {"file_level": "", "module_level": ""},
+        "nn_models": earlier.get("nn_models", []),
+        "index_status": await resolve_index_status(cache, shared, repo_id),
+    }
+
+
 @router.post("/analyze", dependencies=[Depends(per_minute(5))])
 async def analyze(
     request: Request,
@@ -367,74 +457,10 @@ async def analyze(
     repo_id = clone_info["repo_id"]
     token = repo_id_ctx.set(repo_id)
 
-    # T4.4 — cross-user dedup. If another user (with a different repo_id)
-    # already produced an analysis for this exact commit, short-circuit
-    # the pipeline and hand back the cached result. The new repo_id is the
-    # freshly-allocated UUID — clients should treat it as opaque; the
-    # clone dir + L2 Redis index are aligned via the signature.
     signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
-    if signature:
-        resolved = await _run_sync(cache.resolve_signature, signature)
-        if resolved:
-            indexed_repo_id, deduped = resolved
-            logger.info(
-                f"T4.4 commit-cache hit for {signature}; reusing cached repo result "
-                f"(repo_name={deduped.get('repo_name', '')})."
-            )
-            # H-01: keep the signature pinned to the ORIGIN repo_id (the one
-            # whose result is actually cached), not this request's freshly
-            # cloned repo_id. Without ``_origin_repo_id`` persisted on first
-            # write, this fell back to ``repo_id`` and re-pointed the shared
-            # signature index at a repo_id whose result was never cached —
-            # an ownership-transfer that broke dedup for every later caller.
-            origin_repo_id = deduped.get("_origin_repo_id", indexed_repo_id)
-            await _run_sync(cache.register_signature, signature, origin_repo_id)
-
-            # This request's repo_id has no analysis or vectors of its own.
-            # Save the shared analysis under it, owned by this user, pointing
-            # ``vector_repo_id`` at the analysis whose vectors hold the code.
-            # Without this, every later call on this repo_id misses the cache,
-            # re-analyzes from disk, and chat has nothing to search. Saved
-            # before responding (not as a background task) so an immediate
-            # follow-up can't trigger that re-analysis and lose the pointer.
-            dedup_result = {k: v for k, v in deduped.items() if k not in ("index_status", "_analysis_version")}
-            dedup_result.update(
-                repo_name=clone_info["repo_name"],
-                owner=clone_info["owner"],
-                owner_user_id=user_id,
-                _origin_repo_id=origin_repo_id,
-                vector_repo_id=deduped.get("vector_repo_id") or indexed_repo_id,
-            )
-            await _run_sync(save_analysis, repo_id, clone_info["clone_path"], dedup_result, cache)
-            shared_index_status = await resolve_index_status(cache, dedup_result, repo_id)
-            repo_data_for_response = deduped.get("repo_data", {}) or {
-                "total_files": 0,
-                "total_size": 0,
-                "total_size_formatted": "0 B",
-                "languages": {},
-                "tree": [],
-                "files": [],
-                "skipped_files": [],
-            }
-            return {
-                "success": True,
-                "repo_id": repo_id,
-                "repo_name": clone_info["repo_name"],
-                "owner": clone_info["owner"],
-                "github_url": github_url,
-                "deduplicated": True,
-                "signature": signature,
-                **repo_data_for_response,
-                "dependencies": deduped.get("dep_data", {}),
-                "file_profiles": deduped.get("file_profiles", []),
-                "role_summary": deduped.get("role_summary", {}),
-                "graph": deduped.get("graph_json", {}),
-                "module_graph": deduped.get("module_graph", {}),
-                "cycles": {"has_cycles": False, "cycles": []},
-                "mermaid": {"file_level": "", "module_level": ""},
-                "nn_models": deduped.get("nn_models", []),
-                "index_status": shared_index_status,
-            }
+    reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, force=body.force)
+    if reused is not None:
+        return reused
 
     try:
         # Traverse and collect metadata
@@ -536,6 +562,9 @@ async def analyze(
             # signature dedup (T4.4) can never rebind the signature index
             # to a requester's repo_id whose result was never cached.
             "_origin_repo_id": repo_id,
+            # T5: lets a later analysis of this commit find and reuse it
+            # after a restart, when the in-memory signature index is gone.
+            "repo_signature": signature,
             # H1: diff-tour input — what changed since the fingerprints this
             # analysis was compared against. Absent on a repo's first-ever
             # analysis, which get_repo_diff_tour treats as "no prior analysis"
@@ -710,6 +739,20 @@ async def analyze_stream(
         token = repo_id_ctx.set(repo_id)
 
         try:
+            # T5: an unchanged, fully indexed commit is answered from its earlier
+            # analysis: no pipeline, no new vector set.
+            reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, force=body.force)
+            if reused is not None:
+                final_seq = _next_seq(seq_box)
+                yield _sse_event(
+                    "complete",
+                    100,
+                    "Same commit as an earlier analysis: reused it.",
+                    data={"total_events": final_seq, "result": reused},
+                    seq=final_seq,
+                )
+                return
+
             # Stage 2: Traversing
             if await request.is_disconnected():
                 logger.info(f"Client disconnected before traversing repo {repo_id}.")
@@ -812,6 +855,8 @@ async def analyze_stream(
                 "symbol_graph": pipeline_result.symbol_graph,
                 # H-01: see non-streaming /analyze — pins dedup to the origin repo_id.
                 "_origin_repo_id": repo_id,
+                # T5: see non-streaming /analyze.
+                "repo_signature": signature,
                 # H1: see non-streaming /analyze — diff-tour input, including
                 # deleted paths for H4's banner (see comment there).
                 "last_change_map": {

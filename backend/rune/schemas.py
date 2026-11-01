@@ -11,6 +11,8 @@ class AnalyzeRequest(BaseModel):
     """Request body for /api/analyze endpoint. Contains the GitHub URL to analyze."""
 
     github_url: str
+    # Re-analyze and re-index even if this exact commit was analyzed before (T5).
+    force: bool = False
 
 
 class ExplainRequest(BaseModel):
