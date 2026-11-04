@@ -26,29 +26,54 @@ interface ExportOptions {
 }
 
 /**
- * Intrinsic size of a figure.
+ * Intrinsic size of a figure, minus anything the export drops.
  *
  * The viewBox wins over the width/height attributes: when the figure is
  * scaled down to fit its pane, those attributes hold the *shrunken* size and
  * exporting from them would bake the on-screen reduction into the file.
+ *
+ * `data-export-trim` is how the canvas declares a bottom band that exists for
+ * the screen only — the legend. Without it, removing the legend would leave
+ * its reserved height behind as dead white at the foot of every file.
  */
-export function intrinsicSize(svg: SVGSVGElement): { width: number; height: number } {
+export function intrinsicSize(svg: SVGSVGElement): {
+  width: number;
+  height: number;
+} {
+  const trim = Number(svg.getAttribute("data-export-trim")) || 0;
   const vb = svg.getAttribute("viewBox");
   if (vb) {
-    const parts = vb.trim().split(/[\s,]+/).map(Number);
+    const parts = vb
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number);
     if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
-      return { width: parts[2], height: parts[3] };
+      return { width: parts[2], height: Math.max(parts[3] - trim, 1) };
     }
   }
   return {
     width: Number(svg.getAttribute("width")) || svg.clientWidth || 1200,
-    height: Number(svg.getAttribute("height")) || svg.clientHeight || 600,
+    height: Math.max(
+      (Number(svg.getAttribute("height")) || svg.clientHeight || 600) - trim,
+      1,
+    ),
   };
 }
 
 /** Standalone SVG document text for a live node. */
-export function serializeSvg(svg: SVGSVGElement, background?: string | null): string {
+export function serializeSvg(
+  svg: SVGSVGElement,
+  background?: string | null,
+): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
+
+  /*
+   * Screen-only furniture — the legend, the grid/dot ground — is marked in
+   * the markup and stripped here rather than switched off in React: export
+   * serialises the LIVE node, so a state flip would have to survive a
+   * re-render and a paint before the download could read it.
+   */
+  clone.querySelectorAll("[data-export-hide]").forEach((el) => el.remove());
 
   const { width, height } = intrinsicSize(svg);
 
@@ -56,9 +81,9 @@ export function serializeSvg(svg: SVGSVGElement, background?: string | null): st
   clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
   clone.setAttribute("width", String(width));
   clone.setAttribute("height", String(height));
-  if (!clone.getAttribute("viewBox")) {
-    clone.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  }
+  // Rewritten unconditionally: the source viewBox still carries the trimmed
+  // band, and leaving it would letterbox the drawing back into that space.
+  clone.setAttribute("viewBox", `0 0 ${width} ${height}`);
 
   if (background) {
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");

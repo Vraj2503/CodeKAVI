@@ -22,25 +22,29 @@ import {
   SURFACES,
   DEFAULT_PALETTE,
   paletteById,
-  type Surface,
+  resolveSurface,
+  type SurfaceId,
 } from "@/lib/viz/palettes";
+import { useTheme } from "next-themes";
 import { STYLES, DEFAULT_STYLE, styleById } from "@/lib/viz/styles";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 /*
- * ── Why this figure ignores the app theme ────────────────────────────────
+ * ── Why this figure only half-follows the app theme ──────────────────────
  *
  * Every other chart in Rune reads `--viz-*` CSS custom properties so it
- * follows light/dark. This one deliberately does not, for two reasons:
+ * follows light/dark. This one never does, for two reasons:
  *
  *   1. A serialised SVG has no document to inherit from. `hsl(var(--x))`
  *      resolves to nothing the moment the file leaves the page, so a
  *      token-driven figure exports as a black-on-black rectangle.
  *   2. A figure destined for a paper has to look identical everywhere.
  *
- * The style / palette / surface controls change the *figure's own* material,
- * and the export matches exactly what is on screen.
+ * The theme picks the *default* ground only, once, through `resolveSurface`,
+ * and lands as a literal hex — so a figure no longer mounts on a white sheet
+ * inside a near-black shell. Everything after that is the figure's own
+ * material, and the export matches exactly what is on screen.
  */
 
 function ModelFigure({ model: detected }: { model: NNModel }) {
@@ -51,12 +55,16 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
 
   const [styleId, setStyleId] = useState(DEFAULT_STYLE.id);
   const [paletteId, setPaletteId] = useState(DEFAULT_PALETTE.id);
-  const [surfaceId, setSurfaceId] = useState<keyof typeof SURFACES>("paper");
+  const [surfaceId, setSurfaceId] = useState<SurfaceId>("paper");
   const [surfaceTouched, setSurfaceTouched] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<NNModel>(detected);
   const [busy, setBusy] = useState<string | null>(null);
   const [fullEditor, setFullEditor] = useState(false);
+  // Caption fields. Blank label falls back to the model name, so the caption
+  // is right without being touched and overridable when the paper disagrees.
+  const [figNumber, setFigNumber] = useState("1");
+  const [figLabel, setFigLabel] = useState("");
 
   /*
    * The figure is scaled to fit its pane rather than left to overflow.
@@ -78,12 +86,13 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
   const style = styleById(styleId);
   const palette = paletteById(paletteId);
 
-  // A style implies a surface, but an explicit pick always wins — switching
-  // style should not silently discard a background the user chose.
-  const surface: Surface = {
-    ...SURFACES[surfaceTouched ? surfaceId : style.surfaceId],
-    ...(style.surface ?? {}),
-  };
+  // Explicit pick → the style's own implied ground → the app theme.
+  const { resolvedTheme } = useTheme();
+  const surface = resolveSurface(
+    style,
+    surfaceTouched ? surfaceId : null,
+    resolvedTheme === "light" ? "paper" : "black",
+  );
 
   const download = async (format: "svg" | "png") => {
     if (!svgRef.current) return;
@@ -127,7 +136,11 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
               : "border-border/60 bg-card/50 text-muted-foreground hover:border-signal/60 hover:text-signal",
           )}
         >
-          {editing ? <Eye className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+          {editing ? (
+            <Eye className="h-3.5 w-3.5" />
+          ) : (
+            <Pencil className="h-3.5 w-3.5" />
+          )}
           {editing ? "Preview" : "Quick edit"}
         </button>
 
@@ -158,10 +171,10 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
         />
 
         <Select
-          value={surfaceTouched ? surfaceId : style.surfaceId}
+          value={surface.id}
           onChange={(v) => {
             setSurfaceTouched(true);
-            setSurfaceId(v as keyof typeof SURFACES);
+            setSurfaceId(v as SurfaceId);
           }}
           title="Figure background"
           options={Object.values(SURFACES).map((s) => ({
@@ -169,6 +182,27 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
             label: s.label,
           }))}
         />
+
+        {/* Only the flat figure has a caption to fill in. */}
+        {style.flat && (
+          <div className="flex items-center gap-1.5">
+            <input
+              value={figNumber}
+              onChange={(e) => setFigNumber(e.target.value)}
+              title="Figure number"
+              aria-label="Figure number"
+              className="h-8 w-12 rounded-full border border-border/60 bg-card/50 px-2.5 text-center font-sans text-[12px] text-foreground outline-none transition-colors focus:border-signal/60"
+            />
+            <input
+              value={figLabel}
+              onChange={(e) => setFigLabel(e.target.value)}
+              placeholder={draft.name}
+              title="Caption title — blank uses the model name"
+              aria-label="Figure caption title"
+              className="h-8 w-40 rounded-full border border-border/60 bg-card/50 px-3 font-sans text-[12px] text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-signal/60"
+            />
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5">
           {(["svg", "png"] as const).map((f) => (
@@ -233,6 +267,8 @@ function ModelFigure({ model: detected }: { model: NNModel }) {
             surface={surface}
             style={style}
             uid={uid}
+            figureNumber={figNumber}
+            figureLabel={figLabel}
             fitWidth={paneWidth ? paneWidth - 2 : undefined}
           />
         </div>

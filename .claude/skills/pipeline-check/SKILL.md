@@ -1,6 +1,6 @@
 ---
 name: pipeline-check
-description: Smoke-test the CodeKAVI /api/analyze/stream pipeline end-to-end against a small public repo and report which stages (cloning, traversing, analyzing, classifying, graphing, selecting, indexing, complete) succeeded. Use after touching backend/codekavi/{analyzer,classifier,graph,indexer,cloner,routes/analyze}.py, or when asked to verify the analysis pipeline / smoke-test the backend.
+description: Smoke-test the CodeKAVI /api/analyze/stream pipeline end-to-end against a small public repo and report which stages (cloning, traversing, analyzing, classifying, graphing, selecting, indexing, complete) succeeded. Use after touching backend/rune/{analyzer,classifier,graph,indexer,cloner,routes/analyze}.py, or when asked to verify the analysis pipeline / smoke-test the backend.
 ---
 
 # pipeline-check
@@ -30,13 +30,13 @@ streaming explanations) only fully integrate at runtime.
    no real Supabase user/session is needed for this check.
 4. Report back to the user which stages passed/failed, quoting the stage
    list and elapsed time from the script's output. A missing "indexing"
-   stage is expected (not a failure) if `GEMINI_API_KEY` or `ZILLIZ_URI`
+   stage is expected (not a failure) if `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` or `ZILLIZ_URI`
    aren't configured in `backend/.env`.
 5. If a stage fails, look at the corresponding module before proposing a fix:
-   cloning → `codekavi/cloner.py`, traversing → `codekavi/traverser.py`,
-   analyzing → `codekavi/analyzer.py`, classifying → `codekavi/classifier.py`,
-   graphing → `codekavi/graph.py`, selecting → `codekavi/file_selector.py`,
-   indexing → `codekavi/indexer.py` + `codekavi/embedding.py`.
+   cloning → `rune/cloner.py`, traversing → `rune/traverser.py`,
+   analyzing → `rune/analyzer.py`, classifying → `rune/classifier.py`,
+   graphing → `rune/graph.py`, selecting → `rune/file_selector.py`,
+   indexing → `rune/indexer.py` + `rune/embedding.py`.
 
 ## Requirements
 

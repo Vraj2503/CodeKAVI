@@ -72,9 +72,10 @@ async def lifespan(app: FastAPI):
     await close_limiter()
     # H-12 — close the shared Cloudflare embedding session so its connection
     # pool is released cleanly instead of leaking on shutdown.
-    from rune.embedding import close_cloudflare_session
+    from rune.embedding import close_cloudflare_session, close_local_session
 
     await close_cloudflare_session()
+    await close_local_session()
 
 
 app = FastAPI(

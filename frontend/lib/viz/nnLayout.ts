@@ -49,6 +49,11 @@ export interface FigureNode {
   faces: { front: string; top: string; side: string };
   /** Outline of the whole silhouette, for the crisp keyline. */
   silhouette: string;
+  /**
+   * Axis-aligned bounds of the block itself (ghosts excluded), so a flat
+   * figure can draw a rounded `<rect>` — a polygon cannot take an `rx`.
+   */
+  rect: { x: number; y: number; w: number; h: number };
   /** Edge midpoints used to anchor connectors. */
   anchorLeft: Vec2;
   anchorRight: Vec2;
@@ -79,10 +84,19 @@ export interface Figure {
   height: number;
   nodes: FigureNode[];
   edges: FigureEdge[];
+  /**
+   * Curly brace under a folded stack, one per repeated node. The flat
+   * publication figure uses it instead of ghost copies — a paper plate marks
+   * "× 12" with a brace, not with a receding stack of translucent slabs.
+   * Empty unless `flat`.
+   */
+  braces: Array<{ x1: number; x2: number; y: number; label: string }>;
   /** Categories actually present, in first-appearance order. */
   categories: string[];
   title: string;
   meta: string;
+  /** Abbreviated total parameter count, for the flat figure's caption. */
+  params: string;
 }
 
 export interface LayoutOptions {
@@ -102,6 +116,11 @@ export interface LayoutOptions {
   offsets?: Record<string, { dx: number; dy: number }>;
   /** Per-layer base colour override, keyed by layer id. */
   colors?: Record<string, string>;
+  /**
+   * Flat 2-D plate instead of cabinet-projected volumes: depth collapses to
+   * zero, ghosts are replaced by braces. Set from `FigureStyle.flat`.
+   */
+  flat?: boolean;
 }
 
 /*
@@ -123,6 +142,7 @@ const DEFAULTS: Required<LayoutOptions> = {
   padding: { top: 54, right: 64, bottom: 96, left: 64 },
   offsets: {},
   colors: {},
+  flat: false,
 };
 
 /** Floors, applied after normalisation, so no block becomes a sliver. */
@@ -131,6 +151,10 @@ const MIN_FACE_W = 46;
 const MIN_DEPTH = 30;
 /** Depth is capped so a deep tensor cannot swallow its neighbours. */
 const MAX_DEPTH_RATIO = 0.62;
+/** Clearance between a flat block's baseline and its brace. */
+const BRACE_DROP = 46;
+/** Vertical band a brace plus its label needs under the lowest block. */
+const BRACE_FOOTROOM = 72;
 
 interface RawDims {
   w: number;
@@ -179,7 +203,11 @@ export function deriveDims(layer: NNLayer): RawDims {
     };
   }
   if (shape && shape.length === 2) {
-    return { h: logScale(shape[1], 10, 80), d: 16, w: logScale(shape[0], 4, 34) };
+    return {
+      h: logScale(shape[1], 10, 80),
+      d: 16,
+      w: logScale(shape[0], 4, 34),
+    };
   }
   if (shape && shape.length === 1) {
     return { h: logScale(shape[0], 12, 80), d: 14, w: 8 };
@@ -329,6 +357,7 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
   const padding = opts.padding ?? DEFAULTS.padding;
   const offsets = opts.offsets ?? DEFAULTS.offsets;
   const colors = opts.colors ?? DEFAULTS.colors;
+  const flat = opts.flat ?? DEFAULTS.flat;
   const groups = groupRepeats(model.layers ?? []);
 
   // Ghost offset per repeated copy, in projected space.
@@ -357,12 +386,15 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
     const r = raw[i];
     const h = Math.max(r.h * k, MIN_FACE_H);
     const w = Math.max(r.w * k, MIN_FACE_W);
-    const d = Math.min(
-      Math.max(r.d * k, MIN_DEPTH),
-      targetHeight * MAX_DEPTH_RATIO,
-    );
+    // Flat bypasses the MIN_DEPTH floor outright. `cuboid` then collapses on
+    // its own — back plane meets front, so `front` is a plain rect and
+    // `top`/`side` are zero-area. Nothing in `cuboid` needs to know.
+    const d = flat
+      ? 0
+      : Math.min(Math.max(r.d * k, MIN_DEPTH), targetHeight * MAX_DEPTH_RATIO);
 
-    const ghostSpan = g.repeat > 1 ? GHOST_STEP * Math.min(g.repeat - 1, 3) : 0;
+    const ghostSpan =
+      !flat && g.repeat > 1 ? GHOST_STEP * Math.min(g.repeat - 1, 3) : 0;
 
     // Provisional box at origin to measure its projected extent, since the
     // z-recession makes the silhouette wider than w.
@@ -416,7 +448,8 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
     // and the outgoing arrow starts underneath the stack.
     let ghostRight = box.maxX;
     let ghostTop = box.minY;
-    if (p.g.repeat > 1) {
+    // A translucent receding stack is a 3-D device; flat gets a brace instead.
+    if (!flat && p.g.repeat > 1) {
       const copies = Math.min(p.g.repeat - 1, 3);
       for (let k = copies; k >= 1; k--) {
         const gb = cuboid(
@@ -459,6 +492,12 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
       colorOverride: colors[p.g.layer.id],
       faces: { front: box.front, top: box.top, side: box.side },
       silhouette: box.silhouette,
+      rect: {
+        x: box.minX,
+        y: box.minY,
+        w: box.maxX - box.minX,
+        h: box.maxY - box.minY,
+      },
       anchorLeft: box.anchorLeft,
       anchorRight: box.anchorRight,
       left: box.minX,
@@ -500,7 +539,11 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
         kind: "sequential",
         path: `M ${round(from.right)} ${round(y)} L ${round(to.left)} ${round(y)}`,
         label: from.shapeText || undefined,
-        labelAt: { x: (from.right + to.left) / 2, y: y - 12 },
+        // Flat rides the shape up against the arrowhead the way a paper
+        // figure does; the volumetric build centres it over the connector.
+        labelAt: flat
+          ? { x: to.left - 14, y: y - 8 }
+          : { x: (from.right + to.left) / 2, y: y - 12 },
       });
     } else if (conn.type !== "sequential") {
       // Skip / residual / concat — an arc over the top, clear of the blocks.
@@ -526,12 +569,30 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
   // Bounds are read back off the placed nodes rather than the pre-offset
   // probes, so ghosts, skip arcs and captions are all inside the canvas and
   // the figure has no dead margin.
+  const braces = flat
+    ? nodes
+        .filter((n) => n.repeat > 1)
+        .map((n) => ({
+          x1: n.left,
+          x2: n.right,
+          y: n.bottom + BRACE_DROP,
+          label: `× ${n.repeat} ${n.title}`,
+        }))
+    : [];
+
   const skipHeadroom = edges.some((e) => e.kind === "skip") ? 78 : 0;
+  // Reserved the same way `skipHeadroom` reserves the arc band at the top.
+  const braceFootroom = braces.length ? BRACE_FOOTROOM : 0;
   const width = Math.max(...nodes.map((n) => n.right), 0) + padding.right;
   const contentTop = Math.min(...nodes.map((n) => n.top), offsetY);
   const contentBottom = Math.max(...nodes.map((n) => n.bottom), offsetY);
   const height =
-    contentBottom - contentTop + padding.top + padding.bottom + skipHeadroom;
+    contentBottom -
+    contentTop +
+    padding.top +
+    padding.bottom +
+    skipHeadroom +
+    braceFootroom;
 
   const totalParams =
     model.total_params ??
@@ -542,8 +603,10 @@ export function buildFigure(model: NNModel, opts: LayoutOptions = {}): Figure {
     height: Math.max(height, 380),
     nodes,
     edges,
+    braces,
     categories,
     title: model.name,
+    params: formatParams(totalParams),
     meta: [
       model.framework,
       `${(model.layers ?? []).length} layers`,
