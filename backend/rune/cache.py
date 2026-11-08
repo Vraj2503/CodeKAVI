@@ -130,15 +130,19 @@ class AnalysisCache:
         try:
             import redis
 
-            self._redis = redis.from_url(redis_url, decode_responses=True)
-            self._redis.ping()
-            self._redis_available = True
-            logger.info("Redis L2 cache connected")
-            return self._redis
+            client = redis.from_url(redis_url, decode_responses=True)
+            client.ping()
         except Exception as e:
             logger.warning(f"Redis connection failed — L2 cache disabled: {e}")
             self._redis_available = False
             return None
+        # Kept only once it answers. Keeping it before the ping left a dead
+        # client that the signature index retried on every analysis (~4 s per
+        # refused connect on Windows, twice per analysis).
+        self._redis = client
+        self._redis_available = True
+        logger.info("Redis L2 cache connected")
+        return client
 
     # ── Supabase connection (lazy) ──
 
@@ -498,18 +502,20 @@ class AnalysisCache:
         if not signature or not repo_id:
             return
         self._signatures[signature] = repo_id
-        if self._redis is not None:
+        r = self._get_redis()
+        if r is not None:
             try:
                 key = f"{_REDIS_SIG_PREFIX}{signature}"
-                self._redis.set(key, repo_id, ex=REDIS_TTL_SECONDS)
+                r.set(key, repo_id, ex=REDIS_TTL_SECONDS)
             except Exception as e:
                 logger.warning(f"Redis signature SET failed: {e}")
 
     def _redis_get_signature(self, signature: str) -> str | None:
-        if self._redis is None:
+        r = self._get_redis()
+        if r is None:
             return None
         try:
-            return self._redis.get(f"{_REDIS_SIG_PREFIX}{signature}")
+            return r.get(f"{_REDIS_SIG_PREFIX}{signature}")
         except Exception as e:
             logger.warning(f"Redis signature GET failed: {e}")
             return None

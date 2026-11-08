@@ -102,6 +102,66 @@ def test_a_commit_analyzed_before_a_restart_is_still_found(monkeypatch):
     assert lookup.queries == 1
 
 
+class FakeRedis:
+    """A Redis client; ``refuses`` makes every call fail like a server that isn't running."""
+
+    def __init__(self, *, refuses: bool) -> None:
+        self.refuses = refuses
+        self.calls: list[str] = []
+        self.store: dict[str, str] = {}
+
+    def _call(self, name: str) -> None:
+        self.calls.append(name)
+        if self.refuses:
+            raise ConnectionError("Error 10061 connecting to localhost:6379")
+
+    def ping(self) -> bool:
+        self._call("ping")
+        return True
+
+    def get(self, key: str) -> str | None:
+        self._call("get")
+        return self.store.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._call("set")
+        self.store[key] = value
+
+
+def _cache_with_redis(monkeypatch, client: FakeRedis) -> AnalysisCache:
+    import redis
+
+    monkeypatch.setattr(settings, "redis_url", "redis://localhost:6379")
+    monkeypatch.setattr(redis, "from_url", lambda url, **kwargs: client)
+    cache = AnalysisCache()
+    cache._supabase_available = False
+    return cache
+
+
+def test_a_redis_that_refused_once_is_not_dialed_again_for_signatures(monkeypatch):
+    # On Windows each refused connect took ~4 s, and the signature index kept
+    # retrying the dead client: ~8 s added to every analysis in dev.
+    client = FakeRedis(refuses=True)
+    cache = _cache_with_redis(monkeypatch, client)
+    assert cache._get_redis() is None  # the first contact fails
+
+    cache.register_signature("octo/demo@abc123", "aaaaaaaaaaaa")
+    cache._redis_get_signature("octo/demo@abc123")
+
+    assert client.calls == ["ping"]
+    assert cache._signatures["octo/demo@abc123"] == "aaaaaaaaaaaa"  # memory still has it
+
+
+def test_signatures_reach_redis_even_when_nothing_connected_first(monkeypatch):
+    client = FakeRedis(refuses=False)
+    cache = _cache_with_redis(monkeypatch, client)
+
+    cache.register_signature("octo/demo@abc123", "aaaaaaaaaaaa")
+
+    assert client.store == {"rune:sig:octo/demo@abc123": "aaaaaaaaaaaa"}
+    assert cache._redis_get_signature("octo/demo@abc123") == "aaaaaaaaaaaa"
+
+
 def test_a_signature_that_names_no_commit_is_never_looked_up(monkeypatch):
     cache = AnalysisCache()
     cache._redis_available = False
