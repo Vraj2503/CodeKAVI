@@ -21,7 +21,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 
 from rune.analyzer import analyze_dependencies, patch_dep_graph
 from rune.auth import verify_supabase_token
-from rune.cache import AnalysisCache
+from rune.cache import PIPELINE_VERSION, AnalysisCache
 from rune.classifier import classify_files, summarize_roles
 from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
 from rune.embedding import configured_index_embedding, indexing_embedding_is_configured
@@ -35,7 +35,7 @@ from rune.graph import (
     export_mermaid,
 )
 from rune.index_status import COMPLETE, NOT_CONFIGURED, PENDING, make_status, resolve_index_status
-from rune.indexer import index_repository_and_record
+from rune.indexer import index_recipe, index_repository_and_record
 from rune.limiter import per_minute
 from rune.logging_config import repo_id_ctx
 from rune.nn_extractor import extract_all_models, select_nn_candidates
@@ -332,21 +332,35 @@ async def _run_pipeline(
 # ── Routes ──
 
 
-async def _reuse_unchanged_commit(
-    cache: AnalysisCache, clone_info: dict, user_id: str, github_url: str, *, force: bool
-) -> dict | None:
-    """Answer from an earlier analysis of this exact commit; None to run the pipeline.
+@dataclass(frozen=True)
+class EarlierAnalysis:
+    """An earlier analysis of this exact commit, with an index as good as a fresh one."""
 
-    T4.4 shared analyses across users on /analyze only. T5 uses it on both
-    routes, because the stream re-analyzed an unchanged commit on every click
-    and re-embedded the repo into a duplicate vector set. Reused only when
-    that is as good as a fresh run: the cached analysis is the current version
-    (``resolve_signature`` checks), and its vectors are completely indexed
-    with the embedding identity and document prefix a fresh index would use.
+    repo_id: str
+    record: dict
+    signature: str
+    index_status: dict  # of the vectors it points at: complete
 
-    This request's repo_id then gets a copy of the analysis, owned by this
-    user, with ``vector_repo_id`` pointing at the vectors. Nothing is
-    analyzed or embedded. The repo_id stays the freshly allocated, opaque one.
+    @property
+    def vector_repo_id(self) -> str:
+        """The analysis whose vectors hold this commit's code."""
+        return self.record.get("vector_repo_id") or self.repo_id
+
+    @property
+    def pipeline_version(self) -> int:
+        """Which pipeline produced its facts; records from before T28 carry none."""
+        return self.record.get("pipeline_version") or 0
+
+
+async def _earlier_analysis_to_reuse(cache: AnalysisCache, clone_info: dict, *, force: bool) -> EarlierAnalysis | None:
+    """The earlier analysis of this commit whose index a fresh run would rebuild; None to index afresh.
+
+    Its index must be complete, in the embedding space a fresh index would use
+    (identity and document prefix, T5), and chunked from the same recipe
+    (T28: index version, test exclusion, local chunk sizes). Indexes recorded
+    before T28 carry no recipe and count as built from today's. The analysis
+    itself must be readable by this code (``resolve_signature`` checks
+    ``ANALYSIS_VERSION``); whether its facts are current is the caller's call.
     """
     signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
     if not signature or force or not settings.analyze_reuse_unchanged_commits:
@@ -363,7 +377,53 @@ async def _reuse_unchanged_commit(
             f"via {built_with}; a fresh one would use {configured_index_embedding()}."
         )
         return None
+    recipe = status.get("index_recipe")
+    if recipe is not None and recipe != index_recipe(built_with[0]):
+        logger.info(
+            f"Not reusing the index of {signature}: it was chunked with {recipe}; "
+            f"a fresh one would use {index_recipe(built_with[0])}."
+        )
+        return None
+    return EarlierAnalysis(repo_id=indexed_repo_id, record=earlier, signature=signature, index_status=status)
 
+
+def _index_fields(earlier: EarlierAnalysis | None, indexing_enabled: bool) -> dict:
+    """A fresh analysis's index: its own, scheduled now, or the earlier analysis's (T28)."""
+    if earlier is not None:
+        # No index_status of its own: like a deduplicated analysis, it reads
+        # the status of the analysis whose vectors it points at, and keeps a
+        # copy for when that record is gone (resolve_index_status).
+        return {"vector_repo_id": earlier.vector_repo_id, "vector_index_status": earlier.index_status}
+    # Replaced with the outcome when the index job finishes; a job that
+    # never gets to run leaves "pending" behind (see index_status.py).
+    return {"index_status": make_status(PENDING if indexing_enabled else NOT_CONFIGURED)}
+
+
+def _log_index_kept(earlier: EarlierAnalysis) -> None:
+    logger.info(
+        f"Analyzing {earlier.signature} again: {earlier.repo_id} came from pipeline "
+        f"v{earlier.pipeline_version}, this is v{PIPELINE_VERSION}. Keeping its index ({earlier.vector_repo_id})."
+    )
+
+
+async def _reuse_unchanged_commit(
+    cache: AnalysisCache, clone_info: dict, user_id: str, github_url: str, earlier: EarlierAnalysis
+) -> dict:
+    """Answer from an earlier analysis of this exact commit, made by this pipeline.
+
+    T4.4 shared analyses across users on /analyze only. T5 uses it on both
+    routes, because the stream re-analyzed an unchanged commit on every click
+    and re-embedded the repo into a duplicate vector set. Reused only when
+    that is as good as a fresh run: the index passes
+    ``_earlier_analysis_to_reuse`` and the facts come from this pipeline
+    (``PIPELINE_VERSION``).
+
+    This request's repo_id then gets a copy of the analysis, owned by this
+    user, with ``vector_repo_id`` pointing at the vectors. Nothing is
+    analyzed or embedded. The repo_id stays the freshly allocated, opaque one.
+    """
+    signature = earlier.signature
+    indexed_repo_id, earlier_record = earlier.repo_id, earlier.record
     repo_id = clone_info["repo_id"]
     logger.info(f"Reusing the analysis of {signature} from {indexed_repo_id}: nothing re-analyzed or re-embedded.")
     # H-01: keep the signature pinned to the ORIGIN repo_id (the one whose
@@ -372,7 +432,7 @@ async def _reuse_unchanged_commit(
     # ``repo_id`` and re-pointed the shared signature index at a repo_id whose
     # result was never cached — an ownership-transfer that broke dedup for
     # every later caller.
-    origin_repo_id = earlier.get("_origin_repo_id", indexed_repo_id)
+    origin_repo_id = earlier_record.get("_origin_repo_id", indexed_repo_id)
     await _run_sync(cache.register_signature, signature, origin_repo_id)
 
     # This request's repo_id has no analysis or vectors of its own. Save the
@@ -382,17 +442,18 @@ async def _reuse_unchanged_commit(
     # has nothing to search. Saved before responding (not as a background
     # task) so an immediate follow-up can't trigger that re-analysis and lose
     # the pointer.
-    shared = {k: v for k, v in earlier.items() if k not in ("index_status", "_analysis_version")}
+    shared = {k: v for k, v in earlier_record.items() if k not in ("index_status", "_analysis_version")}
     shared.update(
         repo_name=clone_info["repo_name"],
         owner=clone_info["owner"],
         owner_user_id=user_id,
         _origin_repo_id=origin_repo_id,
-        vector_repo_id=earlier.get("vector_repo_id") or indexed_repo_id,
+        vector_repo_id=earlier.vector_repo_id,
+        vector_index_status=earlier.index_status,
         repo_signature=signature,
     )
     await _run_sync(save_analysis, repo_id, clone_info["clone_path"], shared, cache)
-    repo_data = earlier.get("repo_data", {}) or {
+    repo_data = earlier_record.get("repo_data", {}) or {
         "total_files": 0,
         "total_size": 0,
         "total_size_formatted": "0 B",
@@ -410,14 +471,14 @@ async def _reuse_unchanged_commit(
         "deduplicated": True,
         "signature": signature,
         **repo_data,
-        "dependencies": earlier.get("dep_data", {}),
-        "file_profiles": earlier.get("file_profiles", []),
-        "role_summary": earlier.get("role_summary", {}),
-        "graph": earlier.get("graph_json", {}),
-        "module_graph": earlier.get("module_graph", {}),
+        "dependencies": earlier_record.get("dep_data", {}),
+        "file_profiles": earlier_record.get("file_profiles", []),
+        "role_summary": earlier_record.get("role_summary", {}),
+        "graph": earlier_record.get("graph_json", {}),
+        "module_graph": earlier_record.get("module_graph", {}),
         "cycles": {"has_cycles": False, "cycles": []},
         "mermaid": {"file_level": "", "module_level": ""},
-        "nn_models": earlier.get("nn_models", []),
+        "nn_models": earlier_record.get("nn_models", []),
         "index_status": await resolve_index_status(cache, shared, repo_id),
     }
 
@@ -458,9 +519,11 @@ async def analyze(
     token = repo_id_ctx.set(repo_id)
 
     signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
-    reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, force=body.force)
-    if reused is not None:
-        return reused
+    earlier = await _earlier_analysis_to_reuse(cache, clone_info, force=body.force)
+    if earlier is not None and earlier.pipeline_version == PIPELINE_VERSION:
+        return await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, earlier)
+    if earlier is not None:
+        _log_index_kept(earlier)
 
     try:
         # Traverse and collect metadata
@@ -565,6 +628,9 @@ async def analyze(
             # T5: lets a later analysis of this commit find and reuse it
             # after a restart, when the in-memory signature index is gone.
             "repo_signature": signature,
+            # T28: a later analysis of this commit reuses these facts only if
+            # the same pipeline would produce them.
+            "pipeline_version": PIPELINE_VERSION,
             # H1: diff-tour input — what changed since the fingerprints this
             # analysis was compared against. Absent on a repo's first-ever
             # analysis, which get_repo_diff_tour treats as "no prior analysis"
@@ -576,9 +642,7 @@ async def analyze(
                 **{path: fp.change_type for path, fp in fingerprints.items()},
                 **{path: "DELETED" for path in deleted_paths},
             },
-            # Replaced with the outcome when the index job finishes; a job that
-            # never gets to run leaves "pending" behind (see index_status.py).
-            "index_status": make_status(PENDING if indexing_enabled else NOT_CONFIGURED),
+            **_index_fields(earlier, indexing_enabled),
         }
         # H-02: route through the task registry so shutdown can wait for this
         # to actually finish before draining the executors it runs on.
@@ -592,8 +656,9 @@ async def analyze(
         if signature:
             await _run_sync(cache.register_signature, signature, repo_id)
 
-        # Index repository for RAG in the background (prevents proxy timeouts)
-        if indexing_enabled:
+        # Index repository for RAG in the background (prevents proxy timeouts),
+        # unless this commit's earlier index is kept (T28).
+        if indexing_enabled and earlier is None:
             background_tasks.add_task(
                 task_registry.wrap(index_repository_and_record),
                 repo_id,
@@ -617,7 +682,7 @@ async def analyze(
             "cycles": cycles_data,
             "mermaid": mermaid,
             "nn_models": nn_models,
-            "index_status": result_data["index_status"],
+            "index_status": await resolve_index_status(cache, result_data, repo_id),
         }
         return final_result
     finally:
@@ -740,9 +805,13 @@ async def analyze_stream(
 
         try:
             # T5: an unchanged, fully indexed commit is answered from its earlier
-            # analysis: no pipeline, no new vector set.
-            reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, force=body.force)
-            if reused is not None:
+            # analysis: no pipeline, no new vector set. T28: if an older
+            # pipeline made that analysis, run this one but keep its index.
+            earlier = await _earlier_analysis_to_reuse(cache, clone_info, force=body.force)
+            if earlier is not None and earlier.pipeline_version != PIPELINE_VERSION:
+                _log_index_kept(earlier)
+            elif earlier is not None:
+                reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, earlier)
                 final_seq = _next_seq(seq_box)
                 yield _sse_event(
                     "complete",
@@ -855,8 +924,9 @@ async def analyze_stream(
                 "symbol_graph": pipeline_result.symbol_graph,
                 # H-01: see non-streaming /analyze — pins dedup to the origin repo_id.
                 "_origin_repo_id": repo_id,
-                # T5: see non-streaming /analyze.
+                # T5, T28: see non-streaming /analyze.
                 "repo_signature": signature,
+                "pipeline_version": PIPELINE_VERSION,
                 # H1: see non-streaming /analyze — diff-tour input, including
                 # deleted paths for H4's banner (see comment there).
                 "last_change_map": {
@@ -864,7 +934,7 @@ async def analyze_stream(
                     **{path: "DELETED" for path in deleted_paths},
                 },
                 # See non-streaming /analyze.
-                "index_status": make_status(PENDING if indexing_enabled else NOT_CONFIGURED),
+                **_index_fields(earlier, indexing_enabled),
             }
             # H-02: route through the task registry so shutdown can wait for
             # this to actually finish before draining the executors it runs on.
@@ -873,8 +943,16 @@ async def analyze_stream(
                 task_registry.wrap(save_analysis), repo_id, clone_info["clone_path"], stream_result_data, cache
             )
 
-            # Stage 7: Indexing (embedding) — move to background task
-            if indexing_enabled:
+            # Stage 7: Indexing (embedding) — move to background task, unless
+            # this commit's earlier index is kept (T28).
+            if earlier is not None:
+                yield _sse_event(
+                    "indexing",
+                    90,
+                    "Same commit as an earlier analysis: kept its search index.",
+                    seq=_next_seq(seq_box),
+                )
+            elif indexing_enabled:
                 background_tasks.add_task(
                     task_registry.wrap(index_repository_and_record),
                     repo_id,
@@ -905,7 +983,7 @@ async def analyze_stream(
                 "cycles": cycles_data,
                 "mermaid": mermaid_code,
                 "nn_models": nn_models,
-                "index_status": stream_result_data["index_status"],
+                "index_status": await resolve_index_status(cache, stream_result_data, repo_id),
             }
             # T2.4 — final event carries seq + total_events so the client can
             # verify completeness. Replaces the previous bare "data: [DONE]\n\n"

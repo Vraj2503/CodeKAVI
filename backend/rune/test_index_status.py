@@ -11,6 +11,7 @@ from rune.index_status import (
     chat_unavailable_message,
     make_status,
     record_index_status,
+    resolve_embedding_identity,
     resolve_index_status,
     status_from_outcome,
     vector_repo_id,
@@ -102,6 +103,26 @@ async def test_a_vanished_vector_owner_means_status_unknown():
     shared = {"vector_repo_id": "bbbbbbbbbbbb"}
 
     assert await resolve_index_status(FakeCache(), shared, "aaaaaaaaaaaa") is None
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_keeps_its_vectors_status_after_the_owner_record_is_gone():
+    kept = make_status("complete", embedding_identity="bge-large-en-v1.5:cls")
+    pointer = {"vector_repo_id": "bbbbbbbbbbbb", "vector_index_status": kept}  # owner deleted from history
+
+    assert await resolve_index_status(FakeCache(), pointer, "aaaaaaaaaaaa") == kept
+    # Chat embeds the question in the space the vectors are in, not the Cloudflare default.
+    assert await resolve_embedding_identity(FakeCache(), pointer, "aaaaaaaaaaaa") == "bge-large-en-v1.5:cls"
+
+
+@pytest.mark.asyncio
+async def test_the_owners_live_status_comes_before_the_kept_copy():
+    owner = {"index_status": {"status": "failed"}}
+    pointer = {"vector_repo_id": "bbbbbbbbbbbb", "vector_index_status": {"status": "complete"}}
+
+    status = await resolve_index_status(FakeCache({"bbbbbbbbbbbb": owner}), pointer, "aaaaaaaaaaaa")
+
+    assert status == {"status": "failed"}
 
 
 # ── Recording ──

@@ -28,11 +28,26 @@ _REDIS_PREFIX = "codekavi:result:"  # keyspace of live cache entries
 # T4.4 — Redis key prefix for the cross-user signature index.
 _REDIS_SIG_PREFIX = "rune:sig:"
 
-# Bump whenever analyzer/fingerprint/graph-export logic changes in a way
-# that alters cached output. A mismatch makes cached results a cache miss,
-# forcing transparent re-analysis. Current bump: fix UnboundLocalError in
-# analyze route that cached empty (zero-edge) dep graphs on the FULL_UPDATE path.
+# Two versions, for two kinds of change.
+#
+# ANALYSIS_VERSION: bump only when records written by older code can't be read
+# safely. A mismatch makes every saved analysis a cache miss. Opening one then
+# re-analyzes it from its clone on disk into a reduced record (no vector
+# pointer, index status, owner or symbol graph: session._bg_reanalyze), or
+# finds nothing if the clone is gone. It also hides every earlier analysis
+# from reuse, so each unchanged commit is embedded again. Current bump: fix
+# UnboundLocalError in analyze route that cached empty (zero-edge) dep graphs
+# on the FULL_UPDATE path.
 ANALYSIS_VERSION = "3"
+
+# PIPELINE_VERSION: bump when an analysis would produce different facts
+# (analyzer, classifier, graph export, symbols, ...) and older records still
+# read fine. Saved analyses keep opening as they were. A new analysis of a
+# commit that an older pipeline analyzed runs the pipeline again (seconds)
+# and keeps the earlier index if a fresh one would be built the same way, so
+# nothing is embedded twice (T28). The analyze routes stamp it on the records
+# they build; records from before T28 carry none, which counts as 0.
+PIPELINE_VERSION = 1
 
 # Writes to one repo's record are serialized by a lock picked from this pool
 # (striped by repo_id, so the pool stays fixed-size however many repos pass

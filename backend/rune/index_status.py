@@ -18,6 +18,8 @@ with a stale ``updated_at``.
 
 A deduplicated analysis has no vectors of its own. Its ``vector_repo_id``
 points at the analysis whose vectors it shares, and its status is read there.
+So does an analysis that re-ran the pipeline on an unchanged commit and kept
+the earlier index (T28).
 """
 
 import logging
@@ -55,6 +57,8 @@ class IndexOutcome:
     index_seconds: float = field(default=0.0, compare=False)
     fallback_from: str | None = field(default=None, compare=False)
     document_prefix: str = field(default="", compare=False)
+    # How the chunks were made (indexer.index_recipe); reuse compares it (T28).
+    index_recipe: dict[str, Any] | None = field(default=None, compare=False)
 
 
 def make_status(
@@ -69,6 +73,7 @@ def make_status(
     index_seconds: float | None = None,
     fallback_from: str | None = None,
     document_prefix: str | None = None,
+    index_recipe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {"status": status, "updated_at": datetime.now(UTC).isoformat(timespec="seconds")}
     if attempted is not None:
@@ -89,6 +94,8 @@ def make_status(
         record["fallback_from"] = fallback_from
     if document_prefix:
         record["document_prefix"] = document_prefix
+    if index_recipe:
+        record["index_recipe"] = dict(index_recipe)
     return record
 
 
@@ -112,6 +119,7 @@ def status_from_outcome(outcome: IndexOutcome) -> dict[str, Any]:
         index_seconds=outcome.index_seconds if outcome.embedding_identity else None,
         fallback_from=outcome.fallback_from,
         document_prefix=outcome.document_prefix if outcome.document_prefix else None,
+        index_recipe=outcome.index_recipe if outcome.embedding_identity else None,
     )
 
 
@@ -121,11 +129,19 @@ def vector_repo_id(result: dict[str, Any] | None, repo_id: str) -> str:
 
 
 async def resolve_index_status(cache: Any, result: dict[str, Any] | None, repo_id: str) -> dict[str, Any] | None:
-    """Index status for ``repo_id``, read from whichever analysis owns its vectors."""
+    """Index status for ``repo_id``, read from whichever analysis owns its vectors.
+
+    A record that points at another analysis's vectors also keeps the status
+    they had when it was saved (``vector_index_status``: complete, since only
+    a complete index is reused). It answers when the owner's record is gone,
+    say deleted from history, so chat still embeds questions in the right
+    space. The owner's live status comes first.
+    """
     owner = vector_repo_id(result, repo_id)
-    if owner != repo_id:
-        result = await run_sync(cache.get, owner)
-    return (result or {}).get("index_status")
+    if owner == repo_id:
+        return (result or {}).get("index_status")
+    owner_result = await run_sync(cache.get, owner)
+    return (owner_result or {}).get("index_status") or (result or {}).get("vector_index_status")
 
 
 async def resolve_embedding_identity(cache: Any, result: dict[str, Any] | None, repo_id: str) -> str:

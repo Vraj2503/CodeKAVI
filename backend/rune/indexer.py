@@ -12,7 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from rune.config import detect_language, is_test_path
 from rune.config import detect_layer as _detect_layer
-from rune.embedding import EmbeddingProviderUnavailable, select_index_embedding_provider
+from rune.embedding import CLOUDFLARE_IDENTITY, EmbeddingProviderUnavailable, select_index_embedding_provider
 from rune.exceptions import IndexingError
 from rune.index_status import INTERRUPTED, IndexOutcome, make_status, record_index_status, status_from_outcome
 from rune.settings import settings
@@ -26,6 +26,24 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 20  # chunks per embedding request
 MAX_RETRIES = 6  # Retry attempts on transient / rate-limit errors
 INITIAL_BACKOFF_S = 20  # Start at 20s; doubles each attempt on 429
+
+# Bump when indexing would store different chunks for the same files and
+# settings: the chunker, which files get indexed, what a chunk carries.
+INDEX_VERSION = 1
+
+
+def index_recipe(identity: str) -> dict[str, Any]:
+    """What decides an index's chunks, beyond its embedding space (identity, prefix).
+
+    Recorded on each index's status. An unchanged commit reuses an earlier
+    index only if a fresh one would be built from the same recipe (T28), so
+    turning ``INDEX_EXCLUDE_TESTS`` or a local chunk size knob re-indexes.
+    """
+    recipe: dict[str, Any] = {"version": INDEX_VERSION, "exclude_tests": settings.index_exclude_tests}
+    if identity != CLOUDFLARE_IDENTITY:  # local models chunk by tokens, sized by these
+        recipe["chunk_tokens"] = settings.local_embedding_chunk_tokens
+        recipe["chunk_overlap_tokens"] = settings.local_embedding_chunk_overlap_tokens
+    return recipe
 
 
 def _chunk_line_spans(content: str, chunks: list[str], file_path: str) -> list[tuple[int, int]]:
@@ -239,6 +257,7 @@ async def index_repository(
         return IndexOutcome(error=e.reason)
     embedder = selection.provider
     embedding_identity = getattr(embedder, "identity", "cloudflare")
+    recipe = index_recipe(embedding_identity)
 
     # 1. Setup Collection & Client
     try:
@@ -419,6 +438,7 @@ async def index_repository(
         insert_seconds=insert_seconds,
         index_seconds=index_seconds,
         fallback_from=selection.fallback_from,
+        index_recipe=recipe,
     )
 
 

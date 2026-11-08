@@ -15,9 +15,10 @@ from fastapi.testclient import TestClient
 
 from rune import fingerprint, limiter, vectorstore
 from rune.auth import verify_supabase_token
-from rune.cache import AnalysisCache
+from rune.cache import PIPELINE_VERSION, AnalysisCache
 from rune.fingerprint import ChangeClassification
 from rune.index_status import make_status
+from rune.indexer import INDEX_VERSION, index_recipe
 from rune.pipeline_models import DepGraph, RepoData
 from rune.routes import analyze as analyze_routes
 from rune.routes import chat as chat_routes
@@ -34,7 +35,9 @@ URL = "https://github.com/octo/demo"
 
 
 def _analysis(owner_user_id: str, **extra) -> dict:
+    """A saved analysis, made by this pipeline unless ``pipeline_version`` says otherwise."""
     return {
+        "pipeline_version": PIPELINE_VERSION,
         "repo_name": "demo",
         "owner": "octo",
         "owner_user_id": owner_user_id,
@@ -166,6 +169,7 @@ def test_analyze_stamps_index_status_and_only_schedules_indexing_when_configured
     expected = "pending" if enabled else "not_configured"
     assert response.json()["index_status"]["status"] == expected
     assert cache.get(NEW)["index_status"]["status"] == expected
+    assert cache.get(NEW)["pipeline_version"] == PIPELINE_VERSION
     assert pipeline == ([(NEW, clone["clone_path"], cache)] if enabled else [])
 
 
@@ -218,6 +222,7 @@ def test_a_deduplicated_analysis_is_saved_for_the_new_user_and_shares_the_origin
     assert (saved["vector_repo_id"], saved["_origin_repo_id"]) == (ORIGIN, ORIGIN)
     assert saved["repo_signature"] == SIGNATURE  # findable after a restart
     assert "index_status" not in saved  # always read live from the vector owner
+    assert saved["vector_index_status"]["status"] == "complete"  # for when the owner's record is gone
 
     assert body["index_status"]["status"] == "complete"
     assert cache.get(ORIGIN)["owner_user_id"] == "user-a"
@@ -296,6 +301,139 @@ def test_analyze_follows_the_same_rule(app, cache, clone, pipeline, cloudflare_i
     assert response.status_code == 200, response.text
     assert "deduplicated" not in response.json()
     assert pipeline == [(NEW, clone["clone_path"], cache)]
+
+
+@pytest.mark.parametrize(
+    ("recipe", "reindexed"),
+    [
+        (None, False),  # recorded before T28: counts as today's
+        ({"version": INDEX_VERSION, "exclude_tests": True}, False),
+        ({"version": INDEX_VERSION, "exclude_tests": False}, True),  # tests went in; a fresh index leaves them out
+        ({"version": INDEX_VERSION - 1, "exclude_tests": True}, True),  # chunked by older indexing code
+    ],
+    ids=["no-recipe", "same", "tests-indexed", "older-chunker"],
+)
+def test_an_index_is_reused_only_if_a_fresh_one_would_be_chunked_the_same_way(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, recipe, reindexed
+):
+    _configure_indexing(monkeypatch, True)
+    monkeypatch.setattr(settings, "index_exclude_tests", True)
+    status = make_status("complete", index_recipe=recipe)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=status))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert pipeline == ([(NEW, clone["clone_path"], cache)] if reindexed else [])
+
+
+@pytest.mark.parametrize(("built_with_tokens", "reindexed"), [(384, False), (512, True)])
+def test_a_local_index_is_rebuilt_when_its_chunk_size_setting_changes(
+    app, cache, clone, pipeline, monkeypatch, built_with_tokens, reindexed
+):
+    identity = "bge-large-en-v1.5:cls"
+    _configure_indexing(monkeypatch, True)
+    monkeypatch.setattr(analyze_routes, "configured_index_embedding", lambda: (identity, ""))
+    monkeypatch.setattr(settings, "local_embedding_chunk_tokens", 384)
+    recipe = {**index_recipe(identity), "chunk_tokens": built_with_tokens}
+    status = make_status("complete", embedding_identity=identity, index_recipe=recipe)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=status))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert pipeline == ([(NEW, clone["clone_path"], cache)] if reindexed else [])
+
+
+# ── An older pipeline's analysis of the same commit (T28) ──
+
+
+def _older_analysis(owner_user_id: str, older: dict, **extra) -> dict:
+    """A saved analysis from an older pipeline: ``older`` is {} (before T28) or its version."""
+    record = _analysis(owner_user_id, **extra)
+    del record["pipeline_version"]
+    return {**record, **older}
+
+
+@pytest.mark.parametrize("older", [{}, {"pipeline_version": PIPELINE_VERSION - 1}], ids=["before-T28", "older"])
+def test_the_stream_reruns_an_older_pipeline_but_keeps_its_index(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, older
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _older_analysis("user-a", older, _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    events = _events(response)
+    assert "traversing" in [event["stage"] for event in events]  # the pipeline ran
+    indexing = next(event for event in events if event["stage"] == "indexing")
+    assert "kept its search index" in indexing["message"]
+    assert pipeline == []  # nothing embedded: no new vector set
+    result = events[-1]["data"]["result"]
+    assert "deduplicated" not in result
+    assert result["index_status"]["status"] == "complete"
+    saved = cache.get(NEW)
+    assert saved["pipeline_version"] == PIPELINE_VERSION
+    assert (saved["vector_repo_id"], saved["_origin_repo_id"], saved["owner_user_id"]) == (ORIGIN, NEW, "user-b")
+    assert "index_status" not in saved  # read live from the vector owner
+    assert saved["vector_index_status"]["status"] == "complete"
+    assert cache.resolve_signature(SIGNATURE)[0] == NEW  # later analyses get the new facts
+
+
+def test_analyze_reruns_an_older_pipeline_and_keeps_its_index_too(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _older_analysis("user-a", {}, _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "deduplicated" not in body
+    assert body["index_status"]["status"] == "complete"
+    assert pipeline == []
+    saved = cache.get(NEW)
+    assert (saved["vector_repo_id"], saved["pipeline_version"]) == (ORIGIN, PIPELINE_VERSION)
+    assert "index_status" not in saved
+
+
+def test_keeping_a_shared_analysis_index_points_at_the_vectors_underneath(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ROOT, _older_analysis("user-a", {}, _origin_repo_id=ROOT, index_status=make_status("complete")))
+    cache.set(ORIGIN, _older_analysis("user-c", {}, _origin_repo_id=ROOT, vector_repo_id=ROOT))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert pipeline == []
+    assert cache.get(NEW)["vector_repo_id"] == ROOT
+
+
+def test_once_rerun_the_commit_is_reused_whole_again(app, cache, clone, pipeline, cloudflare_index, monkeypatch):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _older_analysis("user-a", {}, _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+    client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})  # reruns the pipeline as NEW
+
+    later_repo_id = "111111111111"
+    later = {**clone, "repo_id": later_repo_id, "clone_path": clone["clone_path"].replace(NEW, later_repo_id)}
+    monkeypatch.setattr(analyze_routes, "clone_repo", lambda url: dict(later))
+    response = client_for(app, "user-d").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert [event["stage"] for event in _events(response)] == ["cloning", "complete"]
+    saved = cache.get(later_repo_id)
+    assert (saved["vector_repo_id"], saved["_origin_repo_id"]) == (ORIGIN, NEW)
+    assert pipeline == []  # embedded once, ever
 
 
 def test_restore_reports_the_status_of_the_vectors_an_analysis_shares(app, cache):

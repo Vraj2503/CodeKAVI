@@ -20,7 +20,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from rune import indexer
 from rune.config import is_test_path
-from rune.index_status import IndexOutcome
+from rune.index_status import IndexOutcome, status_from_outcome
 from rune.settings import settings
 
 REPO_ID = "abcdef012345"
@@ -121,6 +121,34 @@ def _expected_chunks(files: dict[str, str]) -> dict[str, str]:
         for i, chunk in enumerate(_splitter().split_text(content)):
             expected[f"{REPO_ID}_{file_hash}_{i}"] = chunk
     return expected
+
+
+# ── Recipe (T28) ──
+
+
+@pytest.mark.asyncio
+async def test_the_outcome_records_how_the_chunks_were_made(repo, fakes, monkeypatch):
+    root, _, profiles = repo
+    monkeypatch.setattr(settings, "index_exclude_tests", False)
+
+    outcome = await indexer.index_repository(REPO_ID, profiles, root)
+
+    assert outcome.index_recipe == {"version": indexer.INDEX_VERSION, "exclude_tests": False}
+    assert status_from_outcome(outcome)["index_recipe"] == outcome.index_recipe
+
+
+def test_a_local_models_recipe_also_names_its_chunk_sizes(monkeypatch):
+    monkeypatch.setattr(settings, "index_exclude_tests", True)
+    monkeypatch.setattr(settings, "local_embedding_chunk_tokens", 384)
+    monkeypatch.setattr(settings, "local_embedding_chunk_overlap_tokens", 32)
+
+    assert indexer.index_recipe("cloudflare") == {"version": indexer.INDEX_VERSION, "exclude_tests": True}
+    assert indexer.index_recipe("bge-large-en-v1.5:cls") == {
+        "version": indexer.INDEX_VERSION,
+        "exclude_tests": True,
+        "chunk_tokens": 384,
+        "chunk_overlap_tokens": 32,
+    }
 
 
 # ── Batch hand-off ──
