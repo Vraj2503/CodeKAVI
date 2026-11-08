@@ -17,8 +17,6 @@ const sectionOrder = [
   "architecture",
   "components",
   "data_flow",
-  "dependencies",
-  "complexity",
   "patterns",
   "mindmap",
 ] as const;

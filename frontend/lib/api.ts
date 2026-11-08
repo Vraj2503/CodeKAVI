@@ -198,8 +198,6 @@ export interface ChatResponse {
 // ── Visualization Types (NEW) ──
 
 export type VizType =
-  | "dependencies"
-  | "complexity"
   | "architecture"
   | "dataflow"
   | "mindmap"

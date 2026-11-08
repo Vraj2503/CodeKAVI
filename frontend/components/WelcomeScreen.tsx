@@ -50,7 +50,7 @@ const CAPABILITIES = [
   },
   {
     title: "Architecture at a glance",
-    body: "Dependency, complexity and data-flow charts built from the real graph.",
+    body: "Architecture, data-flow and mind-map charts built from the real graph.",
   },
   {
     title: "Traceable claims",
