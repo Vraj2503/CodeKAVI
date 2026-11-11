@@ -132,7 +132,11 @@ function ArchitectureGraphCanvas({ data }: { data: ArchitectureGraphData }) {
       </button>
       {inspectorOpen && (
         <aside className="absolute bottom-0 right-0 top-0 z-10 w-[min(340px,45%)] border-l border-border bg-background/95 shadow-xl backdrop-blur">
-          <ArchitectureInspector node={selected} onClose={() => setSelected(null)} />
+          <ArchitectureInspector
+            node={selected}
+            diagnostics={data.diagnostics}
+            onClose={() => setSelected(null)}
+          />
         </aside>
       )}
     </div>
