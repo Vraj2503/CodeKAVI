@@ -39,6 +39,8 @@ from rune.settings import settings
 from rune.utils import run_sync
 from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
 from rune.architecture import build_architecture_manifest
+from rune.architecture_rules import format_evidence_sentence
+from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -353,8 +355,174 @@ async def visualize_complexity(
 
 
 # ─────────────────────────────────────────
-# 3. Architecture Graph (NO LLM)
+# 3. Architecture Graph (Static or LLM-Enriched)
 # ─────────────────────────────────────────
+
+def _read_readme_excerpt(clone_path: str | None, result: dict[str, Any], max_chars: int = 2500) -> str:
+    if clone_path and os.path.isdir(clone_path):
+        for candidate in ("README.md", "readme.md", "README", "README.rst", "README.txt"):
+            p = os.path.join(clone_path, candidate)
+            if os.path.isfile(p):
+                try:
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        return f.read(max_chars).strip()
+                except Exception:
+                    pass
+
+    repo_data = result.get("repo_data", {})
+    if isinstance(repo_data, dict):
+        desc = repo_data.get("description")
+        if desc:
+            return str(desc).strip()
+
+    return ""
+
+
+def _read_package_description(clone_path: str | None) -> str:
+    if clone_path and os.path.isdir(clone_path):
+        pkg_json = os.path.join(clone_path, "package.json")
+        if os.path.isfile(pkg_json):
+            try:
+                with open(pkg_json, "r", encoding="utf-8", errors="ignore") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("description"):
+                        return f"package.json description: {data['description'].strip()}"
+            except Exception:
+                pass
+    return ""
+
+
+_SYSTEM_ARCHITECTURE_DOMAIN_ANALYST = (
+    "You are a principal software architect explaining the business domain and component roles "
+    "of a specific codebase to engineers and product stakeholders.\n\n"
+    "Your objective: For each component node in the architecture diagram, explain its concrete "
+    "role and the business problem it solves in THIS specific application.\n\n"
+    "Crucial rules:\n"
+    "1. NEVER output generic textbook definitions (e.g. do NOT say 'serves as an entry gateway', "
+    "'provides in-memory caching', 'stores relational data').\n"
+    "2. Ground each description in the actual business domain of the project (e.g. e-commerce, "
+    "fintech, devtool, healthcare, gaming, analytics, social platform, etc.).\n"
+    "3. Specifically explain what real-world business capability, workflow, or user problem each component addresses.\n"
+    "4. Return strict JSON matching the requested schema.\n\n"
+    + UNTRUSTED_CODE_DISCLAIMER
+)
+
+
+def _build_architecture_domain_prompt(
+    repo_name: str,
+    owner: str,
+    project_summary: str,
+    nodes: list[Any],
+) -> str:
+    nodes_info = []
+    for node in nodes:
+        sample_files = [e.path for e in node.evidence[:4]]
+        tech_list = [f"{t.vendor} {t.product}" for t in node.technologies]
+        nodes_info.append(
+            f"- Node ID: `{node.id}`\n"
+            f"  Label: {node.label} (kind: {node.kind}, group: {node.group_id})\n"
+            f"  Technologies: {', '.join(tech_list) if tech_list else 'None'}\n"
+            f"  Sample Files: {', '.join(sample_files) if sample_files else 'None'}"
+        )
+    nodes_str = "\n".join(nodes_info)
+
+    summary_section = f"Description / README excerpt:\n{project_summary}\n" if project_summary else "No README provided."
+
+    return f"""Analyze the following software repository and explain what concrete business problem each architectural component solves.
+
+## Project Details
+- Repository: {owner}/{repo_name}
+- {summary_section}
+
+## Architecture Components:
+{nodes_str}
+
+## Instructions:
+For each component listed above:
+1. Identify the core business domain of this project (e.g. e-commerce, developer tooling, fintech, healthcare, gaming, analytics, social, etc.).
+2. For EVERY component node, explain its concrete operational role and what specific business problem or user feature it handles in THIS application.
+3. BAN generic textbook definitions (do NOT say 'serves as an entry gateway', 'manages relational data', 'in-memory cache'). Explain what real business data or user workflows flow through it.
+
+Return valid JSON with this exact structure:
+{{
+  "project_domain": "<1-2 sentences summarizing what this project does and its business domain>",
+  "components": {{
+    "<node_id>": {{
+      "role_in_project": "<1 concise sentence stating this component's exact role in this application>",
+      "business_problem_solved": "<1 concise sentence explaining what real-world business problem or user feature it handles in this domain>",
+      "key_workflows": "<1 concise sentence describing the key transaction, data flow, or operation passing through it>",
+      "project_safeguards": "<1 concise sentence describing how it ensures reliability, security, or data integrity for this application>"
+    }}
+  }}
+}}
+"""
+
+
+def _find_component_for_node(components: dict[str, Any], node: Any) -> dict[str, Any] | None:
+    """Match an LLM component entry by node ID, exact label, or normalized label."""
+    if node.id in components:
+        return components[node.id]
+    if node.label in components:
+        return components[node.label]
+
+    norm_label = node.label.lower().strip()
+    for k, v in components.items():
+        k_clean = k.lower().strip()
+        if k_clean == norm_label or k_clean.replace(" ", "_") == norm_label.replace(" ", "_"):
+            return v
+        if norm_label in k_clean or (len(k_clean) > 3 and k_clean in norm_label):
+            return v
+        if k in node.id or node.id in k:
+            return v
+    return None
+
+
+def _validate_architecture_domain_llm(
+    parsed: Any,
+    manifest: Any,
+) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    components = parsed.get("components")
+    if not isinstance(components, dict) or not components:
+        return False
+    return any(_find_component_for_node(components, node) is not None for node in manifest.nodes)
+
+
+def _apply_architecture_domain_llm(
+    manifest: Any,
+    parsed_components: dict[str, Any],
+) -> None:
+    for node in manifest.nodes:
+        comp = _find_component_for_node(parsed_components, node)
+        if not comp or not isinstance(comp, dict):
+            continue
+
+        role_in_project = str(comp.get("role_in_project") or "").strip()
+        biz_problem = str(comp.get("business_problem_solved") or "").strip()
+        workflows = str(comp.get("key_workflows") or "").strip()
+        safeguards = str(comp.get("project_safeguards") or "").strip()
+
+        evidence_paths = [e.path for e in node.evidence]
+        impl_sentence = format_evidence_sentence(evidence_paths)
+
+        parts = []
+        if role_in_project:
+            txt = role_in_project if role_in_project.endswith((".", "!", "?")) else f"{role_in_project}."
+            parts.append(f"Role in project: {txt}")
+        if biz_problem:
+            txt = biz_problem if biz_problem.endswith((".", "!", "?")) else f"{biz_problem}."
+            parts.append(f"Business problem solved: {txt}")
+        if workflows:
+            txt = workflows if workflows.endswith((".", "!", "?")) else f"{workflows}."
+            parts.append(f"Key project workflows: {txt}")
+        elif safeguards:
+            txt = safeguards if safeguards.endswith((".", "!", "?")) else f"{safeguards}."
+            parts.append(f"Project safeguards: {txt}")
+        parts.append(impl_sentence)
+
+        node.summary = "\n\n".join(parts)
+
 
 @router.post("/visualize/architecture/{repo_id}", dependencies=[Depends(per_minute(30))], response_model=ArchitectureResponse)
 async def visualize_architecture_v2(
@@ -367,8 +535,9 @@ async def visualize_architecture_v2(
     """
     V2 Architecture endpoint: returns responsibility-focused components
     and explicit technology models instead of file-level nodes.
+    Supports optional LLM domain enrichment (mode="llm").
     """
-    result, _ = await _load_repo(repo_id, cache, user_id)
+    result, clone_path = await _load_repo(repo_id, cache, user_id)
 
     dep_data = result.get("dep_data", {})
     file_profiles = result.get("file_profiles", [])
@@ -377,8 +546,87 @@ async def visualize_architecture_v2(
         repo_id=repo_id,
         dep_data=dep_data,
         file_profiles=file_profiles,
-        request_params=body
+        request_params=body,
     )
+
+    # ── Check if LLM enrichment requested ──
+    if body.enrichment.mode == "llm":
+        logger.info(f"[Architecture] Enrichment requested (mode=llm) for repo {repo_id}")
+
+        # 1. Tier 1: Check cache hit first
+        cached_llm = result.get("architecture_llm")
+        if cached_llm and isinstance(cached_llm, dict) and cached_llm.get("components"):
+            logger.info(f"[Architecture] LLM cache hit for repo {repo_id} ({len(cached_llm['components'])} components)")
+            _apply_architecture_domain_llm(manifest, cached_llm["components"])
+            manifest.diagnostics.is_llm_enriched = True
+            manifest.diagnostics.cached = True
+            manifest.diagnostics.model_name = cached_llm.get("model")
+            return ArchitectureResponse(data=manifest)
+
+        # 2. Tier 2: Check quota
+        from rune.quota import get_token_tracker
+        tracker = get_token_tracker()
+        if not tracker.check_quota(user_id):
+            logger.warning(f"[Architecture] Quota check failed for user {user_id}, falling back to static analysis")
+            manifest.diagnostics.fallback_reason = "quota_exceeded"
+            return ArchitectureResponse(data=manifest)
+
+        # 3. Tier 3: Call LLM provider
+        try:
+            from rune.llm.providers import get_provider
+            provider = get_provider("architecture_domain")
+
+            repo_name = result.get("repo_name") or os.path.basename(clone_path or "").rsplit("_", 1)[0]
+            owner = result.get("owner", "")
+            readme_excerpt = _read_readme_excerpt(clone_path, result)
+            pkg_desc = _read_package_description(clone_path)
+            project_summary = f"{pkg_desc}\n\n{readme_excerpt}".strip()
+
+            prompt = _build_architecture_domain_prompt(
+                repo_name=repo_name,
+                owner=owner,
+                project_summary=project_summary,
+                nodes=manifest.nodes,
+            )
+
+            logger.info(f"[Architecture] Calling LLM provider '{provider.name}' for repo {repo_id} ({len(manifest.nodes)} nodes)...")
+            response, _usage = await provider.generate_with_usage(
+                system_prompt=_SYSTEM_ARCHITECTURE_DOMAIN_ANALYST,
+                user_prompt=prompt,
+                temperature=0.2,
+                max_tokens=2000,
+                json_mode=True,
+                user_id=user_id,
+            )
+
+            parsed = json.loads(response)
+
+            if _validate_architecture_domain_llm(parsed, manifest):
+                components = parsed.get("components", {})
+                _apply_architecture_domain_llm(manifest, components)
+                manifest.diagnostics.is_llm_enriched = True
+                manifest.diagnostics.cached = False
+                manifest.diagnostics.model_name = provider.name
+
+                logger.info(f"[Architecture] LLM enrichment successful: enriched {len(components)} components for {repo_id}")
+
+                # Persist to cache so next requests are 0-cost & instant
+                result["architecture_llm"] = {
+                    "project_domain": parsed.get("project_domain", ""),
+                    "components": components,
+                    "model": provider.name,
+                }
+                await run_sync(cache.set, repo_id, result)
+            else:
+                logger.warning(f"[Architecture] LLM response validation failed for {repo_id}: components did not match manifest nodes")
+                manifest.diagnostics.fallback_reason = "invalid_llm_response"
+
+        except Exception as e:
+            logger.warning(f"[Architecture] LLM enrichment exception for {repo_id}: {e}", exc_info=True)
+            manifest.diagnostics.fallback_reason = "llm_failed"
+    else:
+        logger.info(f"[Architecture] Static mode requested for repo {repo_id} (mode={body.enrichment.mode})")
+        manifest.diagnostics.fallback_reason = "mode_static"
 
     return ArchitectureResponse(data=manifest)
 

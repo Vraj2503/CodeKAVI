@@ -1,14 +1,30 @@
-import React from "react";
-import { ArchitectureNodeData } from "./types";
+import React, { useMemo } from "react";
+import { ArchitectureNodeData, ArchitectureDiagnostics } from "./types";
 import { ScrollArea } from "@/components/ui/ScrollArea";
-import { Network, FileCode, CheckCircle2 } from "lucide-react";
+import { Network, FileCode, CheckCircle2, Sparkles } from "lucide-react";
+import { getRichResponsibility } from "./responsibilities";
 
 interface ArchitectureInspectorProps {
   node: ArchitectureNodeData | null;
+  diagnostics?: ArchitectureDiagnostics | null;
   onClose?: () => void;
 }
 
-export function ArchitectureInspector({ node, onClose }: ArchitectureInspectorProps) {
+export function ArchitectureInspector({ node, diagnostics, onClose }: ArchitectureInspectorProps) {
+  const responsibilities = useMemo(() => {
+    if (!node) return [];
+    return getRichResponsibility(node);
+  }, [node]);
+
+  const isEnriched = useMemo(() => {
+    if (diagnostics?.is_llm_enriched) return true;
+    return responsibilities.some(
+      (s) =>
+        s.startsWith("Business problem solved:") ||
+        s.startsWith("Key project workflows:"),
+    );
+  }, [diagnostics, responsibilities]);
+
   if (!node) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground p-6 text-center">
@@ -34,10 +50,47 @@ export function ArchitectureInspector({ node, onClose }: ArchitectureInspectorPr
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-6">
           
-          {/* Summary */}
-          <section className="space-y-2">
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Responsibility</h4>
-            <p className="text-sm leading-relaxed">{node.summary}</p>
+          {/* Responsibility */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Responsibility</h4>
+                {isEnriched ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                    <Sparkles className="w-2.5 h-2.5" /> AI Enriched{diagnostics?.model_name ? ` (${diagnostics.model_name})` : ""}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    Static Analysis{diagnostics?.fallback_reason ? ` (${diagnostics.fallback_reason})` : ""}
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border/50">
+                {node.kind}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {responsibilities.map((sentence, i) => {
+                const colonIndex = sentence.indexOf(": ");
+                const hasLabel = colonIndex > 0 && colonIndex < 35;
+                const label = hasLabel ? sentence.slice(0, colonIndex) : null;
+                const body = hasLabel ? sentence.slice(colonIndex + 2) : sentence;
+
+                return (
+                  <div key={i} className="flex items-start gap-2.5 text-xs sm:text-sm leading-relaxed">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/70 mt-1.5 shrink-0" />
+                    <div>
+                      {label && (
+                        <span className="font-semibold text-foreground mr-1.5">
+                          {label}:
+                        </span>
+                      )}
+                      <span className="text-muted-foreground">{body}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </section>
 
           {/* Technologies */}
