@@ -128,14 +128,26 @@ html:has(.lp) {
   align-items: center;
   gap: clamp(14px, 2.5vw, 28px);
   padding: 6px 8px 6px 18px;
-  background: rgba(22, 33, 39, 0.72);
-  backdrop-filter: blur(20px) saturate(160%);
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  border: 1px solid rgba(241, 230, 218, 0.14);
+  /* Translucent glass: a low fill so the section behind shows through the
+     blur, plus a light-to-dark sheen that reads as a pane rather than a
+     painted capsule. */
+  background-color: rgba(22, 33, 39, 0.38);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(241, 230, 218, 0.11),
+    rgba(241, 230, 218, 0.03) 52%,
+    rgba(241, 230, 218, 0) 100%
+  );
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  border: 1px solid rgba(241, 230, 218, 0.18);
   border-radius: 9999px;
-  box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
-  transition: transform 0.25s ease, background 0.25s, border-color 0.25s,
+  /* The bright top hairline is the specular edge; the inner bottom shade is
+     the thickness of the glass. */
+  box-shadow: 0 18px 44px -16px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  transition: transform 0.25s ease, background-color 0.25s, border-color 0.25s,
     box-shadow 0.25s;
 }
 .lp .pill-nav.is-hidden {
@@ -145,10 +157,11 @@ html:has(.lp) {
   transform: translateX(-50%);
 }
 .lp .pill-nav:hover {
-  background: rgba(22, 33, 39, 0.84);
-  border-color: rgba(241, 230, 218, 0.22);
-  box-shadow: 0 20px 42px -12px rgba(0, 0, 0, 0.7),
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+  background-color: rgba(22, 33, 39, 0.5);
+  border-color: rgba(241, 230, 218, 0.26);
+  box-shadow: 0 22px 52px -16px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
 }
 .lp .pill-nav__logo {
   display: flex;
@@ -179,6 +192,7 @@ html:has(.lp) {
   align-items: center;
   padding: 7px 18px;
   border-radius: 9999px;
+  /* The one solid thing on the glass, so it stays the obvious action. */
   background: var(--acc);
   color: var(--bg);
   font: 600 0.84rem var(--text);
@@ -245,6 +259,81 @@ html:has(.lp) {
   color: var(--mut);
   font-size: clamp(1.05rem, 1rem + 0.4vw, 1.25rem);
 }
+/* ── the hero's repository field ──
+   The page's own primary action: paste a repository, get an analysis. Built
+   from the same paper/accent pair as the navbar pill so it reads as the same
+   product, one size up. The field is a form, not a link, so it has to opt back
+   into pointer events — `.hero__text` disables them to let the graph behind it
+   take the pointer. */
+.lp .hero__text form,
+.lp .hero__text form * {
+  pointer-events: auto;
+}
+
+.lp .repo {
+  max-width: 34rem;
+  margin-bottom: 16px;
+}
+
+.lp .repo__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 0;
+  border-radius: 999px;
+  background: rgba(22, 33, 39, 0.78);
+  border: 1px solid rgba(241, 230, 218, 0.18);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.lp .repo__field:focus-within {
+  border-color: var(--acc);
+  background: rgba(22, 33, 39, 0.92);
+}
+
+.lp .repo__field.is-bad {
+  border-color: var(--amb);
+}
+
+.lp .repo__field input {
+  min-width: 0;
+  flex: 1;
+  height: 44px;
+  padding: 0 4px 0 20px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: 500 0.95rem var(--mono);
+  caret-color: var(--acc);
+}
+
+.lp .repo__field input::placeholder {
+  color: rgba(168, 163, 157, 0.8);
+  font-weight: 400;
+}
+
+/* The pill itself is the focus indicator; a second ring inside it would read
+   as two competing borders. */
+.lp .repo__field input:focus,
+.lp .repo__field input:focus-visible {
+  outline: none;
+}
+
+.lp .repo__field .btn {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  padding: 0 1.5em;
+}
+
+.lp .repo__err {
+  margin: 10px 6px 0;
+  color: var(--amb);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
 .lp .row {
   display: flex;
   flex-wrap: wrap;

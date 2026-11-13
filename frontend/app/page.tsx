@@ -1,34 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import {
-  Bricolage_Grotesque,
-  Hanken_Grotesk,
-  JetBrains_Mono,
-} from "next/font/google";
 import LandingPage from "@/components/landing/LandingPage";
 
 /*
- * The landing page's three faces. Self-hosted through next/font so the first
- * paint already has the real display face — the page is mostly type, and a
- * swap-in would move the hero headline.
+ * The landing page's three faces — Bricolage Grotesque, Hanken Grotesk and
+ * JetBrains Mono — are loaded once in `app/layout.tsx` and inherited from
+ * `<html>`. They used to be declared here, which meant the dashboard had to
+ * ship them a second time to look like the page it sits behind.
  */
-const bricolage = Bricolage_Grotesque({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-bricolage",
-  axes: ["opsz"],
-});
-
-const hanken = Hanken_Grotesk({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-hanken",
-});
-
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-jetbrains",
-});
 
 export const metadata: Metadata = {
   title: "CodeKAVI: codebase intelligence for inherited repositories",
@@ -47,11 +25,5 @@ export const viewport: Viewport = {
 };
 
 export default function HomePage() {
-  return (
-    <div
-      className={`${bricolage.variable} ${hanken.variable} ${jetbrains.variable}`}
-    >
-      <LandingPage />
-    </div>
-  );
+  return <LandingPage />;
 }

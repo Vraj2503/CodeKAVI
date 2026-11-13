@@ -29,6 +29,30 @@ function safeNext(raw: string | null): string {
   return raw;
 }
 
+/**
+ * Where a visitor was trying to go, stored before the OAuth round trip.
+ * The `next` param survives the redirect to Google; this survives the tab.
+ */
+const POST_LOGIN_DESTINATION_KEY = "postLoginDestination";
+
+/**
+ * A first sign-in is the only time `last_sign_in_at` is within seconds of
+ * `created_at`. There is no counter to read, and waiting for a second visit to
+ * show the welcome would be too late to be useful.
+ */
+function isFirstTimeAccount(
+  user: { created_at?: string; last_sign_in_at?: string } | null,
+): boolean {
+  if (!user) return false;
+  const created = user.created_at ? Date.parse(user.created_at) : NaN;
+  if (Number.isNaN(created)) return false;
+  const lastSignIn = user.last_sign_in_at
+    ? Date.parse(user.last_sign_in_at)
+    : NaN;
+  if (Number.isNaN(lastSignIn)) return true;
+  return Math.abs(lastSignIn - created) < 60_000;
+}
+
 /** A still frame of the thing the button starts. Static by design. */
 const TRANSCRIPT = [
   ["clone", "238 files"],
@@ -43,7 +67,9 @@ function LoginContent() {
   const searchParams = useSearchParams();
   // Set when a protected page bounced the user here — send them back to it
   // rather than to the dashboard, which would lose the link they followed.
-  const next = safeNext(searchParams.get("next"));
+  // `redirect` is accepted as an alias so both spellings of the same idea work.
+  const requested = searchParams.get("next") ?? searchParams.get("redirect");
+  const next = safeNext(requested);
 
   useEffect(() => {
     if (searchParams.get("error") === "auth_callback_failed") {
@@ -52,10 +78,30 @@ function LoginContent() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!loading && user) {
-      router.replace(next);
+    if (loading || !user) return;
+
+    /*
+     * The URL wins, the stored destination is the fallback, and a visitor with
+     * neither lands on the dashboard — which is the product's home for a
+     * signed-in account. Cleared before navigating so the next sign-in on this
+     * tab is not dragged to an old destination.
+     */
+    let stored: string | null = null;
+    try {
+      stored = sessionStorage.getItem(POST_LOGIN_DESTINATION_KEY);
+      if (stored) sessionStorage.removeItem(POST_LOGIN_DESTINATION_KEY);
+    } catch {
+      // Storage unavailable: fall through to the URL or the dashboard.
     }
-  }, [user, loading, router, next]);
+
+    const destination = safeNext(requested ?? stored);
+
+    router.replace(
+      isFirstTimeAccount(user) && destination === "/dashboard"
+        ? "/dashboard?firstTime=true"
+        : destination,
+    );
+  }, [user, loading, router, requested]);
 
   if (loading || user) return <Splash />;
 

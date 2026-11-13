@@ -28,7 +28,31 @@ export interface PersistedMessage {
 
 // ── Sessions ──
 
+/**
+ * The user's analyses, most recent first.
+ *
+ * Never throws: every caller before the dashboard rendered an empty state for
+ * a failed query as a valid empty list, and that contract is kept here so the
+ * repo pages behave exactly as they did. Callers that need to tell "no rows"
+ * from "the query failed" use `getSessionsStrict`.
+ */
 export async function getSessions(): Promise<Session[]> {
+  try {
+    return await getSessionsStrict();
+  } catch (error) {
+    console.error("Failed to fetch sessions:", error);
+    return [];
+  }
+}
+
+/**
+ * Same rows, but a failed query rejects instead of reading as "nothing here".
+ *
+ * The dashboard has to say "repository history unavailable" rather than show a
+ * first-run empty state, because those two states ask the reader to do opposite
+ * things.
+ */
+export async function getSessionsStrict(): Promise<Session[]> {
   // Get the authenticated user
   const {
     data: { user },
@@ -43,8 +67,7 @@ export async function getSessions(): Promise<Session[]> {
     .order("updated_at", { ascending: false });
 
   if (error) {
-    console.error("Failed to fetch sessions:", error);
-    return [];
+    throw new Error(error.message || "Failed to fetch sessions");
   }
 
   // Get message counts via server-side RPC (single query instead of N+1)

@@ -15,8 +15,11 @@
  */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import "./landing.css";
+import { useAuth } from "@/lib/auth-context";
+import { validateRepoUrl } from "@/lib/validation";
 
 /* ── the hero graph ─────────────────────────────────────────
    The files are Starlette's real module layout, and the dashed
@@ -266,6 +269,54 @@ export default function LandingPage() {
   const heroRef = useRef<HTMLElement>(null);
   const heroTextRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
+
+  /* ── routing off this page ──
+     The page is public, so both of its actions have two versions: signed in,
+     they go where they say; signed out, they hand the destination to the login
+     page and come back to it. `sessionStorage` carries the intent and the
+     `next` param carries it through the OAuth round trip, which is the only
+     way a destination survives a full-page redirect to Google.
+
+     Analysis has no address to navigate to until it has run — a repo id is
+     minted by the backend — so "analyze this repository" is expressed as a
+     dashboard URL that starts the analysis on arrival. */
+  const router = useRouter();
+  const { user } = useAuth();
+  const [repoInput, setRepoInput] = useState("");
+  const [repoError, setRepoError] = useState<string | null>(null);
+
+  const rememberDestination = (destination: string) => {
+    try {
+      sessionStorage.setItem("postLoginDestination", destination);
+    } catch {
+      // Private mode or a full quota: the URL param still carries it.
+    }
+  };
+
+  const openDashboard = () => {
+    if (!user) rememberDestination("/dashboard");
+  };
+
+  const submitRepo = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const result = validateRepoUrl(repoInput);
+    if (!result.valid) {
+      setRepoError(result.error);
+      return;
+    }
+
+    setRepoError(null);
+    const destination = `/dashboard?analyze=${encodeURIComponent(result.normalized)}`;
+
+    if (!user) {
+      rememberDestination(destination);
+      router.push(`/login?next=${encodeURIComponent(destination)}`);
+      return;
+    }
+
+    router.push(destination);
+  };
 
   /* ── the hero graph ── */
   useEffect(() => {
@@ -707,8 +758,12 @@ export default function LandingPage() {
           <a href="#stages">Pipeline</a>
           <a href="#report">Report</a>
         </nav>
-        <Link className="pill-nav__btn" href="/login">
-          Launch App
+        <Link
+          className="pill-nav__btn"
+          href={user ? "/dashboard" : "/login?next=%2Fdashboard"}
+          onClick={openDashboard}
+        >
+          {user ? "Dashboard" : "Launch app"}
         </Link>
       </header>
 
@@ -729,8 +784,39 @@ export default function LandingPage() {
                 for, and answers your questions with the exact files and lines
                 behind every answer.
               </p>
+              <form className="repo" onSubmit={submitRepo} noValidate>
+                <label htmlFor="lp-repo" className="sr">
+                  Repository URL
+                </label>
+                <div className={repoError ? "repo__field is-bad" : "repo__field"}>
+                  <input
+                    id="lp-repo"
+                    type="text"
+                    value={repoInput}
+                    onChange={(event) => {
+                      setRepoInput(event.target.value);
+                      if (repoError) setRepoError(null);
+                    }}
+                    placeholder="owner/repository"
+                    spellCheck={false}
+                    autoComplete="off"
+                    autoCapitalize="off"
+                    aria-invalid={repoError ? true : undefined}
+                    aria-describedby={repoError ? "lp-repo-error" : undefined}
+                  />
+                  <button className="btn btn--p" type="submit">
+                    Analyze
+                  </button>
+                </div>
+                {repoError && (
+                  <p className="repo__err" id="lp-repo-error" role="alert">
+                    {repoError}
+                  </p>
+                )}
+              </form>
+
               <div className="row">
-                <a className="btn btn--p" href="#report">
+                <a className="btn btn--s" href="#report">
                   See a report
                 </a>
                 <a className="btn btn--s" href="#answers">
