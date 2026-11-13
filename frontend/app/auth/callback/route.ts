@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const next =
     requestedNext?.startsWith("/") && !requestedNext.startsWith("//")
       ? requestedNext
-      : "/";
+      : "/dashboard";
 
   if (code) {
     const supabase = await createSupabaseServerClient();

@@ -63,7 +63,7 @@ export function FailureState({
         )}
 
         {failure.action === "reanalyze" && (
-          <Link href="/" className={BTN}>
+          <Link href="/dashboard" className={BTN}>
             <Search size={16} aria-hidden="true" />
             Analyze it again
           </Link>

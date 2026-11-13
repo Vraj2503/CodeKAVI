@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CodeKAVI: codebase intelligence for inherited repositories</title>
+<meta name="description" content="Understand any public repository in seconds. CodeKAVI maps the code, explains what each file is for, and answers your questions with the exact files and lines behind every answer.">
+<meta property="og:title" content="CodeKAVI: codebase intelligence for inherited repositories">
+<meta property="og:description" content="Understand any repository fast. Every answer points to the exact file and lines it came from.">
+<meta name="theme-color" content="#0C1519">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 26'%3E%3Crect width='26' height='26' rx='6' fill='%230C1519'/%3E%3Cpath d='M5 20 13 6l8 14M5 20h16' fill='none' stroke='%23CF9D7B' stroke-width='2'/%3E%3Ccircle cx='13' cy='6' r='3.4' fill='%23CF9D7B'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400..600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;--bg:#0C1519;--paper:#162127;--ink:#F1E6DA;--mut:#A8A39D;--acc:#CF9D7B;--amb:#E0674B;--jet:#3A3534;--cof:#724B39;--line:rgba(241,230,218,.16);
+--disp:"Bricolage Grotesque",system-ui,sans-serif;--text:"Hanken Grotesk",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+--pad:clamp(20px,5vw,72px);--r:14px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 clamp(1rem,.95rem + .25vw,1.125rem)/1.6 var(--text);-webkit-font-smoothing:antialiased;padding-top:env(safe-area-inset-top,0)}
+a{color:inherit}h1,h2,h3{font-family:var(--disp);margin:0;letter-spacing:-.035em;line-height:1}
+:focus-visible{outline:3px solid var(--acc);outline-offset:3px;border-radius:4px}
+.wrap{padding-inline:var(--pad);max-width:1320px;margin-inline:auto}
+.btn{display:inline-flex;align-items:center;gap:.5em;min-height:44px;padding:.8em 1.4em;border-radius:999px;font:600 .95rem var(--text);text-decoration:none;border:1.5px solid var(--ink);cursor:pointer;background:none;color:var(--ink);transition:background .2s,color .2s,transform .2s}
+.btn:hover{transform:translateY(-2px)}.btn--p{background:var(--acc);border-color:var(--acc);color:var(--bg)}.btn--p:hover{background:var(--ink);border-color:var(--ink)}.btn--s:hover{background:var(--ink);color:var(--bg)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* floating pill navbar */
+.pill-nav{position:fixed;top:max(16px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:clamp(14px,2.5vw,28px);padding:6px 8px 6px 18px;background:rgba(22,33,39,.72);backdrop-filter:blur(20px) saturate(160%);-webkit-backdrop-filter:blur(20px) saturate(160%);border:1px solid rgba(241,230,218,.14);border-radius:9999px;box-shadow:0 16px 36px -12px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.04) inset;transition:transform .25s ease,background .25s,border-color .25s,box-shadow .25s}
+.pill-nav.is-hidden{transform:translate(-50%,calc(-100% - 28px))}.pill-nav:focus-within{transform:translateX(-50%)}
+.pill-nav:hover{background:rgba(22,33,39,.84);border-color:rgba(241,230,218,.22);box-shadow:0 20px 42px -12px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.08) inset}
+.pill-nav__logo{display:flex;align-items:center;gap:8px;font:700 .98rem var(--disp);color:var(--ink);text-decoration:none;letter-spacing:-.02em}
+.pill-nav nav{display:flex;align-items:center;gap:clamp(14px,1.8vw,24px)}
+.pill-nav nav a{font:500 .86rem var(--text);color:var(--mut);text-decoration:none;transition:color .2s ease;padding:6px 2px}
+.pill-nav nav a:hover{color:var(--ink)}
+.pill-nav__btn{display:inline-flex;align-items:center;padding:7px 18px;border-radius:9999px;background:var(--acc);color:var(--bg);font:600 .84rem var(--text);text-decoration:none;transition:background .2s ease,transform .2s ease,color .2s ease;white-space:nowrap}
+.pill-nav__btn:hover{background:var(--ink);color:var(--bg);transform:scale(1.02)}
+@media(max-width:680px){.pill-nav nav{display:none}.pill-nav{padding:5px 6px 5px 14px;gap:14px}}
+/* hero */
+.hero{position:relative;min-height:100svh;display:grid;align-items:center;overflow:hidden;padding-block:84px 48px;background:radial-gradient(70% 55% at 75% 0%,rgba(114,75,57,.55),transparent 72%)}
+#graph{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y;opacity:.7}
+.hero__text{position:relative;z-index:1;max-width:620px;pointer-events:none}.hero__text a{pointer-events:auto}
+h1{font-size:clamp(2.7rem,7.2vw,6.2rem);font-weight:700;line-height:.93;letter-spacing:-.045em}
+.lead{margin:clamp(18px,3vw,30px) 0 clamp(22px,3vw,34px);max-width:46ch;color:var(--mut);font-size:clamp(1.05rem,1rem + .4vw,1.25rem)}
+.row{display:flex;flex-wrap:wrap;gap:12px}
+.key{position:absolute;z-index:1;left:var(--pad);bottom:24px;display:flex;gap:20px;flex-wrap:wrap;font:400 .78rem var(--mono);color:var(--mut);pointer-events:none}
+.key i{display:inline-block;width:22px;border-top:2px solid var(--acc);vertical-align:middle;margin-right:8px}.key i.o{border-top:2px dashed var(--amb)}
+@media(max-width:820px){.hero{align-items:start;padding-top:88px}.key{display:none}}
+/* sections */
+section{padding-block:clamp(72px,11vw,150px)}
+.head{max-width:760px;margin-bottom:clamp(32px,5vw,64px)}
+h2{font-size:clamp(2rem,4.8vw,3.9rem);font-weight:700}
+.head p{color:var(--mut);margin:18px 0 0;max-width:58ch}
+.split{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,5vw,80px);align-items:start}
+@media(max-width:900px){.split{grid-template-columns:1fr}}
+.win{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:0 30px 60px -30px rgba(0,0,0,.6)}
+.win__bar{display:flex;gap:12px;align-items:center;padding:12px 18px;border-bottom:1px solid var(--line);font:500 .78rem var(--mono);color:var(--mut)}.win__bar b{color:var(--ink);font-weight:500}
+.win__bar em{margin-left:auto;font-style:normal;color:var(--ink)}
+.cite{font:500 .8em var(--mono);padding:1px 6px;border-radius:5px;background:rgba(241,230,218,.1);color:var(--ink);white-space:nowrap}
+/* chat */
+.qs{display:grid;gap:8px;margin-top:28px}
+.q{all:unset;box-sizing:border-box;cursor:pointer;padding:14px 18px;border-radius:12px;border:1px solid var(--line);background:var(--paper);transition:border-color .2s,transform .25s,background .2s;font-weight:500}
+.q:hover{transform:translateX(6px);border-color:var(--acc)}.q[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}.q:focus-visible{outline:3px solid var(--acc);outline-offset:3px}
+.chat{padding:clamp(18px,3vw,30px);min-height:380px;display:flex;flex-direction:column;gap:16px}
+.me{align-self:flex-end;background:var(--jet);color:var(--ink);padding:10px 16px;border-radius:16px 16px 4px 16px;max-width:85%}
+.ai{min-height:5.5em}.ai.live::after{content:"";display:inline-block;width:2px;height:1.1em;background:var(--acc);margin-left:3px;vertical-align:-3px;animation:bl 1s steps(2) infinite}
+@keyframes bl{50%{opacity:0}}
+.srcs{list-style:none;margin:auto 0 0;padding:0;display:grid;gap:6px}
+.srcs li{display:flex;gap:12px;justify-content:space-between;font:400 .78rem var(--mono);border:1px solid var(--line);border-radius:8px;padding:8px 12px;animation:in .4s both}
+.srcs em{font-style:normal;color:var(--mut)}@keyframes in{from{opacity:0;transform:translateY(6px)}}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:clamp(12px,2vw,28px);margin-top:clamp(40px,6vw,80px);padding-top:28px;border-top:1px solid var(--line)}
+.stats b{display:block;font:700 clamp(2.4rem,5vw,4.2rem)/1 var(--disp);letter-spacing:-.04em;color:var(--ink)}.stats span{font-size:.9rem;color:var(--mut);display:block;margin-top:6px}
+@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stats.s3{grid-template-columns:repeat(3,1fr);margin-top:0}.open{list-style:none;margin:0 0 clamp(28px,4vw,48px);padding:0;display:grid;gap:10px}.open li{display:grid;gap:4px;padding:16px 18px;border:1px dashed var(--amb);border-radius:12px}.open code{font:500 .92rem var(--mono)}.open span{color:var(--mut);font-size:.92rem}
+/* pipeline */
+.pipe{background:var(--jet);color:var(--ink);padding:0;height:260vh;position:relative}
+.pipe__in{position:sticky;top:0;height:100svh;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(24px,5vw,80px);align-items:center}
+.pipe h2{color:var(--ink)}.pipe .head p{color:#CFC7BF}
+.bar{height:3px;background:rgba(255,255,255,.14);border-radius:3px;margin-top:32px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--acc)}
+.st{list-style:none;margin:0;padding:0;font:400 clamp(.78rem,.7rem + .3vw,.95rem)/1.4 var(--mono)}
+.st li{padding:clamp(2px,.6vh,8px) 0;border-bottom:1px solid rgba(255,255,255,.09);opacity:.72;transition:opacity .4s,transform .4s;transform:translateX(0)}
+.stb{all:unset;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:2.2em 7.5em 1fr;gap:6px;width:100%;padding:6px 0;min-height:44px;align-items:center}.stb:focus-visible{outline:3px solid var(--acc);outline-offset:3px}.st li.on{opacity:1;transform:translateX(10px)}.st li.done{opacity:.88}.st b{color:var(--acc);font-weight:500}.st span{color:#CFC7BF}
+.again{margin-top:14px;font:400 .85rem var(--mono);color:var(--acc);opacity:0;transition:opacity .5s}.again.on{opacity:1}
+@media(max-width:900px){.pipe__in{grid-template-columns:1fr;align-content:center;gap:18px}.pipe .head{margin:0}.pipe .head p{display:none}.stb{grid-template-columns:2em 6.5em 1fr}.st span{font-size:.78rem}}
+/* report */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:22px}
+.tab{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;min-height:44px;padding:9px 18px;border-radius:999px;border:1px solid var(--line);font-weight:500;font-size:.9rem;transition:background .2s,color .2s}
+.tab:hover{border-color:var(--ink)}.tab[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}.tab:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.rep{padding:clamp(20px,3.5vw,40px);display:grid;gap:18px;min-height:360px;align-content:start}
+.rep h3{font-size:clamp(1.6rem,3vw,2.3rem)}.rep p{margin:0;max-width:60ch}.rep .pane{animation:in .45s both;display:grid;grid-template-columns:minmax(0,1fr) 230px;gap:24px 40px}.mn{display:grid;gap:18px;align-content:start}.roles{display:grid;gap:10px;align-content:start;border-left:1px solid var(--line);padding-left:24px}.roles h4{margin:0 0 4px;font:500 .8rem var(--mono);color:var(--mut)}.role{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;font:400 .78rem var(--mono);color:var(--mut)}.role em{font-style:normal}.role.on{color:var(--ink)}.role i{grid-column:1/-1;height:3px;background:rgba(241,230,218,.12)}.role b{display:block;height:100%;background:rgba(241,230,218,.4)}.role.on b{background:var(--acc)}@media(max-width:760px){.rep .pane{grid-template-columns:1fr}.roles{border:0;padding:0}}
+/* closing */
+.close{background:var(--cof);color:var(--ink);min-height:100svh;display:flex;flex-direction:column;justify-content:space-between;padding-top:clamp(20px,3.5vh,40px);box-sizing:border-box;overflow:hidden}
+.close .wrap{display:flex;flex-direction:column;justify-content:space-between;flex:1;width:100%}
+.close :focus-visible{outline-color:var(--ink)}
+.close .head p{color:#EBD9CA;margin:8px 0 0}
+.close .head p:last-child{margin-top:14px}
+.close h2{color:var(--ink);font-size:clamp(1.8rem,3.2vw,2.8rem);line-height:1.05;max-width:20ch}
+.big{font:800 clamp(4rem,22vw,22rem)/.78 var(--disp);letter-spacing:-.06em;color:#63402F;margin:clamp(8px,1.8vh,20px) 0 0 -.04em;white-space:nowrap;user-select:none;transition:color .6s}
+.big:hover{color:#6d4635}
+.foot{display:flex;flex-wrap:wrap;gap:12px 32px;justify-content:space-between;padding:clamp(12px,1.8vh,18px) 0 calc(clamp(12px,1.8vh,18px) + env(safe-area-inset-bottom,0));border-top:1px solid rgba(241,230,218,.3);font-size:.85rem;color:#EBD9CA}
+.foot nav{display:flex;gap:24px;flex-wrap:wrap}.foot a{text-decoration:none;display:inline-block;padding:4px 0}.foot a:hover{text-decoration:underline}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<header class="pill-nav" aria-label="Main Navigation">
+  <a class="pill-nav__logo" href="#top">
+    <svg width="20" height="20" viewBox="0 0 26 26" aria-hidden="true"><path d="M5 20 13 6l8 14M5 20h16" fill="none" stroke="#CF9D7B" stroke-width="2"/><circle cx="13" cy="6" r="3.4" fill="#CF9D7B"/><circle cx="5" cy="20" r="3" fill="#F1E6DA"/><circle cx="21" cy="20" r="3" fill="none" stroke="#E0674B" stroke-width="2"/></svg>
+    <span>CodeKAVI</span>
+  </a>
+  <nav aria-label="Main">
+    <a href="#answers">Answers</a>
+    <a href="#stages">Pipeline</a>
+    <a href="#report">Report</a>
+  </nav>
+  <a class="pill-nav__btn" href="/login">Launch App</a>
+</header>
+
+<main id="top">
+<section class="hero" aria-labelledby="h1" style="padding-bottom:48px">
+  <canvas id="graph" role="img" aria-label="Interactive graph showing how the files in a codebase connect to each other. Solid lines are connections, dashed lines point to code that is missing."></canvas>
+  <div class="wrap"><div class="hero__text">
+    <h1 id="h1">Read any repository like you wrote it.</h1>
+    <p class="lead">Paste in any public repository and see how it works in seconds. CodeKAVI maps the code, explains what each file is for, and answers your questions with the exact files and lines behind every answer.</p>
+    <div class="row"><a class="btn btn--p" href="#report">See a report</a><a class="btn btn--s" href="#answers">Repository chat</a></div>
+  </div></div>
+  <!-- <div class="key" aria-hidden="true"><span><i></i>resolved import</span><span><i class="o"></i>import that will not resolve</span><span>Hover or tap a node to follow its imports.</span></div> -->
+</section>
+
+<section id="answers" aria-labelledby="a-h"><div class="wrap">
+  <div class="split">
+    <div>
+      <div class="head" style="margin:0"><h2 id="a-h">Answers that show their proof.</h2>
+      <p>Ask about the code in plain words. CodeKAVI finds the relevant parts and answers with the exact files and lines behind it. If it can't find anything to back an answer up, it says so instead of guessing.</p></div>
+      <div class="qs" role="group" aria-label="Try a question"></div>
+    </div>
+    <div class="win">
+      <div class="win__bar"><b>encode/starlette</b><span>main</span><span>a1e4d7c</span><em>indexed</em></div>
+      <div class="chat"><div class="me"></div><div class="ai"></div><ul class="srcs"></ul><p class="sr" role="status" id="sr"></p></div>
+    </div>
+  </div>
+</div></section>
+
+<section class="pipe" id="stages" aria-labelledby="p-h">
+  <div class="pipe__in wrap">
+    <div class="head" style="margin:0"><h2 id="p-h">From repository to answers in eight steps.</h2>
+      <p>Watch each step finish live. CodeKAVI reads the most popular languages in depth and understands how files connect in many others. Come back later and it only re-reads what has changed.</p>
+      <div class="bar" aria-hidden="true"><i></i></div></div>
+    <div><ol class="st">
+      <li><b>01</b>cloning<span>a quick, temporary copy of the repository</span></li>
+      <li><b>02</b>traversing<span>skips clutter like dependencies and build files</span></li>
+      <li><b>03</b>analyzing<span>reads every file and what is inside it</span></li>
+      <li><b>04</b>classifying<span>labels what each file is for, across 14+ roles</span></li>
+      <li><b>05</b>graphing<span>works out how files connect and flags loops</span></li>
+      <li><b>06</b>selecting<span>picks the most important files to focus on</span></li>
+      <li><b>07</b>indexing<span>makes the code searchable for your questions</span></li>
+      <li><b>08</b>complete<span>your workspace is ready to explore</span></li>
+    </ol><p class="again">second run: unchanged files are skipped, so only what changed is read again.</p></div>
+  </div>
+</section>
+
+<section id="report" aria-labelledby="r-h"><div class="wrap">
+  <div class="head"><h2 id="r-h">A written tour for whoever inherits the code.</h2>
+  <p>Six short sections appear as they are written, each one tied to the files it came from.</p></div>
+  <div class="tabs" role="tablist" aria-label="Report sections"></div>
+  <div class="win"><div class="win__bar"><b>encode/starlette</b><span>report</span><em id="rcount"></em></div><div class="rep" role="tabpanel" id="rep"></div></div>
+</div></section>
+</main>
+
+<footer class="close" aria-labelledby="c-h"><div class="wrap">
+  <div class="head" style="margin:0"><h2 id="c-h">Point it at the repository you inherited.</h2>
+  <p>Start exploring in under 30 seconds. It works with public GitHub, GitLab and Bitbucket repositories, there is nothing to install, and you can wipe an analyzed repository with one click.</p>
+  <p><a class="btn btn--p" href="#report">See a report</a></p></div>
+  <p class="big" aria-hidden="true">CodeKAVI</p>
+  <div class="foot"><span>&copy; 2026 CodeKAVI · Powered by Rune Architecture Engine</span>
+  <nav aria-label="Footer"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="https://github.com/your-org/codekavi">GitHub</a></nav></div>
+</div></footer>
+
+<script>
+const $=(s,e=document)=>e.querySelector(s),$$=(s,e=document)=>[...e.querySelectorAll(s)];
+const calm=matchMedia('(prefers-reduced-motion:reduce)').matches;
+
+/* ---------- hero: living dependency graph ---------- */
+(()=>{
+const cv=$('#graph'),cx=cv.getContext('2d'),css=getComputedStyle(document.documentElement);
+const C={acc:css.getPropertyValue('--acc').trim(),amb:css.getPropertyValue('--amb').trim(),ink:css.getPropertyValue('--ink').trim(),paper:css.getPropertyValue('--paper').trim()},mono=css.getPropertyValue('--mono').trim();
+const N=[['applications.py',.6,.12,'entry_point',0,1],['routing.py',.8,.3,'core_module',0,1],['middleware/errors.py',.93,.1,'shared_utility'],['requests.py',.6,.52,'core_module',0,1],['responses.py',.82,.62,'core_module',0,1],['datastructures.py',.34,.9,'shared_utility'],['_utils.py',.96,.8,'shared_utility'],['background.py',.08,.12,'shared_utility'],['concurrency.py',.3,.14,'shared_utility'],['endpoints.py',.67,.3,'core_module'],['websockets.py',.5,.74,'core_module'],['middleware/base.py',.76,.08,'shared_utility'],['staticfiles.py',.05,.84,'core_module'],['templating.py',.12,.92,'shared_utility'],['exceptions.py',.52,.3,'core_module'],['config.py',.06,.7,'config'],['types.py',.9,.92,'shared_utility'],['status.py',.7,.94,'shared_utility'],['starlette._exceptions',.92,.46,'unresolved',1,1],['itsdangerous',.7,.76,'unresolved',1,1]].map((n,i)=>({id:i,name:n[0],u:n[1],v:n[2],role:n[3],ghost:n[4]===1,key:n[5]===1,ph:i*1.7,x:0,y:0}));
+const E=[[0,1],[0,2],[0,11],[1,3],[1,4],[1,6],[1,9],[1,14],[2,4],[3,5],[4,5],[7,8],[8,14],[3,10],[10,17],[12,13],[12,15],[12,5],[4,16],[9,3],[1,18,1],[4,19,1]].map((e,i)=>({a:N[e[0]],b:N[e[1]],open:!!e[2],t:i*.13}));
+let nar,k,W,H,R,mx=-999,my=-999,hot=null,on=true,t0=performance.now();
+function size(){const d=devicePixelRatio||1,b=cv.getBoundingClientRect();W=b.width;H=b.height;cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);nar=W<820;k=Math.max(.9,Math.min(1.35,W/1100));R={x:W*.05,y:H*.1,w:W*.9,h:H*.82}}
+function place(t){for(const n of N){let x=R.x+n.u*R.w+Math.sin(t*.0005+n.ph)*16,y=R.y+(nar?.48+n.v*.52:n.v)*R.h+Math.cos(t*.0004+n.ph*1.3)*16;
+ const dx=mx-x,dy=my-y,d=Math.hypot(dx,dy);if(d<170*k){const f=(1-d/(170*k))*16;x+=dx/d*f;y+=dy/d*f}n.x=x;n.y=y}}
+function frame(now){const t=now-t0;place(t);cx.clearRect(0,0,W,H);
+ const cb=cv.getBoundingClientRect(),tb=$('.hero__text').getBoundingClientRect(),T={l:tb.left-cb.left-30,r:tb.right-cb.left+30,t:tb.top-cb.top-30,b:tb.bottom-cb.top+30},ins=(x,y)=>x>T.l&&x<T.r&&y>T.t&&y<T.b;
+ const pl=window._pulse&&(calm||now-window._pulse<4000);
+ hot=null;let best=38*k;for(const n of N){const d=Math.hypot(n.x-mx,n.y-my);if(d<best){best=d;hot=n}}
+ for(const e of E){const lit=hot&&(e.a===hot||e.b===hot),dm=ins(e.a.x,e.a.y)||ins(e.b.x,e.b.y)||ins((e.a.x+e.b.x)/2,(e.a.y+e.b.y)/2);cx.save();cx.lineWidth=(lit?2.2:1.2)*Math.min(k,1.2);cx.strokeStyle=e.open?C.amb:C.acc;cx.globalAlpha=hot&&!lit?.2:(lit?1:(dm?.14:.55));
+  if(e.open)cx.setLineDash([5,5]);const mxp=(e.a.x+e.b.x)/2,myp=(e.a.y+e.b.y)/2-18;
+  cx.beginPath();cx.moveTo(e.a.x,e.a.y);cx.quadraticCurveTo(mxp,myp,e.b.x,e.b.y);cx.stroke();cx.restore();
+  if(!e.open){const p=(t*.00022+e.t)%1,q=1-p,px=q*q*e.a.x+2*q*p*mxp+p*p*e.b.x,py=q*q*e.a.y+2*q*p*myp+p*p*e.b.y;
+   cx.fillStyle=C.acc;cx.globalAlpha=lit?1:(dm?.2:.7);cx.beginPath();cx.arc(px,py,(lit?3.4:2.4)*k,0,7);cx.fill();cx.globalAlpha=1}}
+ const fs=Math.max(9,Math.round(9.5*k));cx.font='500 '+fs+'px '+mono;
+ for(const n of N){const h=n===hot,r=(n.ghost?7:(h?11:8))*k,left=n.u>.68,g=r+8;
+  const tw=cx.measureText(n.name).width,tx1=left?n.x-g-tw:n.x+g,tx2=left?n.x-g:n.x+g+tw;
+  const dn=(ins(n.x,n.y)||(n.y+4>T.t&&n.y-fs<T.b&&tx2>T.l&&tx1<T.r))&&!h;
+  if(pl&&n.ghost){const p=calm?.5:((now-window._pulse)%1000)/1000;cx.save();cx.globalAlpha=1-p;cx.strokeStyle=C.amb;cx.lineWidth=2;cx.beginPath();cx.arc(n.x,n.y,r+p*30*k,0,7);cx.stroke();cx.restore()}
+  cx.globalAlpha=dn?.22:hot&&!h&&!E.some(e=>(e.a===hot&&e.b===n)||(e.b===hot&&e.a===n))?.35:1;
+  cx.beginPath();cx.arc(n.x,n.y,r,0,7);cx.fillStyle=n.ghost?C.paper:(n.role==='entry_point'?C.ink:C.acc);cx.fill();
+  if(n.ghost){cx.strokeStyle=C.amb;cx.lineWidth=2;cx.setLineDash([3,3]);cx.stroke();cx.setLineDash([])}
+  cx.fillStyle=C.ink;cx.textAlign=left?'right':'left';if(!dn&&(!nar||n.key||h))cx.fillText(n.name,n.x+(left?-g:g),n.y+4);
+  if(h){cx.fillStyle=n.ghost?C.amb:C.acc;cx.fillText(n.role.replace('_',' '),n.x+(left?-g:g),n.y+4+fs+4)}cx.globalAlpha=1}
+ if(on&&!calm)requestAnimationFrame(frame)}
+const go=()=>{if(!calm)requestAnimationFrame(frame);else frame(0)};
+addEventListener('resize',()=>{size();if(calm)frame(0)});size();
+const hero=cv.parentElement,pt=e=>{const b=cv.getBoundingClientRect();mx=e.clientX-b.left;my=e.clientY-b.top;if(calm)frame(0)};
+hero.addEventListener('pointermove',pt);hero.addEventListener('pointerdown',pt);
+hero.addEventListener('pointerleave',e=>{if(e.pointerType!=='touch'){mx=my=-999;if(calm)frame(0)}});
+new IntersectionObserver(([e])=>{const was=on;on=e.isIntersecting;if(on&&!was)go()}).observe(hero);go();
+})();
+
+/* ---------- chat ---------- */
+(()=>{
+const A=[
+{q:'What happens when someone visits a page?',a:['Everything starts in the main application file. ',['starlette/applications.py:L70-L118'],' sets the app up once and hands each visit to the router, which finds the right page to run. ',['starlette/routing.py:L594-L641']],s:[['starlette/applications.py','70–118','entry_point'],['starlette/routing.py','594–641','core_module'],['starlette/middleware/errors.py','146–171','shared_utility']]},
+{q:'What would break if routing.py were removed?',a:['Almost everything that serves a page. ',['starlette/applications.py:L112-L130'],' sends every visit to the router, and ',['starlette/requests.py:L48-L73'],' relies on what the router works out. The tests and startup code would still load.'],s:[['starlette/applications.py','112–130','entry_point'],['starlette/requests.py','48–73','core_module'],['tests/test_routing.py','1–40','test']]},
+{q:'Where are errors caught and turned into a response?',a:['At the outermost layer, before anything reaches the visitor. ',['starlette/middleware/errors.py:L146-L171'],' catches the problem and turns it into a proper error response.'],s:[['starlette/middleware/errors.py','146–171','shared_utility']]}];
+const qs=$('.qs'),me=$('.me'),ai=$('.ai'),sr=$('.srcs');let tm,k=0;
+A.forEach((x,i)=>{const b=document.createElement('button');b.className='q';b.type='button';b.textContent=x.q;b.onclick=()=>show(i);qs.append(b)});
+function show(i){clearTimeout(tm);$$('.q').forEach((b,j)=>b.setAttribute('aria-pressed',j===i));const x=A[i];me.textContent=x.q;$('#sr').textContent='';ai.textContent='';sr.textContent='';ai.classList.add('live');
+ const parts=x.a.flatMap(p=>Array.isArray(p)?[p]:p.split(/(?<= )/));let n=0;
+ const done=()=>{ai.classList.remove('live');$('#sr').textContent=x.q+' '+x.a.map(p=>Array.isArray(p)?p[0]:p).join('');sr.innerHTML=x.s.map(s=>`<li><span>${s[0]}</span><em>${s[1]} · ${s[2].replace('_',' ')}</em></li>`).join('')};
+ (function tick(){if(n>=parts.length)return done();const p=parts[n++];if(Array.isArray(p)){const c=document.createElement('span');c.className='cite';c.textContent=p[0];ai.append(c)}else ai.append(document.createTextNode(p));tm=setTimeout(tick,calm?0:45)})()}
+new IntersectionObserver(([e],o)=>{if(e.isIntersecting){show(0);o.disconnect()}},{threshold:.3}).observe($('.chat'));
+/* counters */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;io.unobserve(e.target);const el=e.target,n=+el.dataset.n,s=performance.now();
+ (function f(t){const p=Math.min(1,(t-s)/(calm?1:1100));el.textContent=Math.round(n*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(f)})(s)}),{threshold:.6});
+$$('[data-n]').forEach(e=>io.observe(e));
+})();
+
+/* ---------- pipeline scrubbed by scroll ---------- */
+(()=>{
+const sec=$('#stages'),li=$$('.st li'),bar=$('.bar i'),again=$('.again');
+li.forEach((l,j)=>{l.innerHTML='<button type="button" class="stb">'+l.innerHTML+'</button>';l.firstChild.onclick=()=>scrollTo({top:sec.offsetTop+(j+.5)/9*(sec.offsetHeight-innerHeight),behavior:calm?'auto':'smooth'})});
+function upd(){const r=sec.getBoundingClientRect(),p=Math.max(0,Math.min(1,-r.top/(r.height-innerHeight)));
+ const i=Math.min(7,Math.floor(p*9)),fin=p>.92;bar.style.width=(p*100)+'%';
+ li.forEach((l,j)=>{l.classList.toggle('on',j===i&&!fin);l.classList.toggle('done',j<i||fin);l.firstChild.setAttribute('aria-current',j===i&&!fin?'step':'false')});again.classList.toggle('on',fin)}
+addEventListener('scroll',upd,{passive:true});addEventListener('resize',upd);upd();
+})();
+
+/* ---------- report tabs ---------- */
+(()=>{
+const S=[
+['Overview','What the project is for, what it is built with, and how it runs. Starlette is a small toolkit for building web services, with its tests and docs alongside.',['starlette/applications.py:L70-L118','starlette/routing.py:L594-L641'],[['starlette/__init__.py','1–12','entry_point'],['docs/index.md','1–60','documentation']]],
+['Architecture','How the code is divided up and where everything starts. Every visit enters through one door, which sets things up once and passes the visit along.',['starlette/applications.py:L70-L118','starlette/routing.py:L594-L641'],[['starlette/applications.py','70–118','entry_point'],['starlette/routing.py','594–641','core_module']]],
+['Components','The key parts, what each one is responsible for, and the small helpers. Two files carry most of the weight: one sets things up and one decides where each visit goes.',['starlette/applications.py:L112-L130','starlette/routing.py:L640-L688'],[['starlette/applications.py','112–130','entry_point'],['starlette/routing.py','640–688','core_module']]],
+['Data Flow','How a request travels from start to finish. A visit becomes one object that is passed along, and the reply travels back the same way.',['starlette/requests.py:L231-L268','starlette/responses.py:L26-L54','starlette/middleware/errors.py:L146-L171'],[['requests.py','231–268','core_module'],['responses.py','26–54','core_module'],['middleware/errors.py','146–171','shared_utility']]],
+['Patterns','The habits and conventions the code follows. Features are layered like wrappers around the app, and shared settings are passed around openly rather than hidden.',['starlette/middleware/base.py:L30-L96'],[['starlette/middleware/base.py','30–96','shared_utility'],['starlette/datastructures.py','12–60','shared_utility']]],
+['Mind Map','A picture of the whole codebase and how its ideas fit together. This slice has 18 files and 20 connections.',['starlette/_utils.py:L1-L40','starlette/datastructures.py:L12-L60'],[['starlette/_utils.py','1–40','shared_utility'],['starlette/datastructures.py','12–60','shared_utility']]]];
+const tl=$('.tabs'),rp=$('#rep');
+const RO=[['core_module',62],['shared_utility',41],['test',38],['config',17],['documentation',12],['orchestrator',9],['entry_point',6]];
+const roles=src=>{const u=new Set(src.map(x=>x[2]));return `<aside class="roles" aria-label="Roles in this repository"><h4>What the files are for</h4>${RO.map(r=>`<div class="role${u.has(r[0])?' on':''}"><span>${r[0].replace('_',' ')}</span><em>${r[1]}</em><i><b style="width:${r[1]/62*100}%"></b></i></div>`).join('')}</aside>`};
+S.forEach((s,i)=>{const b=document.createElement('button');b.className='tab';b.type='button';b.role='tab';b.id='t'+i;b.setAttribute('aria-controls','rep');b.textContent=s[0];b.onclick=()=>sel(i);b.onkeydown=e=>{if(e.key==='ArrowRight')sel((i+1)%6,1);if(e.key==='ArrowLeft')sel((i+5)%6,1)};tl.append(b)});
+function sel(i,f){$$('.tab').forEach((b,j)=>{b.setAttribute('aria-selected',j===i);b.tabIndex=j===i?0:-1});const s=S[i];
+ rp.innerHTML=`<div class="pane"><div class="mn"><h3>${s[0]}</h3><p>${s[1]}</p><p>${s[2].map(c=>`<span class="cite">${c}</span>`).join(' ')}</p><ul class="srcs">${s[3].map(x=>`<li><span>${x[0]}</span><em>${x[1]} · ${x[2].replace('_',' ')}</em></li>`).join('')}</ul></div>${roles(s[3])}</div>`;
+ rp.setAttribute('aria-labelledby','t'+i);$('#rcount').textContent=`section ${i+1} of 6`;if(f)$$('.tab')[i].focus()}
+sel(0);
+})();
+/* ---------- navbar: hides on scroll down, returns on scroll up ---------- */
+(()=>{const nv=$('.pill-nav');let ly=scrollY,q=false;
+addEventListener('scroll',()=>{if(q)return;q=true;requestAnimationFrame(()=>{const y=scrollY,d=y-ly;
+ if(y<80||d<-6)nv.classList.remove('is-hidden');else if(d>6)nv.classList.add('is-hidden');
+ if(Math.abs(d)>6||y<80)ly=y;q=false})},{passive:true});})();
+</script>
+</body>
+</html>

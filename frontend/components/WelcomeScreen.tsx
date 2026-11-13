@@ -215,7 +215,7 @@ export function WelcomeScreen() {
                 above the wordmark. Baselines are what the eye actually reads.
             */}
             <Link
-              href="/"
+              href="/dashboard"
               className="flex items-center gap-2"
               aria-label="Rune home"
             >
