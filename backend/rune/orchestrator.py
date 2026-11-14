@@ -20,6 +20,7 @@ import re
 from collections.abc import AsyncIterator
 
 from rune.config import EXTENSION_LANGUAGE_MAP, detect_layer
+from rune.fact_store import file_description, top_symbols
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 from rune.llm.providers import get_provider
 from rune.normalizer import normalize_node_type, normalize_viz_data, validate_section
@@ -45,8 +46,13 @@ class ExplanationOrchestrator:
         classification: list,
         selected_files: list,
         depth: str = "detailed",
+        facts: dict[str, dict] | None = None,
+        user_id: str | None = None,
     ):
         self.repo_path = repo_path
+        # T36: what the main files are for (fact store) and whose tokens these are.
+        self.facts = facts or {}
+        self.user_id = user_id
         self.tree = tree
         self.analysis = analysis
         self.classification = classification
@@ -61,16 +67,8 @@ class ExplanationOrchestrator:
         Yields event dicts: {"type": str, "data": dict}
         """
         # ── INSTANT EVENTS (no LLM, no cost, no latency) ──
-        yield {
-            "type": "stats",
-            "data": {
-                "total_files": len(self.tree.get("files", [])),
-                "languages": self._count_languages(),
-                "selected_files": len(self.selected_files),
-                "entry_points": self.analysis.get("entry_points", []),
-            },
-        }
-        yield {"type": "tree", "data": {"structure": self.tree.get("tree", self.tree)}}
+        for event in self.instant_events():
+            yield event
         yield self._progress(10, "generating", "AI is reading your codebase...")
 
         # Load file contents
@@ -110,6 +108,34 @@ class ExplanationOrchestrator:
             yield ev
 
         yield self._progress(100, "complete", "Report generation complete!")
+
+    def instant_events(self) -> list[dict]:
+        """The stats and the repo tree: from the record, no LLM."""
+        return [
+            {
+                "type": "stats",
+                "data": {
+                    "total_files": len(self.tree.get("files", [])),
+                    "languages": self._count_languages(),
+                    "selected_files": len(self.selected_files),
+                    "entry_points": self.analysis.get("entry_points", []),
+                },
+            },
+            {"type": "tree", "data": {"structure": self.tree.get("tree", self.tree)}},
+        ]
+
+    def replay(self, sections: list[dict]) -> list[dict]:
+        """A kept report (T36) as the events a fresh run sends, with no LLM call."""
+        events = self.instant_events()
+        for done, section in enumerate(sections, start=1):
+            events.append({"type": "section", "data": section})
+            events.append(
+                self._progress(
+                    10 + int(85 * done / max(len(sections), 1)), "generating", f"Loaded {section.get('title', '')}"
+                )
+            )
+        events.append(self._progress(100, "complete", "Report loaded (saved with this analysis)."))
+        return events
 
     # ─────────────────────────────────────────
     # Batch runner
@@ -210,6 +236,8 @@ class ExplanationOrchestrator:
             temperature=prompt.get("temperature", 0.3),
             max_tokens=prompt.get("max_tokens", 3000),
             json_mode=json_mode,
+            # T36: count the tokens against the user (they went unattributed).
+            user_id=self.user_id,
         )
 
         snippets = self._extract_snippets(response)
@@ -277,6 +305,7 @@ class ExplanationOrchestrator:
 
         user = (
             f"## Files in repository (first 30)\n{chr(10).join(f'- {f}' for f in files_list)}\n\n"
+            f"{self._main_files_section()}"
             f"## Entry point code\n{entry_code}\n\n"
             f"## Language distribution\n{json.dumps(languages, indent=2)}\n\n"
             f"## Dependency count: {dep_count}\n\n"
@@ -288,6 +317,23 @@ class ExplanationOrchestrator:
             "5. **Maturity** — How mature/production-ready does it appear?"
         )
         return {"system": self._SYSTEM_PROMPT, "user": user, "temperature": 0.3, "max_tokens": 3000}
+
+    def _main_files_section(self, limit: int = 20) -> str:
+        """What the most important files are for and their key functions (T36), from the fact store."""
+        ranked = sorted(
+            (p for p in self.classification if p.get("path") in self.facts),
+            key=lambda p: -(p.get("importance_score") or 0),
+        )
+        lines = []
+        for profile in ranked[:limit]:
+            facts = self.facts[profile["path"]]
+            text, _source = file_description(facts)
+            names = [s["name"] for s in top_symbols(facts, 3) if s.get("name")]
+            line = f"- {profile['path']}" + (f" — {text}" if text else "")
+            if names:
+                line += f" (key functions: {', '.join(names)})"
+            lines.append(line)
+        return "## What the main files do\n" + "\n".join(lines) + "\n\n" if lines else ""
 
     def _prompt_architecture(self, file_contents: dict) -> dict:
         classifications = []

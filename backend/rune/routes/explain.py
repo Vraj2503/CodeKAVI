@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.exceptions import ProviderError, RateLimitError
+from rune.fact_store import facts_repo_id
 from rune.limiter import per_minute
 from rune.orchestrator import ExplanationOrchestrator
 from rune.quota import get_token_tracker
@@ -287,6 +288,26 @@ async def explain_repo_stream(
     if not result or not clone_path:
         raise HTTPException(status_code=404, detail="Repo not found. Run /api/analyze first.")
 
+    # T36: a finished report is kept with the analysis. A custom prompt makes a
+    # different report, so it neither reads nor replaces the kept one.
+    keepable = not body.prompt
+    kept = result.get("report") if keepable and not body.refresh else None
+    kept_sections = kept.get("sections") if isinstance(kept, dict) else None
+    will_call_llm = not getattr(body, "use_tour", False) and not kept_sections
+    if will_call_llm:
+        # The report is 8 LLM calls and never checked the quota (M-22's gap, on the
+        # route the UI uses).
+        _enforce_user_quota(user_id=user_id)
+    shown = sorted(
+        (p for p in result.get("file_profiles", []) if p.get("path")),
+        key=lambda p: -(p.get("importance_score") or 0),
+    )
+    facts = (
+        await run_sync(cache.facts.get, facts_repo_id(result, repo_id), [p["path"] for p in shown[:40]])
+        if will_call_llm
+        else {}
+    )
+
     async def event_stream():
         from rune.logging_config import repo_id_ctx
 
@@ -311,17 +332,38 @@ async def explain_repo_stream(
             classification=result.get("file_profiles", []),
             selected_files=result.get("selected_files", []),
             depth=body.depth if hasattr(body, "depth") else "detailed",
+            facts=facts,
+            user_id=user_id,
         )
         # T2.4 — single seq counter threaded through the orchestrator's
         # event stream so the client can verify completeness.
         seq = 0
+        if kept_sections:
+            # T36: the kept report, as the events a fresh run sends; no LLM call.
+            for event in orchestrator.replay(kept_sections):
+                seq += 1
+                yield f"event: {event['type']}\nid: {seq}\ndata: {json.dumps({**event['data'], 'seq': seq})}\n\n"
+            seq += 1
+            yield f"event: done\nid: {seq}\ndata: {json.dumps({'status': 'complete', 'total_events': seq, 'seq': seq})}\n\n"
+            repo_id_ctx.reset(token)
+            return
+        sections: list[dict] = []
+        finished = False
         try:
             async for event in orchestrator.run():
                 if await request.is_disconnected():
                     logger.info(f"Client disconnected from explain stream for {repo_id}. Aborting orchestrator run.")
                     break
+                if event["type"] == "section":
+                    sections.append(event["data"])
+                elif event["type"] == "progress" and event["data"].get("phase") == "complete":
+                    finished = True
                 seq += 1
                 yield f"event: {event['type']}\nid: {seq}\ndata: {json.dumps({**event['data'], 'seq': seq})}\n\n"
+            # Kept only when every section came back with content; a partial report would stick.
+            complete = sections and not any(s.get("_validation_failed") for s in sections)
+            if finished and keepable and orchestrator.sections_failed == 0 and complete:
+                await run_sync(cache.update, repo_id, {"report": {"sections": sections}})
         except (TimeoutError, RateLimitError, ProviderError) as e:
             # The orchestrator is LLM-bound; if Groq/Gemini is unavailable the
             # stream errors mid-flight. Emit a deterministic-tour fallback so

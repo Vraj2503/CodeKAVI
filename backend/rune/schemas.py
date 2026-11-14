@@ -24,6 +24,8 @@ class ExplainRequest(BaseModel):
     depth: str = "detailed"
     prompt: str | None = None
     use_tour: bool = True
+    # T36: a finished report is kept per analysis; true writes a new one.
+    refresh: bool = False
 
 
 class ExplainFileRequest(BaseModel):
