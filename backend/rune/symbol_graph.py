@@ -143,7 +143,7 @@ def _node_id(path: str, name: str) -> str:
     return f"{path}::{name}"
 
 
-def _http_route(decorators: list[str] | None) -> str | None:
+def http_route(decorators: list[str] | None) -> str | None:
     for decorator in decorators or []:
         match = _ROUTE_DECORATOR.search(decorator)
         if match:
@@ -357,7 +357,7 @@ def build_symbol_graph(
                 "doc": symbol.get("doc"),
                 "signature": symbol.get("signature"),
                 "is_async": bool(symbol.get("is_async")),
-                "http": _http_route(symbol.get("decorators")),
+                "http": http_route(symbol.get("decorators")),
                 "external_calls": [],
                 "effects": [],
                 "in_degree": 0,

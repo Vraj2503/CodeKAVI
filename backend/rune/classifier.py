@@ -34,6 +34,7 @@ from typing import Any
 
 from rune.complexity import file_complexity
 from rune.config import MAX_FILE_SIZE_BYTES
+from rune.file_facts import purpose_of
 from rune.pipeline_models import DepGraph, FileEntry, FileProfile
 from rune.utils import BoundedContentCache
 
@@ -396,6 +397,7 @@ def classify_files(
     dep_data: DepGraph,
     content_cache: dict[str, str] | BoundedContentCache | None = None,
     symbols_out: dict[str, list[dict[str, Any]]] | None = None,
+    facts_out: dict[str, dict[str, Any]] | None = None,
 ) -> list[FileProfile]:
     """
     Produce a rich profile for every file in the repo.
@@ -409,6 +411,9 @@ def classify_files(
                      return value so existing callers keep working, and because symbols
                      deliberately stay off FileProfile — that model is serialized into
                      every /analyze response and per-symbol data would bloat it.
+        facts_out:   Optional dict, filled in place with `{rel_path: {"purpose", "purpose_source"}}`
+                     for every parseable source file that has one (T33). Kept off
+                     FileProfile for the same reason; the symbol store holds it.
 
     Returns:
         list of file profiles, each with:
@@ -494,11 +499,16 @@ def classify_files(
         if ext.lower() in _SOURCE_EXTENSIONS:
             source = _full_source(file_info, abs_path)
             if source is not None:
-                metrics = file_complexity(source, rel_path, with_symbols=symbols_out is not None)
+                want_symbols = symbols_out is not None or facts_out is not None
+                metrics = file_complexity(source, rel_path, with_symbols=want_symbols)
                 # Only parseable languages yield symbols; skip the empty lists so
                 # the map stays a record of what we actually read.
                 if symbols_out is not None and metrics.get("symbols"):
                     symbols_out[rel_path] = metrics["symbols"]
+                if facts_out is not None and metrics.get("complexity_source") == "cyclomatic":
+                    purpose, purpose_source = purpose_of(rel_path, metrics.get("doc"), metrics.get("symbols") or [])
+                    if purpose:
+                        facts_out[rel_path] = {"purpose": purpose, "purpose_source": purpose_source}
 
         profiles.append(
             FileProfile(

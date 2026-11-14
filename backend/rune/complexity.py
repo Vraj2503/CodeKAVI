@@ -328,6 +328,57 @@ def _doc(node: Any, grammar: str) -> str | None:
     return None
 
 
+#: Header lines that say nothing about what a file does, dropped one by one:
+#: shebangs, encoding lines, lint and tooling pragmas.
+_PRAGMA_LINE = re.compile(
+    r"^\s*#!|-\*-\s*coding|eslint|prettier-ignore|@ts-|tslint|jshint|istanbul|biome-ignore|@flow\b|"
+    r"\bnoqa\b|pylint|\bmypy:|type:\s*ignore|\bvim:",
+    re.IGNORECASE,
+)
+#: A comment block that is a license, skipped whole: its other lines ("WITHOUT
+#: WARRANTIES ...") would otherwise read as a description.
+_LICENSE_BLOCK = re.compile(r"copyright|\blicen[cs]e|spdx-|all rights reserved|permission is hereby granted", re.I)
+
+
+def _is_string_statement(node: Any) -> bool:
+    """A Python docstring, or a JS directive such as "use client"."""
+    return node.type == "expression_statement" and bool(node.named_children) and node.named_children[0].type == "string"
+
+
+def _file_doc(root: Any, grammar: str) -> str | None:
+    """What the file says it is for (T33), first sentence.
+
+    A Python module docstring, else the first comment block above the first
+    statement that isn't a license, lint or tooling header. JS directives
+    ("use client") don't end the header. Consecutive line comments form one block.
+    """
+    blocks: list[list[str]] = []
+    last_row = -2
+    # By index: `named_children` would build a node for every top-level statement,
+    # and the header ends at the first one.
+    for index in range(root.named_child_count):
+        child = root.named_child(index)
+        if child.type == "comment":
+            if child.start_point[0] > last_row + 1 or not blocks:
+                blocks.append([])
+            blocks[-1].append(_text(child))
+            last_row = child.end_point[0]
+            continue
+        if _is_string_statement(child):
+            if grammar == "python":
+                return _clean_doc(_text(child.named_children[0]))
+            continue  # "use client" / "use strict"
+        break
+    for block in blocks:
+        lines = [line for comment in block for line in comment.splitlines() if not _PRAGMA_LINE.search(line)]
+        text = "\n".join(lines)
+        if text.strip() and not _LICENSE_BLOCK.search(text):
+            cleaned = _clean_doc(text)
+            if cleaned:
+                return cleaned
+    return None
+
+
 def _skip_decorators(node: Any) -> Any:
     """Walk back past `@dec()` siblings — in JS/TS they sit between the doc and the symbol."""
     while node is not None and node.type == "decorator":
@@ -427,6 +478,33 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
                 break
             parent = parent.parent
 
+    # Per-symbol McCabe (T33): 1 + the branches whose nearest enclosing named symbol
+    # this is, by the same walk as the callees. A branch inside a nested function
+    # counts for that function only; one outside every symbol counts for the file
+    # alone. So the symbols' branches plus the top-level ones are the file's count.
+    # One sweep over sorted spans instead of a parent walk per branch: symbol spans
+    # nest, so the innermost open symbol at a branch's start is its owner.
+    spans = sorted(
+        ((node.start_byte, node.end_byte, records[node.id]) for node in symbol_nodes if node.id in records),
+        key=lambda span: (span[0], -span[1]),
+    )
+    for _start, _end, record in spans:
+        record["complexity"] = 1
+    open_spans: list[tuple[int, int, dict[str, Any]]] = []
+    next_span = 0
+    for start in sorted(branch.start_byte for branch in nodes_by_name.get("b", [])):
+        while next_span < len(spans) and spans[next_span][0] <= start:
+            open_spans.append(spans[next_span])
+            next_span += 1
+        while open_spans and open_spans[-1][1] <= start:
+            open_spans.pop()
+        # Spans that closed earlier but sit below a still-open one are popped later; the
+        # innermost containing span is the last one on the stack that still holds `start`.
+        for span_start, span_end, record in reversed(open_spans):
+            if span_start <= start < span_end:
+                record["complexity"] += 1
+                break
+
     return list(records.values())
 
 
@@ -471,6 +549,7 @@ def _capture_counts(source: str, ext: str, with_symbols: bool = False) -> dict[s
         }
         if with_symbols:
             result["symbols"] = _extract_symbols(nodes_by_name, grammar)
+            result["doc"] = _file_doc(tree.root_node, grammar)
         return result
     except Exception as e:  # pragma: no cover — grammar/ABI failures only
         logger.debug(f"complexity: parse failed for '{ext}' file: {e}")
@@ -524,4 +603,6 @@ def file_complexity(source: str, path: str, with_symbols: bool = False) -> dict[
     }
     if with_symbols:
         result["symbols"] = [] if counts is None else counts["symbols"]
+        # The file's own description (docstring / header comment), when it has one (T33).
+        result["doc"] = None if counts is None else counts.get("doc")
     return result
