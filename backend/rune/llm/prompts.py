@@ -317,6 +317,8 @@ def build_dataflow_prompt(
     adjacency_summary: list[str],
     languages: list[str],
     repo_type: str,
+    file_notes: list[str] | tuple[str, ...] = (),
+    external_services: list[str] | tuple[str, ...] = (),
 ) -> str:
     """
     Build the user prompt for semantic data flow generation. Returns a plain
@@ -332,6 +334,9 @@ def build_dataflow_prompt(
     role_str = ", ".join(f"{role} ({count})" for role, count in role_summary.items())
     adjacency_str = "\n".join(f"  - {line}" for line in adjacency_summary) or "  (none)"
     lang_str = ", ".join(languages) or "Unknown"
+    # T37: what the files are for, and the services the code is seen calling.
+    notes_str = "\n".join(f"  - {note}" for note in file_notes) or "  (none known)"
+    services_str = "\n".join(f"  - {service}" for service in external_services) or "  (none detected)"
 
     return f"""Analyze the data flow in this codebase and return a JSON object describing how data moves through the application.
 
@@ -340,6 +345,10 @@ Context:
 - File roles (number of files): {role_str}
 - Imports between the most important files (`a -> b` means a imports b; the brackets say what each file does):
 {adjacency_str}
+- What the main files do:
+{notes_str}
+- External services the code calls (from its SDK imports):
+{services_str}
 - Detected languages: {lang_str}
 - Repo type hint: {repo_type}
 
@@ -368,7 +377,10 @@ Return a JSON object with this exact structure:
 Rules:
 - Nodes should represent CONCEPTUAL stages in the data flow, not individual files
 - Group related files into single nodes (e.g., all route handlers -> "API Router")
-- Include external systems as nodes (e.g., "PostgreSQL Database", "Redis Cache", "External API") with an empty source_files list
+- External services are systems the code calls, not stages of its flow: give each listed service its own node of
+  type "io", named after the service, with an empty source_files list, linked only to the stage that calls it.
+  Do not merge them into one generic node such as "External LLM APIs", and do not add services that are not listed
+- Name stages after what the files above do, in the order data moves through them
 - Every node must have at least one edge
 - Edges flow left-to-right: input sources -> processing -> output/storage
 - For ML pipelines: Data Loading -> Preprocessing -> Feature Engineering -> Model Training -> Evaluation -> Inference

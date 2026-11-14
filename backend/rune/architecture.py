@@ -117,6 +117,15 @@ def _apply_view(
     ]
 
 
+def external_services(file_imports: dict[str, Any]) -> dict[str, list[str]]:
+    """`{"Groq — Inference API": [files that import it], ...}` from SDK imports (T37), by T39's matching."""
+    found: dict[str, list[str]] = {}
+    for path in sorted(file_imports):
+        for tech in match_technologies(_hints(path, file_imports)):
+            found.setdefault(f"{tech.vendor} \u2014 {tech.product}", []).append(path)
+    return found
+
+
 def _capability_summary(node: ArchitectureNode, importance: dict[str, float], facts: dict[str, dict]) -> str:
     """What a capability holds, from its member files and their facts (T39).
 

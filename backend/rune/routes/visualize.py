@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from rune.analyzer import SUPPORTED_LANGUAGES
-from rune.architecture import build_architecture_manifest
+from rune.architecture import build_architecture_manifest, external_services
 from rune.architecture_models import ArchitectureRequest, ArchitectureResponse
 from rune.architecture_rules import format_evidence_sentence
 from rune.auth import verify_supabase_token
@@ -769,6 +769,11 @@ def _dataflow_import_lines(dep_data: dict[str, Any], file_profiles: list[dict[st
     """
     profiles = {p["path"]: p for p in file_profiles if p.get("path")}
     adjacency = dep_data.get("adjacency") or {}
+    # T37: what crosses each import (T14/T15), so a line says more than "a uses b".
+    names: dict[tuple[str, str], list[str]] = {}
+    for edge in dep_data.get("edges") or []:
+        if edge.get("specifiers"):
+            names.setdefault((edge.get("source"), edge.get("target")), []).extend(edge["specifiers"])
 
     def importance(path: str) -> float:
         return float((profiles.get(path) or {}).get("importance_score") or 0)
@@ -793,10 +798,21 @@ def _dataflow_import_lines(dep_data: dict[str, Any], file_profiles: list[dict[st
         targets = targets if isinstance(targets, list | set | tuple) else [targets]
         ranked = sorted((t for t in targets if t != source and not is_test_path(t)), key=lambda t: (-importance(t), t))
         for target in ranked[:DATAFLOW_MAX_IMPORTS_PER_FILE]:
-            lines.append(f"{labelled(source)} -> {labelled(target)}")
+            crossing = list(dict.fromkeys(names.get((source, target), [])))
+            uses = f" (uses {', '.join(crossing[:4])}{', ...' if len(crossing) > 4 else ''})" if crossing else ""
+            lines.append(f"{labelled(source)} -> {labelled(target)}{uses}")
             if len(lines) == DATAFLOW_MAX_IMPORT_LINES:
                 return lines
     return lines
+
+
+#: Files whose purpose the data-flow prompt carries (T37).
+_DATAFLOW_FACT_FILES = 40
+
+
+def _paths_in(line: str) -> list[str]:
+    """The two paths of an import line `a [role] -> b [role] (uses x)`."""
+    return [part.strip().split(" [")[0].split(" (uses ")[0] for part in line.split(" -> ", 1)]
 
 
 @router.get("/visualize/dataflow/{repo_id}", dependencies=[Depends(per_minute(30))])
@@ -867,12 +883,33 @@ async def visualize_dataflow(
                     if ep.get("file") and not is_test_path(ep["file"])
                 ]
 
+                # T37: what the files in the sample are for, and the services the code calls.
+                listed = list(
+                    dict.fromkeys([*entry_points, *(p for line in adjacency_summary for p in _paths_in(line))])
+                )
+                facts = await run_sync(cache.facts.get, facts_repo_id(result, repo_id), listed[:_DATAFLOW_FACT_FILES])
+                file_notes = [
+                    f"{path}: {text}"
+                    + (
+                        f" (serves {', '.join(routes[:3])})"
+                        if (routes := (facts.get(path) or {}).get("routes"))
+                        else ""
+                    )
+                    for path in listed[:_DATAFLOW_FACT_FILES]
+                    if (text := file_description(facts.get(path))[0])
+                ]
+                services = [
+                    f"{service} (called from {', '.join(paths[:2])}{', ...' if len(paths) > 2 else ''})"
+                    for service, paths in external_services(analysis.get("file_imports") or {}).items()
+                ]
                 prompt = build_dataflow_prompt(
                     entry_points=entry_points,
                     role_summary=role_summary,
                     adjacency_summary=adjacency_summary,
                     languages=languages,
                     repo_type=repo_type,
+                    file_notes=file_notes,
+                    external_services=services,
                 )
                 provider = get_provider("data_flow")
                 response, _usage = await provider.generate_with_usage(
