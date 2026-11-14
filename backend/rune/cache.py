@@ -12,6 +12,7 @@ so subsequent reads are faster.
 import json
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 from cachetools import LRUCache, TTLCache
@@ -32,9 +33,10 @@ _REDIS_SIG_PREFIX = "rune:sig:"
 #
 # ANALYSIS_VERSION: bump only when records written by older code can't be read
 # safely. A mismatch makes every saved analysis a cache miss. Opening one then
-# re-analyzes it from its clone on disk into a reduced record (no vector
-# pointer, index status, owner or symbol graph: session._bg_reanalyze), or
-# finds nothing if the clone is gone. It also hides every earlier analysis
+# re-analyzes it from its clone on disk into a reduced record (no symbol graph
+# or models; since T42 it keeps the old record's owner, vector pointer and
+# index status: session._bg_reanalyze), or finds nothing if the clone is
+# gone. It also hides every earlier analysis
 # from reuse, so each unchanged commit is embedded again. Current bump: fix
 # UnboundLocalError in analyze route that cached empty (zero-edge) dep graphs
 # on the FULL_UPDATE path.
@@ -77,6 +79,28 @@ def _is_current(result: dict) -> bool:
     return result.get("_analysis_version") == ANALYSIS_VERSION
 
 
+class _SupabaseReadError(Exception):
+    """The L3 query raised: whether the record exists is unknown, not "no"."""
+
+
+@dataclass(frozen=True)
+class CacheLookup:
+    """What a read found. ``record`` is what ``get`` returns.
+
+    The other two fields exist for the one caller that acts on a miss by
+    re-analyzing from the clone (``session.ensure_repo_loaded``, T42): a miss
+    it can't be sure of must not lead to a reduced record saved over the
+    real one.
+    """
+
+    record: dict | None = None
+    # Written by an older ANALYSIS_VERSION: unusable as an analysis, but it
+    # still says who owns it, where its vectors are and how they were built.
+    outdated: dict | None = None
+    # The persistent store (Supabase) couldn't be asked, so a miss isn't known.
+    unread: bool = False
+
+
 class AnalysisCache:
     """
     3-tier cache for analysis results.
@@ -106,6 +130,8 @@ class AnalysisCache:
         # L3: Supabase (lazy init)
         self._supabase = None
         self._supabase_available = None
+        # Configured but the client couldn't be built: reads are unknowns, not misses.
+        self._supabase_failed = False
 
         # T23: every write takes its repo's lock, so an update's
         # read-merge-write can't interleave with another write in this
@@ -183,6 +209,7 @@ class AnalysisCache:
         except Exception as e:
             logger.warning(f"Supabase connection failed — L3 cache disabled: {e}")
             self._supabase_available = False
+            self._supabase_failed = True
             return None
 
     # ── Public API ──
@@ -195,25 +222,40 @@ class AnalysisCache:
         logic) is treated as a miss so it falls through to re-analysis.
         Returns the result dict or None.
         """
+        return self.lookup(repo_id).record
+
+    def lookup(self, repo_id: str) -> CacheLookup:
+        """``get``, plus what a miss means: an outdated record, or a store that didn't answer."""
+        outdated = None
+
         # L1: in-memory
         result = self._memory.get(repo_id)
-        if result and _is_current(result):
-            return result
+        if result:
+            if _is_current(result):
+                return CacheLookup(record=result)
+            outdated = result
 
         # L2: Redis
         result = self._redis_get(repo_id)
-        if result and _is_current(result):
-            self._memory[repo_id] = result  # populate L1
-            return result
+        if result:
+            if _is_current(result):
+                self._memory[repo_id] = result  # populate L1
+                return CacheLookup(record=result)
+            outdated = outdated or result
 
         # L3: Supabase
-        result = self._supabase_get(repo_id)
-        if result and _is_current(result):
-            self._memory[repo_id] = result  # populate L1
-            self._redis_set(repo_id, result)  # populate L2
-            return result
+        try:
+            result = self._supabase_get(repo_id)
+        except _SupabaseReadError:
+            return CacheLookup(outdated=outdated, unread=True)
+        if result:
+            if _is_current(result):
+                self._memory[repo_id] = result  # populate L1
+                self._redis_set(repo_id, result)  # populate L2
+                return CacheLookup(record=result)
+            outdated = outdated or result
 
-        return None
+        return CacheLookup(outdated=outdated, unread=self._supabase_failed)
 
     def set(self, repo_id: str, result: dict) -> None:
         """Write a whole record to all 3 tiers.
@@ -387,20 +429,23 @@ class AnalysisCache:
             logger.warning(f"Supabase SET RAW failed for {repo_id}: {e}")
 
     def _supabase_get(self, repo_id: str) -> dict | None:
-        # L-08: a genuine query error and a real cache miss both return None
-        # here. Accepted trade-off — every caller already treats a L3 miss as
-        # "fall through to re-analysis", so a distinct exception type for the
-        # error case wouldn't change control flow, only add a rarely-useful
-        # distinction. The warning log below is the observability signal.
+        """The stored record, or None when there is none. Raises _SupabaseReadError when the query fails.
+
+        L-08 returned None for both, on the grounds that a miss only meant a
+        harmless re-analysis. It isn't harmless: re-analysis saves a reduced
+        record (no vector pointer, index status, owner or symbols) over the
+        real one, so one network hiccup could replace a saved analysis (T42).
+        """
         sb = self._get_supabase()
         if not sb:
             return None
         try:
             response = sb.table("analysis_cache").select("result_json").eq("repo_id", repo_id).maybe_single().execute()
-            if response and getattr(response, "data", None):
-                return response.data["result_json"]
         except Exception as e:
             logger.warning(f"Supabase GET failed for {repo_id}: {e}")
+            raise _SupabaseReadError(str(e)) from e
+        if response and getattr(response, "data", None):
+            return response.data["result_json"]
         return None
 
     def _supabase_delete(self, repo_id: str) -> None:

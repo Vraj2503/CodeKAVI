@@ -25,6 +25,32 @@ _reanalysis_lock = threading.Lock()
 _reanalysis_in_progress: set[str] = set()
 
 
+# What a re-analysis from the clone keeps from an outdated record of the same repo_id
+# (T42): who owns it, which commit it is, and where its vectors are and how they were
+# built. Facts (graphs, symbols, models) are recomputed; an older version's might not
+# read, which is why the record counts as outdated.
+_KEPT_ON_REANALYSIS = (
+    "repo_name",
+    "owner",
+    "owner_user_id",
+    "github_url",
+    "repo_signature",
+    "_origin_repo_id",
+    "vector_repo_id",
+    "vector_index_status",
+    "index_status",
+)
+
+
+def _has_working_tree(path: str) -> bool:
+    """A clone folder holding only `.git` (what Windows cleanup used to leave, T43) has nothing to analyze."""
+    try:
+        with os.scandir(path) as entries:
+            return any(entry.name != ".git" for entry in entries)
+    except OSError:
+        return False
+
+
 def find_clone_path_by_repo_id(repo_id: str) -> str | None:
     """Find an on-disk clone folder by repo_id suffix: <repo_name>_<repo_id>."""
     # Prevent path traversal by strictly validating repo_id characters
@@ -39,7 +65,7 @@ def find_clone_path_by_repo_id(repo_id: str) -> str | None:
     suffix = f"_{repo_id}"
     for entry in os.listdir(CLONE_BASE_DIR):
         full_path = os.path.join(CLONE_BASE_DIR, entry)
-        if os.path.isdir(full_path) and entry.endswith(suffix):
+        if os.path.isdir(full_path) and entry.endswith(suffix) and _has_working_tree(full_path):
             return full_path
     return None
 
@@ -68,7 +94,8 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
     """
     # Fast path: check L1 memory
     clone_path = cache.get_session_path(repo_id)
-    result = cache.get(repo_id)
+    found = cache.lookup(repo_id)
+    result = found.record
     if result and clone_path:
         assert_repo_owner(result, user_id)
         return result, clone_path
@@ -83,9 +110,26 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
         # We have cached results but no clone dir. Let the caller handle it gracefully.
         return result, None
 
-    # No cached result anywhere. Try to find the clone dir and re-analyze.
+    # T42: a miss the store couldn't confirm isn't a miss. Re-analyzing would save a
+    # reduced record over the real one the moment the store answers again.
+    if found.unread:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "analysis_store_unavailable",
+                "message": "Couldn't load this analysis right now. Please try again in a moment.",
+            },
+        )
+
+    # An outdated record still says who owns this analysis.
+    earlier = found.outdated
+    if earlier is not None:
+        assert_repo_owner(earlier, user_id)
+    kept = {key: earlier[key] for key in _KEPT_ON_REANALYSIS if earlier and earlier.get(key) not in (None, "")}
+
+    # No usable result anywhere. Try to find the clone dir and re-analyze.
     clone_path = clone_path or find_clone_path_by_repo_id(repo_id)
-    if not clone_path:
+    if not clone_path or not _has_working_tree(clone_path):
         return None, None
 
     # Re-analyze from disk asynchronously
@@ -150,6 +194,10 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
                 "module_graph": module_graph,
                 "selected_files": selected_files,
                 "clone_path": clone_path,  # Cache clone_path in result
+                # T42: an outdated record's owner, commit and vectors survive. No
+                # pipeline_version: the facts above are a subset (no symbol graph or
+                # models), so a later analysis of this commit re-runs the pipeline (T28).
+                **kept,
             }
 
             cache.set(repo_id, result)
@@ -171,8 +219,6 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
 
     if not already_running:
         threading.Thread(target=_bg_reanalyze, daemon=True).start()
-
-    from fastapi import HTTPException
 
     # Not an error — HTTPException is the shortest way to short-circuit a
     # sync function running under run_in_executor and surface 202 Accepted
