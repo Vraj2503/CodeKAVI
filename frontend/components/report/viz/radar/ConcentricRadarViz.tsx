@@ -139,6 +139,11 @@ export function ConcentricRadarViz({ data }: ConcentricRadarVizProps) {
               <div className="space-y-1">
                 <div className="font-semibold text-foreground text-[12px]">{hoveredModule.name}</div>
                 <div className="text-muted-foreground">{hoveredModule.path}</div>
+                {hoveredModule.purpose && (
+                  <div className={`max-w-[280px] text-foreground ${hoveredModule.purpose_source === "derived" ? "italic" : ""}`}>
+                    {hoveredModule.purpose}
+                  </div>
+                )}
                 <div>Tier: {data.tiers.find(t => t.level === hoveredModule.tier)?.name}</div>
                 <div className="flex items-center gap-1.5">
                   <span>CC:</span>

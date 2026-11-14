@@ -55,6 +55,14 @@ export const RadarInspector: React.FC<RadarInspectorProps> = ({ module, tiers, o
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+        {module.purpose && (
+          <p
+            className={`text-[12px] leading-relaxed ${module.purpose_source === "derived" ? "italic text-muted-foreground" : "text-foreground"}`}
+            title={module.purpose_source === "derived" ? "Built from what the file defines; it has no description of its own" : undefined}
+          >
+            {module.purpose}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <span className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-muted/50" style={{ color: tierColor }}>
             {tier?.name || `Ring ${module.tier}`}

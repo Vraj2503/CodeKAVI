@@ -10,6 +10,7 @@ import pytest
 
 from rune.architecture import build_architecture_manifest
 from rune.architecture_models import ArchitectureInclude, ArchitectureRequest
+from rune.cache import AnalysisCache
 from rune.config import shown_in_views
 from rune.graph_assembler import assemble_graph
 from rune.routes import visualize
@@ -83,8 +84,15 @@ def loaded():
         yield record
 
 
+def _memory_cache() -> AnalysisCache:
+    cache = AnalysisCache()
+    cache._redis_available = False
+    cache._supabase_available = False
+    return cache
+
+
 async def _radar(**flags):
-    return (await visualize_radar(MagicMock(), "r", cache=MagicMock(), user_id="u", **flags))["data"]
+    return (await visualize_radar(MagicMock(), "r", cache=_memory_cache(), user_id="u", **flags))["data"]
 
 
 @pytest.mark.asyncio

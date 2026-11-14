@@ -59,6 +59,24 @@ def facts_repo_id(record: dict | None, repo_id: str) -> str:
     return (record or {}).get("_origin_repo_id") or repo_id
 
 
+def file_description(facts: dict[str, Any] | None) -> tuple[str | None, str | None]:
+    """What a view says a file is for: its written sentence (T34), else its purpose line (T33).
+
+    Returns (text, source), source one of "summary", "doc", "derived", or (None, None).
+    """
+    if not facts:
+        return None, None
+    if facts.get("summary"):
+        return facts["summary"], "summary"
+    return facts.get("purpose"), facts.get("purpose_source")
+
+
+def top_symbols(facts: dict[str, Any] | None, limit: int) -> list[dict[str, Any]]:
+    """A file's most complex functions and methods first, ties in source order."""
+    symbols = [s for s in (facts or {}).get("symbols") or [] if s.get("kind") != "class"]
+    return sorted(symbols, key=lambda s: (-(s.get("complexity") or 0), s.get("line") or 0))[:limit]
+
+
 def _is_missing_table(error: Exception) -> bool:
     text = str(error)
     return "PGRST205" in text or "42P01" in text or (FACTS_TABLE in text and "does not exist" in text)

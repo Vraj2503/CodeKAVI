@@ -17,6 +17,9 @@ export interface RadarModule {
   id: string;
   name: string;
   path: string;
+  /** What the file is for (T41): its written sentence, docstring, or a line built from facts. */
+  purpose?: string | null;
+  purpose_source?: "summary" | "doc" | "derived" | null;
   tier: number;
   role: string;
   role_label: string;

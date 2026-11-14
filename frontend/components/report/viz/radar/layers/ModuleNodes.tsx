@@ -5,6 +5,9 @@ import { inkDimVar } from "@/lib/viz/tokens";
 import type { RadarModule, RadarTier, ColorMode, SizeMode } from "../types";
 import { nodeColor, nodeRadius, labelPosition, textAnchor, getConnected, riskColor } from "../useRadarLayout";
 
+/** Up to this many files, every file keeps its label. */
+const ALWAYS_LABELLED_UP_TO = 24;
+
 interface ModuleNodesProps {
   modules: RadarModule[];
   tiers: RadarTier[];
@@ -29,6 +32,11 @@ export const ModuleNodes = React.memo(function ModuleNodes({
   onSelect,
 }: ModuleNodesProps) {
   const activeId = hoveredId || selectedId;
+  // T41: labels for every file overlapped into an unreadable band. A small radar keeps
+  // them all; otherwise only hotspots, the active file and its links, and the files on
+  // the hovered ring are named.
+  const labelEveryFile = modules.length <= ALWAYS_LABELLED_UP_TO;
+  const activeTier = activeId ? modules.find((m) => m.id === activeId)?.tier : undefined;
 
   const connectedIds = useMemo(() => {
     if (!activeId) return new Set<string>();
@@ -55,6 +63,12 @@ export const ModuleNodes = React.memo(function ModuleNodes({
 
         const isHotspot = mod.cc >= 50;
         const fontSize = Math.max(8, Math.min(13, r * 0.6));
+        const showLabel =
+          labelEveryFile ||
+          isHotspot ||
+          mod.id === activeId ||
+          connectedIds.has(mod.id) ||
+          (activeTier !== undefined && mod.tier === activeTier);
 
         const handleKeyDown = (e: React.KeyboardEvent) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -110,20 +124,22 @@ export const ModuleNodes = React.memo(function ModuleNodes({
             </text>
 
             {/* Label */}
-            <text
-              x={lx - mod.x}
-              y={ly - mod.y}
-              fill={inkDimVar()}
-              fontSize={11}
-              textAnchor={anchor}
-              paintOrder="stroke fill"
-              stroke="hsl(var(--viz-surface))"
-              strokeWidth={4}
-              strokeLinejoin="round"
-              pointerEvents="none"
-            >
-              {mod.name}
-            </text>
+            {showLabel && (
+              <text
+                x={lx - mod.x}
+                y={ly - mod.y}
+                fill={inkDimVar()}
+                fontSize={11}
+                textAnchor={anchor}
+                paintOrder="stroke fill"
+                stroke="hsl(var(--viz-surface))"
+                strokeWidth={4}
+                strokeLinejoin="round"
+                pointerEvents="none"
+              >
+                {mod.name}
+              </text>
+            )}
           </g>
         );
       })}

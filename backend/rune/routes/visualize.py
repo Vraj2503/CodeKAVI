@@ -34,6 +34,7 @@ from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.config import detect_layer as _detect_layer
 from rune.config import is_test_path, shown_in_views
+from rune.fact_store import facts_repo_id, file_description, top_symbols
 from rune.graph import ROLE_TO_LAYER, export_graph_json
 from rune.limiter import per_minute
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
@@ -1238,17 +1239,23 @@ async def visualize_radar(
 
     included_paths = {fp.get("path") for fp in sorted_profiles if fp.get("path")}
 
+    # T41: each file's own facts (T16) - its five most complex functions by their own
+    # complexity, and what it is for. Before, the list came from the 40-symbol graph,
+    # whose nodes have no complexity, so every function read 0.
+    facts = await run_sync(cache.facts.get, facts_repo_id(result, repo_id), sorted(included_paths))
+
+    # Analyses saved before the fact store: names from the symbol graph, no complexity.
     symbol_graph_data = result.get("symbol_graph", {})
     symbols_list = symbol_graph_data.get("nodes", []) if isinstance(symbol_graph_data, dict) else []
     symbols_by_file: dict[str, list] = {}
     for sym in symbols_list:
         path = sym.get("file")
-        if path and path in included_paths:
+        if path and path in included_paths and path not in facts:
             symbols_by_file.setdefault(path, []).append(sym)
-
     for path, syms in symbols_by_file.items():
-        syms.sort(key=lambda x: x.get("complexity") or 0, reverse=True)
         symbols_by_file[path] = syms[:5]
+    for path, file_facts in facts.items():
+        symbols_by_file[path] = top_symbols(file_facts, 5)
 
     modules = []
     tier_counts = [0, 0, 0, 0, 0, 0]
@@ -1285,12 +1292,15 @@ async def visualize_radar(
         ]
 
         name = os.path.basename(path)
+        purpose, purpose_source = file_description(facts.get(path))
 
         m = {
             "id": path,
             "name": name,
             "label": name,
             "path": path,
+            "purpose": purpose,
+            "purpose_source": purpose_source,
             "tier": tier,
             "role": role,
             "role_label": fp.get("role_label", ""),
