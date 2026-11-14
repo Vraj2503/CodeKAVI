@@ -59,9 +59,14 @@ def _top_level(symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return top
 
 
+def file_routes(symbols: list[dict[str, Any]]) -> list[str]:
+    """The HTTP routes a file's handlers serve, from their decorators ("POST /chat/{repo_id}")."""
+    return list(dict.fromkeys(r for s in symbols if (r := http_route(s.get("decorators")))))
+
+
 def derived_purpose(path: str, symbols: list[dict[str, Any]]) -> str | None:
     """A purpose line from facts, for a file that doesn't describe itself."""
-    routes = list(dict.fromkeys(r for s in symbols if (r := http_route(s.get("decorators")))))
+    routes = file_routes(symbols)
     if routes:
         return _cap("Routes: " + _listing(routes, 3))
 

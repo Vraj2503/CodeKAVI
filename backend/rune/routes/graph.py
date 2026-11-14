@@ -13,6 +13,7 @@ module formats, still used by ArchitectureGraph.tsx / DependencyGraph.tsx).
 import hashlib
 import json
 import logging
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -20,6 +21,7 @@ from fastapi.responses import Response
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.embedding import EmbeddingProviderUnavailable
+from rune.fact_store import facts_repo_id
 from rune.graph_assembler import assemble_graph
 from rune.index_status import resolve_embedding_identity, resolve_index_status, vector_repo_id
 from rune.limiter import per_minute
@@ -34,6 +36,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+#: Files of the semantic graph that carry their facts (T18): the most important ones.
+_GRAPH_FACT_FILES = 100
+
+
+def _facts_for(cache: AnalysisCache, result: dict, repo_id: str):
+    """Reads facts for the files a tour visits, from the analysis that produced them (T19)."""
+    source = facts_repo_id(result, repo_id)
+    return lambda paths: cache.facts.get(source, paths)
+
 
 @router.get("/graph/semantic/{repo_id}", dependencies=[Depends(per_minute(30))])
 async def get_repo_graph(
@@ -46,7 +57,14 @@ async def get_repo_graph(
     result, _ = await _load_repo(repo_id, cache, user_id)
 
     try:
-        payload = await run_sync(assemble_graph, result)
+        # T18: what the most important files are for. Not all of them: React has
+        # ~7,000 files, and the canvas opens on its containers.
+        shown = [
+            p["path"]
+            for p in sorted(result.get("file_profiles") or [], key=lambda p: -(p.get("importance_score") or 0))
+        ]
+        facts = await run_sync(cache.facts.get, facts_repo_id(result, repo_id), shown[:_GRAPH_FACT_FILES])
+        payload = await run_sync(assemble_graph, result, facts)
     except Exception as e:
         raise internal_error(e, context="get_repo_graph: assembly failed") from e
 
@@ -113,7 +131,7 @@ async def get_repo_question_tour(
         except EmbeddingProviderUnavailable as e:
             logger.warning("Vector search unavailable for tour (%s): %s", repo_id, e)
             search_results = []
-        payload = assemble_question_tour(graph, search_results)
+        payload = await run_sync(assemble_question_tour, graph, search_results, _facts_for(cache, result, repo_id))
     except Exception as e:
         raise internal_error(e, context="get_repo_question_tour: assembly failed") from e
 
@@ -150,7 +168,7 @@ async def get_repo_diff_tour(
 
     try:
         graph = await run_sync(assemble_graph, result)
-        payload = assemble_diff_tour(graph, change_map)
+        payload = await run_sync(assemble_diff_tour, graph, change_map, _facts_for(cache, result, repo_id))
     except Exception as e:
         raise internal_error(e, context="get_repo_diff_tour: assembly failed") from e
 
@@ -261,7 +279,16 @@ async def get_repo_tour(
 
     try:
         graph = await run_sync(assemble_graph, result)
-        payload = assemble_tour(graph, mode, include_tests=include_tests, include_docs=include_docs)
+        payload = await run_sync(
+            partial(
+                assemble_tour,
+                graph,
+                mode,
+                include_tests=include_tests,
+                include_docs=include_docs,
+                facts_for=_facts_for(cache, result, repo_id),
+            )
+        )
     except Exception as e:
         raise internal_error(e, context="get_repo_tour: assembly failed") from e
 

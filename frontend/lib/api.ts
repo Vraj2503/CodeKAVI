@@ -385,6 +385,11 @@ export interface RepoGraphFile {
   kind: "file";
   parent: null;
   flags: string[];
+  /** T18, on the most important files only: what the file is for, its key functions, its routes. */
+  purpose?: string | null;
+  purpose_source?: "summary" | "doc" | "derived" | null;
+  key_symbols?: string[];
+  routes?: string[];
 }
 
 export interface RepoGraphEdge {

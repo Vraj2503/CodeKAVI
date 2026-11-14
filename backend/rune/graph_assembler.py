@@ -11,6 +11,7 @@ import posixpath
 import re
 from collections import Counter, defaultdict
 
+from rune.fact_store import file_description, top_symbols
 from rune.fingerprint import _hash_sorted
 from rune.graph import ROLE_TO_LAYER, _topological_tiers, detect_cycles
 
@@ -332,8 +333,27 @@ def _compute_fingerprint(file_profiles: list[dict]) -> str:
     return _hash_sorted(tokens)
 
 
-def assemble_graph(result: dict) -> dict:
-    """Pure: analysis result in, graph payload out. No I/O."""
+def _file_fact_fields(file_facts: dict | None) -> dict:
+    """What a graph file says about itself (T18): what it is for, its key functions, its routes."""
+    if not file_facts:
+        return {}
+    purpose, purpose_source = file_description(file_facts)
+    fields: dict = {"purpose": purpose, "purpose_source": purpose_source}
+    key_symbols = [s["name"] for s in top_symbols(file_facts, 3) if s.get("name")]
+    if key_symbols:
+        fields["key_symbols"] = key_symbols
+    if file_facts.get("routes"):
+        fields["routes"] = list(file_facts["routes"])
+    return fields
+
+
+def assemble_graph(result: dict, facts: dict[str, dict] | None = None) -> dict:
+    """Pure: analysis result in, graph payload out. No I/O.
+
+    `facts` (from the fact store, for the files the caller will show) adds what
+    each of those files is for, its key functions and its routes (T18).
+    """
+    facts = facts or {}
     dep_data = result["dep_data"]
     file_profiles = result["file_profiles"]
     raw_edges = dep_data.get("edges", [])
@@ -386,6 +406,7 @@ def assemble_graph(result: dict) -> dict:
             "kind": "file",
             "parent": None,
             "flags": flags_by_path.get(profile["path"], []),
+            **_file_fact_fields(facts.get(profile["path"])),
         }
         for profile in sorted(file_profiles, key=lambda p: p["path"])
     ]

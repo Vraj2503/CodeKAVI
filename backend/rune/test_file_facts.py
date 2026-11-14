@@ -216,3 +216,25 @@ def test_classify_files_fills_facts_out_for_parsed_files(tmp_path, with_symbols)
         "app/routes.py": {"purpose": "Serves the public API.", "purpose_source": "doc"},
         "ui/Chart.tsx": {"purpose": "Component: Chart", "purpose_source": "derived"},
     }
+
+
+def test_classify_files_records_the_routes_a_file_serves(tmp_path):
+    src = '"""Chat endpoints."""\n\n\n@router.post("/chat/{repo_id}")\nasync def chat(repo_id):\n    return 1\n'
+    facts: dict[str, dict] = {}
+    empty = DepGraph(
+        edges=[],
+        adjacency={},
+        reverse_adjacency={},
+        file_imports={},
+        entry_points=[],
+        file_signals={},
+        central_files=[],
+        stats={},
+    )
+    classify_files(str(tmp_path), [_entry("routes/chat.py", src, "Python")], empty, facts_out=facts)
+
+    assert facts["routes/chat.py"] == {
+        "purpose": "Chat endpoints.",
+        "purpose_source": "doc",
+        "routes": ["POST /chat/{repo_id}"],
+    }

@@ -30,9 +30,11 @@ Public surface:
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Callable
 from typing import Any
 
 from rune.config import shown_in_views
+from rune.fact_store import file_description, top_symbols
 
 
 def _kahn_order(all_nodes: set[str], adjacency: dict[str, list[str]]) -> list[str]:
@@ -254,8 +256,26 @@ def build_cycle_partners(cycles: list[list[str]]) -> dict[str, list[str]]:
     return {path: sorted(others) for path, others in partners.items()}
 
 
-def _file_facts(file: dict, step: dict[str, Any] | None = None) -> list[str]:
-    facts = [file.get("role_label") or "File"]
+def _what_it_is(file_facts: dict | None) -> list[str]:
+    """What a file is for, then its routes or key functions, from the fact store (T19)."""
+    if not file_facts:
+        return []
+    lines = []
+    text, _source = file_description(file_facts)
+    if text:
+        lines.append(text)
+    routes = file_facts.get("routes") or []
+    names = [s["name"] for s in top_symbols(file_facts, 3) if s.get("name")]
+    if routes and not (text or "").startswith("Routes:"):
+        lines.append("Serves " + ", ".join(routes[:3]) + (", ..." if len(routes) > 3 else ""))
+    elif names and not (text or "").startswith(("Routes:", "Defines:", "Component", "Hook")):
+        lines.append("Key functions: " + ", ".join(names))
+    return lines
+
+
+def _file_facts(file: dict, step: dict[str, Any] | None = None, file_facts: dict | None = None) -> list[str]:
+    """A step's facts: what the file does first (T19), then its role and its place in the graph."""
+    facts = [*_what_it_is(file_facts), file.get("role_label") or "File"]
     in_degree, out_degree = file.get("in_degree", 0), file.get("out_degree", 0)
     facts.append(f"{in_degree} file(s) depend on this; it depends on {out_degree}")
     return facts
@@ -281,7 +301,17 @@ def _without_hidden_files(graph: dict, *, include_tests: bool, include_docs: boo
     return {**graph, "files": files, "edges": edges}
 
 
-def assemble_tour(graph: dict, mode: str, *, include_tests: bool = False, include_docs: bool = False) -> dict[str, Any]:
+FactsFor = Callable[[list[str]], dict[str, dict]]
+
+
+def assemble_tour(
+    graph: dict,
+    mode: str,
+    *,
+    include_tests: bool = False,
+    include_docs: bool = False,
+    facts_for: FactsFor | None = None,
+) -> dict[str, Any]:
     """Assemble the full E5 tour response (spec §8): title/facts/questions
     layered onto the deterministic step skeleton from ``generate_learn_tour``
     / ``generate_recall_tour``. Zero LLM calls — prose is optional polish
@@ -296,7 +326,7 @@ def assemble_tour(graph: dict, mode: str, *, include_tests: bool = False, includ
     """
     walked = _without_hidden_files(graph, include_tests=include_tests, include_docs=include_docs)
     steps = generate_learn_tour(walked) if mode == "learn" else generate_recall_tour(walked)
-    return _decorate_tour(graph, mode, steps)
+    return _decorate_tour(graph, mode, steps, facts=_step_facts(steps, facts_for))
 
 
 def resolve_question_nodes(graph: dict, search_results: list[dict[str, Any]]) -> list[str]:
@@ -342,11 +372,20 @@ def generate_question_tour(graph: dict, node_ids: list[str]) -> list[dict[str, A
     ]
 
 
-def assemble_question_tour(graph: dict, search_results: list[dict[str, Any]]) -> dict[str, Any]:
+def assemble_question_tour(
+    graph: dict, search_results: list[dict[str, Any]], facts_for: FactsFor | None = None
+) -> dict[str, Any]:
     """G3 support: question-driven tour assembled from RAG search hits (G1+G2)."""
     node_ids = resolve_question_nodes(graph, search_results)
     steps = generate_question_tour(graph, node_ids)
-    return _decorate_tour(graph, "question", steps)
+    return _decorate_tour(graph, "question", steps, facts=_step_facts(steps, facts_for))
+
+
+def _step_facts(steps: list[dict[str, Any]], facts_for: FactsFor | None) -> dict[str, dict]:
+    """Facts for the files the steps visit, and only those: a tour has ~25 steps, a repo thousands of files."""
+    if facts_for is None or not steps:
+        return {}
+    return facts_for(list(dict.fromkeys(step["node_ids"][0] for step in steps)))
 
 
 def _decorate_tour(
@@ -354,8 +393,10 @@ def _decorate_tour(
     mode: str,
     steps: list[dict[str, Any]],
     facts_fn: Any = _file_facts,
+    facts: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     files_by_id = {f["id"]: f for f in graph.get("files", [])}
+    facts = facts or {}
     cycle_partners = build_cycle_partners(graph.get("insights", {}).get("cycles", []))
 
     return {
@@ -364,7 +405,7 @@ def _decorate_tour(
             {
                 **step,
                 "title": files_by_id[step["node_ids"][0]]["name"],
-                "facts": facts_fn(files_by_id[step["node_ids"][0]], step),
+                "facts": facts_fn(files_by_id[step["node_ids"][0]], step, facts.get(step["node_ids"][0])),
                 "questions": generate_questions(files_by_id[step["node_ids"][0]], cycle_partners),
             }
             for step in steps
@@ -412,14 +453,15 @@ def generate_diff_tour(graph: dict, change_map: dict[str, str]) -> list[dict[str
     ]
 
 
-def _diff_facts(file: dict, step: dict[str, Any] | None = None) -> list[str]:
+def _diff_facts(file: dict, step: dict[str, Any] | None = None, file_facts: dict | None = None) -> list[str]:
     change_type = (step or {}).get("change_type")
+    what = [text] if (text := file_description(file_facts)[0]) else []
     if change_type == "STRUCTURAL":
-        return [file.get("role_label") or "File", "Structural change — imports, exports, or functions changed"]
-    return [file.get("role_label") or "File", "Cosmetic change — content edited, structure unchanged"]
+        return [*what, file.get("role_label") or "File", "Structural change — imports, exports, or functions changed"]
+    return [*what, file.get("role_label") or "File", "Cosmetic change — content edited, structure unchanged"]
 
 
-def assemble_diff_tour(graph: dict, change_map: dict[str, str]) -> dict[str, Any]:
+def assemble_diff_tour(graph: dict, change_map: dict[str, str], facts_for: FactsFor | None = None) -> dict[str, Any]:
     """H2/H3 support: diff tour assembled from ``change_map`` (H1's
     ``last_change_map``), decorated with change-kind facts instead of the
     usual role/fan-in line.
@@ -430,7 +472,7 @@ def assemble_diff_tour(graph: dict, change_map: dict[str, str]) -> dict[str, Any
     """
     files_by_id = {f["id"]: f for f in graph.get("files", [])}
     steps = generate_diff_tour(graph, change_map)
-    result = _decorate_tour(graph, "diff", steps, facts_fn=_diff_facts)
+    result = _decorate_tour(graph, "diff", steps, facts_fn=_diff_facts, facts=_step_facts(steps, facts_for))
     result["deleted_count"] = sum(1 for path in change_map if path not in files_by_id)
     return result
 

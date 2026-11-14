@@ -34,7 +34,7 @@ from typing import Any
 
 from rune.complexity import file_complexity
 from rune.config import MAX_FILE_SIZE_BYTES
-from rune.file_facts import purpose_of
+from rune.file_facts import file_routes, purpose_of
 from rune.pipeline_models import DepGraph, FileEntry, FileProfile
 from rune.utils import BoundedContentCache
 
@@ -411,8 +411,8 @@ def classify_files(
                      return value so existing callers keep working, and because symbols
                      deliberately stay off FileProfile — that model is serialized into
                      every /analyze response and per-symbol data would bloat it.
-        facts_out:   Optional dict, filled in place with `{rel_path: {"purpose", "purpose_source"}}`
-                     for every parseable source file that has one (T33). Kept off
+        facts_out:   Optional dict, filled in place with `{rel_path: {"purpose", "purpose_source",
+                     "routes"}}` for every parseable source file that has any (T33). Kept off
                      FileProfile for the same reason; the symbol store holds it.
 
     Returns:
@@ -506,9 +506,16 @@ def classify_files(
                 if symbols_out is not None and metrics.get("symbols"):
                     symbols_out[rel_path] = metrics["symbols"]
                 if facts_out is not None and metrics.get("complexity_source") == "cyclomatic":
-                    purpose, purpose_source = purpose_of(rel_path, metrics.get("doc"), metrics.get("symbols") or [])
+                    file_symbols = metrics.get("symbols") or []
+                    purpose, purpose_source = purpose_of(rel_path, metrics.get("doc"), file_symbols)
+                    entry: dict[str, Any] = {}
                     if purpose:
-                        facts_out[rel_path] = {"purpose": purpose, "purpose_source": purpose_source}
+                        entry.update(purpose=purpose, purpose_source=purpose_source)
+                    routes = file_routes(file_symbols)
+                    if routes:
+                        entry["routes"] = routes
+                    if entry:
+                        facts_out[rel_path] = entry
 
         profiles.append(
             FileProfile(

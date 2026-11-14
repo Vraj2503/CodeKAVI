@@ -49,6 +49,28 @@ export function NodePanel({ file, cycles, onClose }: NodePanelProps) {
         </button>
       </div>
 
+      {file.purpose && (
+        <p
+          className={`font-sans text-[12px] leading-relaxed ${file.purpose_source === "derived" ? "italic text-muted-foreground" : "text-foreground"}`}
+        >
+          {file.purpose}
+        </p>
+      )}
+      {file.key_symbols && file.key_symbols.length > 0 && (
+        <div className="text-muted-foreground">
+          key functions: <span className="text-foreground">{file.key_symbols.join(", ")}</span>
+        </div>
+      )}
+      {file.routes && file.routes.length > 0 && (
+        <ul className="flex flex-col gap-0.5 text-foreground">
+          {file.routes.map((route) => (
+            <li key={route} className="truncate" title={route}>
+              {route}
+            </li>
+          ))}
+        </ul>
+      )}
+
       <dl className="flex flex-col gap-1.5 text-muted-foreground">
         <div className="flex justify-between">
           <dt>imported by</dt>
