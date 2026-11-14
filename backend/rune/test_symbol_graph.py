@@ -170,6 +170,79 @@ def test_a_method_name_does_not_resolve_across_files(tmp_path):
     assert graph["metadata"]["unresolved_calls"] == 1
 
 
+def _graph_of(tmp_path, files, adjacency=None):
+    symbols: dict[str, list[dict]] = {}
+    profiles = classify_files(str(tmp_path), files, _dep_data(), symbols_out=symbols)
+    return build_symbol_graph(symbols, [p.model_dump() for p in profiles], {"adjacency": adjacency or {}})
+
+
+# As in CodeKAVI's frontend/lib/supabase.ts: an arrow under a `get:` key, so a plain function named `get`.
+_PROXY_TRAP = "export const lazy = new Proxy({}, {\n  get: (_target, prop) => {\n    return load()[prop];\n  },\n});\n"
+
+
+def test_a_call_on_a_receiver_never_lands_on_a_lone_function_elsewhere(tmp_path):
+    """T30: every `cache.get()` in CodeKAVI's routes was drawn as a call to a JS Proxy trap.
+
+    The trap was the repo's only non-method `get`, so the repo-wide fallback took it.
+    """
+    files = [
+        _entry("routes/chat.py", "def chat(cache):\n    return cache.get('repo')\n"),
+        _entry("routes/explain.py", "def explain(cache):\n    return cache.get('repo')\n"),
+        _entry("lib/lazy.ts", _PROXY_TRAP, "TypeScript"),
+    ]
+    graph = _graph_of(tmp_path, files)
+
+    # Counted before the display cut, so a hidden one-line caller can't make this pass.
+    # The third unresolved call is the trap's own load().
+    assert (graph["metadata"]["resolved_calls"], graph["metadata"]["unresolved_calls"]) == (0, 3)
+
+
+def test_a_receiver_call_still_resolves_through_an_imported_module(tmp_path):
+    """`cloner.clone_repo()`: the receiver is a module the file imports, so the import rung finds it."""
+    files = [
+        _entry(
+            "rune/analyze.py",
+            'from rune import cloner\n\n\ndef analyze(url):\n    """Clone, then analyze."""\n    return cloner.clone_repo(url)\n',
+        ),
+        _entry("rune/cloner.py", "def clone_repo(url):\n    return url\n"),
+    ]
+    graph = _graph_of(tmp_path, files, adjacency={"rune/analyze.py": ["rune/cloner.py"]})
+
+    assert ("rune/analyze.py::analyze", "rune/cloner.py::clone_repo") in _edges(graph, "calls")
+
+
+def test_a_receiver_call_to_a_file_nobody_imports_is_not_guessed(tmp_path):
+    files = [
+        _entry("a.py", "def caller(job):\n    return job.process()\n"),
+        _entry("b.py", "def process():\n    return 1\n"),
+    ]
+    graph = _graph_of(tmp_path, files)
+
+    assert (graph["metadata"]["resolved_calls"], graph["metadata"]["unresolved_calls"]) == (0, 1)
+
+
+def test_a_bare_call_never_crosses_languages(tmp_path):
+    files = [
+        _entry("backend/report.py", "def report(day):\n    return format_date(day)\n"),
+        _entry("frontend/lib/dates.ts", "export function format_date(d) {\n  return d;\n}\n", "TypeScript"),
+    ]
+    graph = _graph_of(tmp_path, files)
+
+    assert (graph["metadata"]["resolved_calls"], graph["metadata"]["unresolved_calls"]) == (0, 1)
+
+
+def test_a_bare_call_resolves_within_its_family_even_when_another_language_shares_the_name(tmp_path):
+    """Uniqueness is counted per language family: one TS `formatDate` and one Python one don't cancel out."""
+    files = [
+        _entry("web/page.tsx", "export function Page() {\n  return formatDate(1);\n}\n", "TypeScript"),
+        _entry("web/dates.js", "export function formatDate(d) {\n  return String(d);\n}\n", "JavaScript"),
+        _entry("api/dates.py", "def formatDate(d):\n    return str(d)\n"),
+    ]
+    graph = _graph_of(tmp_path, files)
+
+    assert ("web/page.tsx::Page", "web/dates.js::formatDate") in _edges(graph, "calls")
+
+
 def test_unresolvable_calls_are_counted(tmp_path):
     graph = _graph(tmp_path)
     # `mystery_call` is defined nowhere; `helper`, `local` and the Base

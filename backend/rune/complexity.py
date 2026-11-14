@@ -396,6 +396,10 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
             "line": node.start_point[0] + 1,
             "end_line": node.end_point[0] + 1,
             "callees": [],
+            # The subset called bare, `name()`, at least once; the rest only on a receiver,
+            # `obj.name()`. A receiver has a type we don't infer, so symbol_graph lets only a
+            # bare call fall back to a repo-wide match (T30).
+            "bare_callees": [],
             "doc": _doc(node, grammar),
             "signature": _signature(node),
             "decorators": _decorators(node, grammar),
@@ -406,6 +410,8 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
         records[node.id] = record
 
     for call in nodes_by_name.get("callee", []):
+        # `@callee` is the identifier itself (bare call) or the tail of `obj.name`.
+        on_receiver = call.parent is not None and call.parent.type in ("attribute", "member_expression")
         parent = call.parent
         while parent is not None:
             owner = records.get(parent.id)
@@ -413,6 +419,8 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
                 name = _text(call)
                 if name not in owner["callees"]:
                     owner["callees"].append(name)
+                if not on_receiver and name not in owner["bare_callees"]:
+                    owner["bare_callees"].append(name)
                 break
             parent = parent.parent
 

@@ -198,6 +198,17 @@ def _symbols(source: str, path: str) -> dict[str, dict]:
     return {s["name"]: s for s in file_complexity(source, path, with_symbols=True)["symbols"]}
 
 
+def test_bare_callees_name_the_calls_made_without_a_receiver():
+    """T30: `obj.get()` has a receiver whose type we don't infer; `helper()` doesn't."""
+    py = _symbols("def f(obj):\n    helper()\n    obj.get('k')\n    cloner.clone_repo()\n    helper()\n", "a.py")
+    js = _symbols("function f(x) {\n  helper();\n  x.get();\n  api.fetchRepo().then(done);\n}\n", "a.ts")
+
+    assert py["f"]["callees"] == ["helper", "get", "clone_repo"]
+    assert py["f"]["bare_callees"] == ["helper"]
+    assert js["f"]["bare_callees"] == ["helper", "done"] or js["f"]["bare_callees"] == ["helper"]
+    assert "get" not in js["f"]["bare_callees"] and "fetchRepo" not in js["f"]["bare_callees"]
+
+
 def test_symbols_are_off_by_default():
     """The complexity callers must not pay for symbol extraction."""
     assert "symbols" not in file_complexity("def f():\n    pass\n", "a.py")

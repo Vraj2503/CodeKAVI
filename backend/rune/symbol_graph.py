@@ -48,6 +48,23 @@ from rune.analyzer import SUPPORTED_LANGUAGES
 #: reduce to three language names.
 SYMBOL_LANGUAGES: frozenset[str] = frozenset({"Python", "JavaScript", "TypeScript"})
 
+#: Languages that can call each other by bare name. A Python call never runs a
+#: TypeScript function, so a repo-wide match stays inside the caller's family (T30).
+_FAMILY_BY_LANGUAGE: dict[str, str] = {"Python": "python", "JavaScript": "js", "TypeScript": "js"}
+_FAMILY_BY_EXTENSION: dict[str, str] = {
+    ".py": "python",
+    ".pyi": "python",
+    **dict.fromkeys((".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"), "js"),
+}
+
+
+def _language_family(path: str, profile: dict) -> str | None:
+    family = _FAMILY_BY_LANGUAGE.get(profile.get("language") or "")
+    if family is None and "." in path.rsplit("/", 1)[-1]:
+        family = _FAMILY_BY_EXTENSION.get("." + path.rsplit(".", 1)[-1].lower())
+    return family
+
+
 #: Adaptive count for the function-level "important" set — same floor/clamp
 #: shape as the group selection above, retargeted at symbols. A symbol is a
 #: candidate at all only if it clears the hard exclusions in `_is_excluded`;
@@ -313,10 +330,12 @@ def build_symbol_graph(
     by_file_name: dict[tuple[str, str], str] = {}  # (path, name) → node id
     by_name: dict[str, list[str]] = {}  # name → node ids, for the repo-wide fallback
     decorators_by_id: dict[str, list[str]] = {}  # for _is_accessor; not part of the payload
+    family_by_path: dict[str, str | None] = {}
     total_symbols = 0
 
     for path in sorted(symbols_by_file):
         profile = profile_map.get(path) or {}
+        family_by_path[path] = _language_family(path, profile)
         for symbol in symbols_by_file[path]:
             total_symbols += 1
             name = symbol.get("name")
@@ -351,7 +370,7 @@ def build_symbol_graph(
             decorators_by_id[node_id] = symbol.get("decorators") or []
 
     # ── Resolution ──
-    def resolve(name: str, from_path: str) -> str | None:
+    def resolve(name: str, from_path: str, bare: bool) -> str | None:
         same_file = by_file_name.get((from_path, name))
         if same_file is not None:
             return same_file
@@ -363,7 +382,18 @@ def build_symbol_graph(
             hit = by_file_name.get((imported, name))
             if hit is not None and nodes[hit]["type"] != "method":
                 return hit
-        candidates = [c for c in by_name.get(name, []) if nodes[c]["type"] != "method"]
+        # The repo-wide match goes by name alone, so it takes only a bare call, and
+        # only a definition in the caller's language family. Before T30 every
+        # `cache.get()` in every route handler landed on the repo's one plain `get`,
+        # a JS Proxy trap, and the knowledge graph drew them all around it.
+        if not bare:
+            return None
+        family = family_by_path.get(from_path)
+        candidates = [
+            c
+            for c in by_name.get(name, [])
+            if nodes[c]["type"] != "method" and family_by_path.get(nodes[c]["file"]) == family
+        ]
         return candidates[0] if len(candidates) == 1 else None
 
     edges: dict[tuple[str, str, str], dict[str, str]] = {}
@@ -376,8 +406,10 @@ def build_symbol_graph(
             if source is None:
                 continue
             callees = symbol.get("callees", [])
-            references = [(callee, "calls") for callee in callees]
-            references += [(base, "inherits") for base in symbol.get("bases", [])]
+            # Records without `bare_callees` predate T30: every call counts as bare, as it did.
+            bare = set(symbol["bare_callees"]) if "bare_callees" in symbol else set(callees)
+            references = [(callee, "calls", callee in bare) for callee in callees]
+            references += [(base, "inherits", True) for base in symbol.get("bases", [])]
 
             # Effects read the whole callee list, resolved or not: `open` says
             # "touches the filesystem" whether or not the repo defines an `open`.
@@ -385,8 +417,8 @@ def build_symbol_graph(
             if tags:
                 nodes[source]["effects"] = sorted(set(nodes[source]["effects"]) | tags)
 
-            for target_name, label in references:
-                target = resolve(target_name, path)
+            for target_name, label, is_bare in references:
+                target = resolve(target_name, path, is_bare)
                 if target is None:
                     unresolved_calls += 1
                     # Keep the name as vocabulary even though it isn't an edge.
