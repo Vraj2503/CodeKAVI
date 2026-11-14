@@ -274,7 +274,7 @@ def _contract_edges(
                 continue
             for succ in calls_adj.get(node, ()):
                 if succ not in visited:
-                    queue.append((succ, via + [node], hops + 1))
+                    queue.append((succ, [*via, node], hops + 1))
 
     for source, target, label in edges:
         if label == "inherits" and source in important_ids and target in important_ids:

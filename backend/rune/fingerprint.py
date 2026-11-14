@@ -263,7 +263,7 @@ def _python_structure_signature(source: str) -> dict:
             declarations.append(f"class:{node.name}")
             methods = []
             for stmt in node.body:
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef):
                     args = [a.arg for a in stmt.args.args if a.arg]
                     declarations.append(f"method:{node.name}.{stmt.name}({','.join(args)})")
                     methods.append(stmt.name)
@@ -287,7 +287,7 @@ def _python_structure_signature(source: str) -> dict:
                 if (
                     isinstance(target, ast.Name)
                     and target.id == "__all__"
-                    and isinstance(node.value, (ast.List, ast.Tuple))
+                    and isinstance(node.value, ast.List | ast.Tuple)
                 ):
                     for elt in node.value.elts:
                         if isinstance(elt, ast.Constant) and isinstance(elt.value, str):

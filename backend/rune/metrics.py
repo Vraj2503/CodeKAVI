@@ -175,16 +175,16 @@ def llm_call_timer(provider: str, task: str = "chat"):
             logger.debug(f"metric observe failed: {e}")
         if stats.get("tokens"):
             try:
-                _ensure("llm_tokens_total", _build_llm_tokens_total).labels(
-                    provider=provider, direction="total"
-                ).inc(int(stats["tokens"]))
+                _ensure("llm_tokens_total", _build_llm_tokens_total).labels(provider=provider, direction="total").inc(
+                    int(stats["tokens"])
+                )
             except Exception as e:
                 logger.debug(f"metric inc failed: {e}")
         if stats.get("cost_usd"):
             try:
-                _ensure("llm_cost_usd_total", _build_llm_cost_usd).labels(
-                    provider=provider
-                ).inc(float(stats["cost_usd"]))
+                _ensure("llm_cost_usd_total", _build_llm_cost_usd).labels(provider=provider).inc(
+                    float(stats["cost_usd"])
+                )
             except Exception as e:
                 logger.debug(f"metric inc failed: {e}")
 
@@ -217,9 +217,7 @@ def record_breaker_transition(provider: str, state: str) -> None:
     if not _import_prometheus():
         return
     try:
-        _ensure("circuit_breaker_transitions", _build_breaker_transitions).labels(
-            provider=provider, state=state
-        ).inc()
+        _ensure("circuit_breaker_transitions", _build_breaker_transitions).labels(provider=provider, state=state).inc()
     except Exception as e:
         logger.debug(f"breaker metric inc failed: {e}")
 
@@ -243,16 +241,14 @@ def record_llm_usage(provider: str, tokens: int, cost_usd: float) -> None:
         return
     if tokens:
         try:
-            _ensure("llm_tokens_total", _build_llm_tokens_total).labels(
-                provider=provider, direction="total"
-            ).inc(int(tokens))
+            _ensure("llm_tokens_total", _build_llm_tokens_total).labels(provider=provider, direction="total").inc(
+                int(tokens)
+            )
         except Exception as e:
             logger.debug(f"tokens metric inc failed: {e}")
     if cost_usd:
         try:
-            _ensure("llm_cost_usd_total", _build_llm_cost_usd).labels(
-                provider=provider
-            ).inc(float(cost_usd))
+            _ensure("llm_cost_usd_total", _build_llm_cost_usd).labels(provider=provider).inc(float(cost_usd))
         except Exception as e:
             logger.debug(f"cost metric inc failed: {e}")
 

@@ -56,12 +56,16 @@ def test_architecture_manifest_uses_responsibilities_and_explicit_products():
     for node in manifest.nodes:
         # Must have at least 3-4 sentences
         sentences = [s.strip() for s in node.summary.split(". ") if s.strip()]
-        assert len(sentences) >= 3, f"Node {node.label} summary has too few sentences ({len(sentences)}): {node.summary}"
-        assert not node.summary.startswith("Provides ") or not node.summary.endswith("responsibilities."), (
-            f"Node {node.label} has generic summary: {node.summary}"
-        )
+        assert (
+            len(sentences) >= 3
+        ), f"Node {node.label} summary has too few sentences ({len(sentences)}): {node.summary}"
+        assert not node.summary.startswith("Provides ") or not node.summary.endswith(
+            "responsibilities."
+        ), f"Node {node.label} has generic summary: {node.summary}"
         assert len(node.summary) >= 120, f"Node {node.label} summary is too short: {node.summary}"
-        assert "Role in project:" in node.summary, f"Node {node.label} does not describe its role in project: {node.summary}"
+        assert (
+            "Role in project:" in node.summary
+        ), f"Node {node.label} does not describe its role in project: {node.summary}"
 
 
 def test_architecture_manifest_applies_overview_budget_and_view_filter():
@@ -86,9 +90,7 @@ def test_architecture_manifest_applies_overview_budget_and_view_filter():
     assert len(manifest.edges) <= 3
     assert manifest.collapsed
 
-    integrations = build_architecture_manifest(
-        "abcdef123456", _deps(), _profiles(), {"view": "integration_map"}
-    )
+    integrations = build_architecture_manifest("abcdef123456", _deps(), _profiles(), {"view": "integration_map"})
     assert any(node.group_id == "external" for node in integrations.nodes)
 
 
@@ -107,9 +109,7 @@ def test_no_edge_references_pruned_or_collapsed_node():
     deps = _deps()
     # Add adjacency so there are edges between the new nodes
     for i in range(20):
-        deps["adjacency"][f"backend/rune/service_{i}.py"] = [
-            f"backend/rune/service_{(i + 1) % 20}.py"
-        ]
+        deps["adjacency"][f"backend/rune/service_{i}.py"] = [f"backend/rune/service_{(i + 1) % 20}.py"]
 
     manifest = build_architecture_manifest(
         "test-repo",
@@ -124,17 +124,8 @@ def test_no_edge_references_pruned_or_collapsed_node():
         collapsed_member_ids.update(c.member_ids)
 
     for edge in manifest.edges:
-        assert edge.source in node_ids, (
-            f"Edge {edge.id} source {edge.source} not in visible nodes"
-        )
-        assert edge.target in node_ids, (
-            f"Edge {edge.id} target {edge.target} not in visible nodes"
-        )
+        assert edge.source in node_ids, f"Edge {edge.id} source {edge.source} not in visible nodes"
+        assert edge.target in node_ids, f"Edge {edge.id} target {edge.target} not in visible nodes"
         # Neither endpoint should be a collapsed member
-        assert edge.source not in collapsed_member_ids, (
-            f"Edge {edge.id} source {edge.source} is a collapsed member"
-        )
-        assert edge.target not in collapsed_member_ids, (
-            f"Edge {edge.id} target {edge.target} is a collapsed member"
-        )
-
+        assert edge.source not in collapsed_member_ids, f"Edge {edge.id} source {edge.source} is a collapsed member"
+        assert edge.target not in collapsed_member_ids, f"Edge {edge.id} target {edge.target} is a collapsed member"

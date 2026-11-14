@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
+
 from .architecture_models import ArchitectureTechnology
+
 
 @dataclass
 class TechRule:
@@ -11,43 +13,110 @@ class TechRule:
     # triggers can be package names, internal module names, or substrings in requirements
     triggers: list[str] = field(default_factory=list)
 
+
 TECHNOLOGY_CATALOG: list[TechRule] = [
     # Databases & BaaS
-    TechRule("Supabase", "Auth, Postgres & Storage", "external", purpose="Backend as a Service", triggers=["@supabase/supabase-js", "supabase"]),
-    TechRule("PostgreSQL", "Database", "datastore", purpose="Relational database", triggers=["pg", "pg-promise", "asyncpg", "psycopg2", "psycopg"]),
-    TechRule("Redis", "Cache & Rate Limits", "cache", purpose="In-memory cache", triggers=["redis", "ioredis", "aioredis", "redis-py"]),
-    TechRule("MongoDB", "Database", "datastore", purpose="NoSQL document store", triggers=["mongodb", "mongoose", "pymongo", "motor"]),
-    TechRule("MySQL", "Database", "datastore", purpose="Relational database", triggers=["mysql", "mysql2", "pymysql", "mysqlclient"]),
-    
+    TechRule(
+        "Supabase",
+        "Auth, Postgres & Storage",
+        "external",
+        purpose="Backend as a Service",
+        triggers=["@supabase/supabase-js", "supabase"],
+    ),
+    TechRule(
+        "PostgreSQL",
+        "Database",
+        "datastore",
+        purpose="Relational database",
+        triggers=["pg", "pg-promise", "asyncpg", "psycopg2", "psycopg"],
+    ),
+    TechRule(
+        "Redis",
+        "Cache & Rate Limits",
+        "cache",
+        purpose="In-memory cache",
+        triggers=["redis", "ioredis", "aioredis", "redis-py"],
+    ),
+    TechRule(
+        "MongoDB",
+        "Database",
+        "datastore",
+        purpose="NoSQL document store",
+        triggers=["mongodb", "mongoose", "pymongo", "motor"],
+    ),
+    TechRule(
+        "MySQL",
+        "Database",
+        "datastore",
+        purpose="Relational database",
+        triggers=["mysql", "mysql2", "pymysql", "mysqlclient"],
+    ),
     # Vector Stores
-    TechRule("Zilliz Cloud", "Milvus", "external", purpose="Vector database", triggers=["@zilliz/milvus2-sdk-node", "pymilvus"]),
-    TechRule("Pinecone", "Vector Database", "external", purpose="Vector search", triggers=["@pinecone-database/pinecone", "pinecone-client", "pinecone-plugin"]),
-    TechRule("Qdrant", "Vector Database", "external", purpose="Vector search", triggers=["@qdrant/js-client-rest", "qdrant-client"]),
+    TechRule(
+        "Zilliz Cloud",
+        "Milvus",
+        "external",
+        purpose="Vector database",
+        triggers=["@zilliz/milvus2-sdk-node", "pymilvus"],
+    ),
+    TechRule(
+        "Pinecone",
+        "Vector Database",
+        "external",
+        purpose="Vector search",
+        triggers=["@pinecone-database/pinecone", "pinecone-client", "pinecone-plugin"],
+    ),
+    TechRule(
+        "Qdrant",
+        "Vector Database",
+        "external",
+        purpose="Vector search",
+        triggers=["@qdrant/js-client-rest", "qdrant-client"],
+    ),
     TechRule("Chroma", "Vector Database", "datastore", purpose="Vector search", triggers=["chromadb"]),
-    
     # AI & ML Providers
-    TechRule("Cloudflare", "Workers AI", "external", purpose="Edge inference", triggers=["@cloudflare/ai", "cloudflare"]),
+    TechRule(
+        "Cloudflare", "Workers AI", "external", purpose="Edge inference", triggers=["@cloudflare/ai", "cloudflare"]
+    ),
     TechRule("OpenAI", "Models", "external", purpose="Large language models", triggers=["openai", "openai-node"]),
-    TechRule("Anthropic", "Claude", "external", purpose="Language & reasoning models", triggers=["@anthropic-ai/sdk", "anthropic"]),
-    TechRule("Google", "Gemini", "external", purpose="Multimodal foundation models", triggers=["@google/genai", "google-generativeai"]),
+    TechRule(
+        "Anthropic",
+        "Claude",
+        "external",
+        purpose="Language & reasoning models",
+        triggers=["@anthropic-ai/sdk", "anthropic"],
+    ),
+    TechRule(
+        "Google",
+        "Gemini",
+        "external",
+        purpose="Multimodal foundation models",
+        triggers=["@google/genai", "google-generativeai"],
+    ),
     TechRule("Groq", "Llama", "external", purpose="Low-latency LPU inference", triggers=["groq-sdk", "groq"]),
     TechRule("Ollama", "Local LLM", "external", purpose="Self-hosted local models", triggers=["ollama"]),
-    
     # Message Queues & Async
-    TechRule("Apache Kafka", "Kafka", "queue", purpose="Distributed event streaming", triggers=["kafkajs", "confluent-kafka", "kafka-python"]),
+    TechRule(
+        "Apache Kafka",
+        "Kafka",
+        "queue",
+        purpose="Distributed event streaming",
+        triggers=["kafkajs", "confluent-kafka", "kafka-python"],
+    ),
     TechRule("RabbitMQ", "RabbitMQ", "queue", purpose="Message broker", triggers=["amqplib", "pika", "aio_pika"]),
-    
     # AWS Services (Generic sweeps)
     TechRule("AWS", "S3", "external", purpose="Object Storage", triggers=["@aws-sdk/client-s3", "boto3-s3"]),
     TechRule("AWS", "SQS", "external", purpose="Message Queue", triggers=["@aws-sdk/client-sqs", "boto3-sqs"]),
-    TechRule("AWS", "Lambda", "external", purpose="Serverless Compute", triggers=["@aws-sdk/client-lambda", "boto3-lambda"]),
+    TechRule(
+        "AWS", "Lambda", "external", purpose="Serverless Compute", triggers=["@aws-sdk/client-lambda", "boto3-lambda"]
+    ),
     TechRule("AWS", "EventBridge", "external", purpose="Event Bus", triggers=["@aws-sdk/client-eventbridge"]),
-    
     # Git Hosts
     TechRule("GitHub", "API", "external", purpose="Source control", triggers=["@octokit/rest", "PyGithub", "github"]),
     TechRule("GitLab", "API", "external", purpose="Source control", triggers=["python-gitlab", "@gitbeaker/node"]),
     TechRule("Bitbucket", "API", "external", purpose="Source control", triggers=["bitbucket-python", "bitbucket"]),
 ]
+
 
 def match_technologies(hints: set[str]) -> list[ArchitectureTechnology]:
     """
@@ -55,15 +124,15 @@ def match_technologies(hints: set[str]) -> list[ArchitectureTechnology]:
     return matched ArchitectureTechnology instances.
     """
     matched: dict[str, ArchitectureTechnology] = {}
-    
+
     hint_lower = "\n".join(h.lower() for h in hints)
-    
+
     for rule in TECHNOLOGY_CATALOG:
         # Prevent duplicate vendors if we already matched a broader rule
         key = f"{rule.vendor}:{rule.product}"
         if key in matched:
             continue
-            
+
         for trigger in rule.triggers:
             if trigger.lower() in hint_lower:
                 matched[key] = ArchitectureTechnology(
@@ -71,11 +140,12 @@ def match_technologies(hints: set[str]) -> list[ArchitectureTechnology]:
                     product=rule.product,
                     model=rule.model_name,
                     purpose=rule.purpose,
-                    confidence=0.9
+                    confidence=0.9,
                 )
                 break
-                
+
     return list(matched.values())
+
 
 def determine_node_role(file_role: str, path: str) -> str:
     """
@@ -103,11 +173,11 @@ def determine_node_role(file_role: str, path: str) -> str:
         "middleware": "Middleware & Auth",
         "config": "Configuration",
     }
-    
+
     label = role_map.get(file_role)
     if label:
         return label
-        
+
     path_lower = path.lower()
     if "auth" in path_lower:
         return "Authentication & Session"
@@ -115,8 +185,9 @@ def determine_node_role(file_role: str, path: str) -> str:
         return "Processing Pipeline"
     if "notification" in path_lower:
         return "Messaging / Notifications"
-        
+
     return "Application Component"
+
 
 def determine_node_kind(file_role: str) -> str:
     """
@@ -426,66 +497,9 @@ def format_evidence_sentence(evidence_paths: list[str]) -> str:
     """Format a concrete 4th sentence grounding the component in the repository's files."""
     clean_paths = [p for p in evidence_paths if p and not p.startswith("<")]
     if not clean_paths:
-        return "Project implementation: Serves as an essential architectural boundary in this project, decoupling this layer from surrounding application concerns."
-
-    count = len(clean_paths)
-    sample = [p.split("/")[-1] for p in clean_paths[:2]]
-    sample_str = " and ".join(f"`{s}`" for s in sample)
-    if count == 1:
-        return f"Project implementation: Implemented in this project by source file {sample_str}, defining the primary concrete logic for this capability."
-    elif count == 2:
-        return f"Project implementation: Implemented in this project across {count} source files ({sample_str}), establishing a cohesive architectural boundary."
-    else:
-        return f"Project implementation: Backed by {count} source files in this repository (including {sample_str}), consolidating these operations in a single layer."
-
-
-def generate_node_responsibility(
-    label: str,
-    kind: str,
-    group_id: str,
-    evidence_paths: list[str] | None = None,
-) -> str:
-    """
-    Generate a 3-4 sentence, non-generic explanation of an architectural component's responsibilities.
-    """
-    sentences = ROLE_EXPLANATIONS.get(label)
-    if not sentences:
-        sentences = KIND_FALLBACK_EXPLANATIONS.get(kind, KIND_FALLBACK_EXPLANATIONS["service"])
-
-    # Build the 3-4 sentence explanation
-    result = list(sentences)
-    result.append(format_evidence_sentence(evidence_paths or []))
-    return " ".join(result)
-
-
-def get_technology_responsibility(
-    vendor: str,
-    product: str,
-    fallback_purpose: str | None = None,
-) -> str:
-    """
-    Generate a 4-sentence, non-generic explanation of an integrated technology's responsibilities.
-    """
-    sentences = TECH_RESPONSIBILITIES.get((vendor, product))
-    if sentences:
-        return " ".join(sentences)
-
-    # General fallback for unlisted technologies
-    purpose_clause = f" for {fallback_purpose.lower()}" if fallback_purpose else ""
-    return (
-        f"Role in project: Integrates {vendor} {product} into the project's architecture{purpose_clause}. "
-        f"What it does in the project: Supplies managed external capabilities and operational interfaces utilized by the project's services. "
-        f"How it serves the project: Abstracts third-party network communication, authentication credentials, and protocol serialization away from domain logic. "
-        f"Project integration: Enhances the project's functional breadth while maintaining strict separation of concerns across service boundaries."
-    )
-
-
-
-def format_evidence_sentence(evidence_paths: list[str]) -> str:
-    """Format a concrete 4th sentence grounding the component in the repository's files."""
-    clean_paths = [p for p in evidence_paths if p and not p.startswith("<")]
-    if not clean_paths:
-        return "Serves as an essential architectural boundary decoupling this layer from surrounding application concerns."
+        return (
+            "Serves as an essential architectural boundary decoupling this layer from surrounding application concerns."
+        )
 
     count = len(clean_paths)
     sample = [p.split("/")[-1] for p in clean_paths[:2]]
@@ -493,7 +507,9 @@ def format_evidence_sentence(evidence_paths: list[str]) -> str:
     if count == 1:
         return f"Implemented by source file {sample_str}, defining the primary concrete logic for this architectural capability."
     elif count == 2:
-        return f"Implemented across {count} source files ({sample_str}), establishing a cohesive architectural boundary."
+        return (
+            f"Implemented across {count} source files ({sample_str}), establishing a cohesive architectural boundary."
+        )
     else:
         return f"Backed by {count} source files in this repository (including {sample_str}), consolidating these operations in a single layer."
 
@@ -537,4 +553,3 @@ def get_technology_responsibility(
         f"Abstracts third-party network communication, authentication credentials, and protocol serialization. "
         f"Enhances system functionality while isolating external provider details behind application boundaries."
     )
-

@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 ArchitectureView = Literal["overview", "request_flow", "integration_map", "data_lifecycle", "event_flow", "component"]
 
 

@@ -1085,6 +1085,7 @@ def _deduplicate_cycles(cycles: list[list[str]]) -> list[list[str]]:
 # 7. Data Flow Transformations
 # ─────────────────────────────────────────────
 
+
 def classify_kind(raw: dict) -> str:
     """
     Classify the node kind based on its type and in/out degrees.
@@ -1104,11 +1105,13 @@ def classify_kind(raw: dict) -> str:
         return "action"
     return t
 
+
 def derive_source(raw: dict) -> dict | None:
     """
     Derive the source field for io nodes.
     """
     return raw.get("source")
+
 
 def normalize_flow_node(raw: dict) -> dict:
     """Coerce analyzer output to the frontend contract."""
@@ -1129,6 +1132,7 @@ def normalize_flow_node(raw: dict) -> dict:
         "technologies": raw.get("technologies", []),
     }
 
+
 def derive_edge_direction(edges: list[dict]) -> list[dict]:
     """Mark the second of any (a,b) + (b,a) pair as 'response'."""
     seen: dict[tuple[str, str], int] = {}
@@ -1136,7 +1140,7 @@ def derive_edge_direction(edges: list[dict]) -> list[dict]:
         key = (e["source"], e["target"])
         rev = (e["target"], e["source"])
         if seen.get(rev, 0):
-            e["direction"] = "response"   # a -> b came first, this is the return
+            e["direction"] = "response"  # a -> b came first, this is the return
         else:
             e["direction"] = e.get("direction", "request")
 

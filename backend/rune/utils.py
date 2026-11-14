@@ -20,14 +20,14 @@ current_io_executor: ContextVar[ThreadPoolExecutor] = ContextVar("current_io_exe
 current_cpu_executor: ContextVar[ThreadPoolExecutor] = ContextVar("current_cpu_executor")
 
 
-async def run_sync(func, *args, executor_type='io', **kwargs):
+async def run_sync(func, *args, executor_type="io", **kwargs):
     """
     Run a synchronous function in the appropriate executor.
     Falls back to the event loop's default executor if none is set.
     """
     loop = asyncio.get_running_loop()
     try:
-        executor = current_cpu_executor.get() if executor_type == 'cpu' else current_io_executor.get()
+        executor = current_cpu_executor.get() if executor_type == "cpu" else current_io_executor.get()
     except LookupError:
         executor = None  # type: ignore[assignment]
     return await loop.run_in_executor(executor, partial(func, *args, **kwargs))

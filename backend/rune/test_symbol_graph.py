@@ -8,9 +8,9 @@ refusals are counted rather than quietly dropped.
 
 import os
 
+from rune import symbol_graph
 from rune.classifier import classify_files
 from rune.pipeline_models import DepGraph, FileEntry
-from rune import symbol_graph
 from rune.symbol_graph import _contract_edges, build_symbol_graph
 
 # ── Fixtures ──
@@ -469,7 +469,7 @@ def test_a_direct_edge_wins_over_a_longer_transitive_path():
 
 def test_a_branch_that_never_reaches_an_important_node_is_dropped():
     chain = [(f"glue{i}", f"glue{i + 1}", "calls") for i in range(6)]
-    edges = _edge_map([("A", "glue0", "calls")] + chain)
+    edges = _edge_map([("A", "glue0", "calls"), *chain])
     contracted, _ = _contract_edges(edges, {"A"})
 
     assert contracted == []
