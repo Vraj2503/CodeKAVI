@@ -47,7 +47,9 @@ ANALYSIS_VERSION = "3"
 # and keeps the earlier index if a fresh one would be built the same way, so
 # nothing is embedded twice (T28). The analyze routes stamp it on the records
 # they build; records from before T28 carry none, which counts as 0.
-PIPELINE_VERSION = 1
+#   1: T28 (the version itself)
+#   2: T29, aliases from every tsconfig/jsconfig add frontend import edges
+PIPELINE_VERSION = 2
 
 # Writes to one repo's record are serialized by a lock picked from this pool
 # (striped by repo_id, so the pool stays fixed-size however many repos pass

@@ -25,6 +25,7 @@ import re
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import tree_sitter_javascript as tsjs
@@ -232,7 +233,13 @@ def _resolve_python_module(
     return None
 
 
-def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> list[dict]:
+def _extract_vue_svelte_imports(
+    filepath: str,
+    source: str,
+    repo_root: str,
+    known_files: set[str] | None = None,
+    alias_resolver: "PathAliasResolver | None" = None,
+) -> list[dict]:
     """
     Extract imports from Vue (.vue) and Svelte (.svelte) single-file components.
 
@@ -250,6 +257,8 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
          to the JS parser (some .vue/.svelte files are pure JS/component-syntax
          with inline scripts).
     """
+    # Vue CLI and Vite projects lean on `@/` as much as Next.js ones (T29).
+    aliases = (alias_resolver or PathAliasResolver(repo_root)).for_dir(os.path.dirname(filepath))
     script_matches = list(re.finditer(r"<script\b([^>]*)>(.*?)</script>", source, re.DOTALL | re.IGNORECASE))
 
     if script_matches:
@@ -261,10 +270,14 @@ def _extract_vue_svelte_imports(filepath: str, source: str, repo_root: str) -> l
             if ('lang="ts"' in attrs) or ("lang='ts'" in attrs) or ('lang="typescript"' in attrs):
                 is_ts = True
         combined_body = "\n".join(bodies)
-        return _extract_js_ts_imports_with_source(filepath, combined_body, repo_root, is_ts=is_ts)
+        return _extract_js_ts_imports_with_source(
+            filepath, combined_body, repo_root, is_ts=is_ts, known_files=known_files, path_aliases=aliases
+        )
 
     # No <script> block — fall back to parsing raw source as JS
-    return _extract_js_ts_imports_with_source(filepath, source, repo_root, is_ts=False)
+    return _extract_js_ts_imports_with_source(
+        filepath, source, repo_root, is_ts=False, known_files=known_files, path_aliases=aliases
+    )
 
 
 def _extract_js_ts_imports(
@@ -273,6 +286,7 @@ def _extract_js_ts_imports(
     repo_root: str,
     known_files: set[str] | None = None,
     raw_imports_cache: list[dict] | None = None,
+    alias_resolver: "PathAliasResolver | None" = None,
 ) -> list[dict]:
     """
     Extract JS/TS imports using tree-sitter AST. Handles:
@@ -282,12 +296,15 @@ def _extract_js_ts_imports(
       - import('path')
       - export ... from 'path'
 
+    Bare specifiers resolve through the tsconfig/jsconfig aliases nearest the file;
+    analyze_dependencies passes one `alias_resolver` for the whole analysis.
+
     Thread-safety: reuses a per-thread Parser()/Query() pair (see
     _get_js_ts_parser_and_query) so concurrent /analyze requests don't race
     on shared tree-sitter state, without paying the allocation cost per file.
     """
     is_ts = filepath.endswith(".ts") or filepath.endswith(".tsx")
-    path_aliases = _load_path_aliases(repo_root)
+    path_aliases = (alias_resolver or PathAliasResolver(repo_root)).for_dir(os.path.dirname(filepath))
     return _extract_js_ts_imports_with_source(
         filepath,
         source,
@@ -306,7 +323,7 @@ def _extract_js_ts_imports_with_source(
     is_ts: bool,
     known_files: set[str] | None = None,
     raw_imports_cache: list[dict] | None = None,
-    path_aliases: dict[str, str] | None = None,
+    path_aliases: "PathAliases | None" = None,
 ) -> list[dict]:
     """Shared JS/TS extraction that picks the right language and a pooled per-thread Parser."""
     imports: list[dict[str, Any]] = []
@@ -374,42 +391,224 @@ def _extract_js_ts_imports_with_source(
     return imports
 
 
-_alias_cache: dict[str, dict[str, str]] = {}
+# ── tsconfig / jsconfig path aliases (T29) ──
+#
+# `import x from "@/lib/api"` resolves through the `compilerOptions.paths` of the
+# nearest tsconfig.json or jsconfig.json above the importing file, as TypeScript and
+# bundlers do. Only the repo root's config used to be read, so a Next.js app in
+# `frontend/` (CodeKAVI) resolved none of its 278 `@/` imports and its files had no
+# edges in any view.
+
+_TS_CONFIG_NAMES = ("tsconfig.json", "jsconfig.json")  # tsconfig wins when a folder has both
+_MAX_EXTENDS_DEPTH = 5
+_JS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".vue", ".svelte")
 
 
-def _load_path_aliases(repo_root: str) -> dict[str, str]:
-    """Parse tsconfig.json/jsconfig.json paths (e.g. '@/*' -> 'src/*') into
-    a prefix -> absolute-target-dir map, so `@/foo` resolves like `./foo`."""
-    if repo_root in _alias_cache:
-        return _alias_cache[repo_root]
+def _inside(path: str, real_root: str) -> bool:
+    """Whether `path`, with symlinks resolved, lies inside the repo (`real_root` is realpath'd)."""
+    try:
+        return os.path.commonpath([os.path.realpath(path), real_root]) == real_root
+    except ValueError:  # e.g. another drive on Windows
+        return False
 
-    aliases: dict[str, str] = {}
-    for config_name in ("tsconfig.json", "jsconfig.json"):
-        config_path = os.path.join(repo_root, config_name)
-        if not os.path.isfile(config_path):
+
+def _strip_jsonc(text: str) -> str:
+    """tsconfig.json is JSONC: drop comments and trailing commas, leaving strings alone.
+
+    A regex can't do this: `"$schema": "https://..."` contains `//`, and stripping it as
+    a comment broke the whole file, so its aliases were silently lost.
+    """
+
+    def skip_trivia(k: int) -> int:
+        while k < n:
+            if text[k].isspace():
+                k += 1
+            elif text.startswith("//", k):
+                k = text.find("\n", k)
+                k = n if k < 0 else k
+            elif text.startswith("/*", k):
+                k = text.find("*/", k + 2)
+                k = n if k < 0 else k + 2
+            else:
+                break
+        return k
+
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i : j + 1])
+            i = j + 1
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            i = skip_trivia(i)
+        elif ch == ",":
+            nxt = skip_trivia(i + 1)
+            if nxt >= n or text[nxt] not in "}]":
+                out.append(ch)
+            i += 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _read_ts_config(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            data = json.loads(_strip_jsonc(f.read()))
+    except (OSError, ValueError) as e:  # JSONDecodeError and UnicodeDecodeError are ValueErrors
+        logger.debug("dep_graph.path_alias_parse_failed config=%s error=%s", path, e)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extends_paths(value: Any, config_dir: str, real_root: str) -> list[str]:
+    """The configs `extends` names (a string, or a list since TS 5.0) that live in the repo.
+
+    Package names (`@tsconfig/next`) are skipped: they resolve into node_modules, which
+    a clone doesn't have. Nothing outside the repo is read.
+    """
+    found = []
+    for name in value if isinstance(value, list) else [value]:
+        if not isinstance(name, str) or not name.startswith((".", "/")):
             continue
-        try:
-            with open(config_path, encoding="utf-8") as f:
-                raw = f.read()
-            raw = re.sub(r"//.*?$", "", raw, flags=re.MULTILINE)
-            raw = re.sub(r"/\*.*?\*/", "", raw, flags=re.DOTALL)
-            config = json.loads(raw)
-            compiler_opts = config.get("compilerOptions", {})
-            base_url = compiler_opts.get("baseUrl", ".")
-            paths = compiler_opts.get("paths", {})
-            for alias_pattern, targets in paths.items():
-                if not targets:
-                    continue
-                alias_prefix = alias_pattern.rstrip("*")
-                target_prefix = targets[0].rstrip("*")
-                resolved = os.path.normpath(os.path.join(repo_root, base_url, target_prefix))
-                aliases[alias_prefix] = resolved
-            break  # use the first config found
-        except (OSError, ValueError, json.JSONDecodeError) as e:
-            logger.debug("dep_graph.path_alias_parse_failed config=%s error=%s", config_name, e)
+        path = os.path.normpath(os.path.join(config_dir, name))
+        if not os.path.isfile(path) and os.path.isfile(path + ".json"):
+            path += ".json"
+        if os.path.isfile(path) and _inside(path, real_root):
+            found.append(path)
+    return found
 
-    _alias_cache[repo_root] = aliases
-    return aliases
+
+def _effective_paths(path: str, real_root: str, seen: frozenset[str]) -> tuple[dict | None, str | None, str | None]:
+    """(paths, directory of the config that declares them, absolute baseUrl) after `extends`.
+
+    As in TypeScript: `paths` targets resolve against `baseUrl` when one is set (relative
+    to the config that sets it), else against the directory of the config that declares
+    `paths`. A config's own value replaces an inherited one; later `extends` entries
+    override earlier ones.
+    """
+    config = _read_ts_config(path)
+    if config is None:
+        return None, None, None
+    config_dir = os.path.dirname(path)
+    paths: dict | None = None
+    paths_dir: str | None = None
+    base_url: str | None = None
+    if len(seen) <= _MAX_EXTENDS_DEPTH:
+        for parent in _extends_paths(config.get("extends"), config_dir, real_root):
+            if parent in seen:
+                continue
+            parent_paths, parent_dir, parent_base = _effective_paths(parent, real_root, seen | {parent})
+            if parent_paths is not None:
+                paths, paths_dir = parent_paths, parent_dir
+            if parent_base is not None:
+                base_url = parent_base
+    options = config.get("compilerOptions")
+    if isinstance(options, dict):
+        if isinstance(options.get("paths"), dict):
+            paths, paths_dir = options["paths"], config_dir
+        if isinstance(options.get("baseUrl"), str):
+            base_url = os.path.normpath(os.path.join(config_dir, options["baseUrl"]))
+    return paths, paths_dir, base_url
+
+
+@dataclass(frozen=True)
+class _AliasRule:
+    """One `compilerOptions.paths` entry. A pattern has at most one `*`; without one it matches exactly."""
+
+    prefix: str
+    suffix: str
+    wildcard: bool
+    targets: tuple[str, ...]  # absolute; a `*` in a target takes the text the pattern's `*` matched
+
+    def match(self, spec: str) -> str | None:
+        """What `*` stands for in `spec` ("" for an exact pattern), or None if it doesn't match."""
+        if not self.wildcard:
+            return "" if spec == self.prefix else None
+        long_enough = len(spec) >= len(self.prefix) + len(self.suffix)
+        if long_enough and spec.startswith(self.prefix) and spec.endswith(self.suffix):
+            return spec[len(self.prefix) : len(spec) - len(self.suffix)]
+        return None
+
+
+def _alias_rules(paths: dict, base: str) -> tuple[_AliasRule, ...]:
+    rules = []
+    for pattern, targets in paths.items():
+        if not isinstance(pattern, str) or pattern.count("*") > 1:
+            continue
+        listed = targets if isinstance(targets, list) else [targets]
+        usable = tuple(os.path.join(base, t) for t in listed if isinstance(t, str) and t.count("*") <= 1)
+        if usable:
+            prefix, star, suffix = pattern.partition("*")
+            rules.append(_AliasRule(prefix, suffix, bool(star), usable))
+    return tuple(rules)
+
+
+@dataclass(frozen=True)
+class PathAliases:
+    """The `paths` and `baseUrl` that apply to one directory, from its nearest tsconfig/jsconfig."""
+
+    rules: tuple[_AliasRule, ...] = ()
+    base_url: str | None = None
+
+    def candidates(self, spec: str) -> list[str]:
+        """Where a bare import may live, in the order TypeScript tries them; empty for a package.
+
+        An exact pattern beats any wildcard, and among wildcards the longest prefix wins.
+        Only that one pattern is used, its targets in order, then `baseUrl/spec` when a
+        baseUrl is set.
+        """
+        found = []
+        matches = [(rule, star) for rule in self.rules if (star := rule.match(spec)) is not None]
+        if matches:
+            rule, star = max(matches, key=lambda m: (not m[0].wildcard, len(m[0].prefix)))
+            found = [os.path.normpath(target.replace("*", star, 1)) for target in rule.targets]
+        if self.base_url:
+            found.append(os.path.normpath(os.path.join(self.base_url, spec)))
+        return found
+
+
+class PathAliasResolver:
+    """The aliases each directory of one repo sees: its nearest tsconfig/jsconfig at or above it.
+
+    One per analysis, memoised by directory, so each config is read once per analysis.
+    (It replaces a module-level cache keyed by clone path, which read only the root
+    config and kept an entry for every analysis the process ever ran.)
+    """
+
+    def __init__(self, repo_root: str) -> None:
+        self.repo_root = os.path.normpath(repo_root)
+        self._real_root = os.path.realpath(repo_root)
+        self._by_dir: dict[str, PathAliases] = {}
+
+    def for_dir(self, directory: str) -> PathAliases:
+        directory = os.path.normpath(directory)
+        known = self._by_dir.get(directory)
+        if known is not None:
+            return known
+        configs = (os.path.join(directory, name) for name in _TS_CONFIG_NAMES)
+        config = next((path for path in configs if os.path.isfile(path)), None)
+        parent = os.path.dirname(directory)
+        if config is not None and _inside(config, self._real_root):
+            aliases = self._load(config)
+        elif directory == self.repo_root or parent == directory:
+            aliases = PathAliases()
+        else:
+            aliases = self.for_dir(parent)
+        self._by_dir[directory] = aliases
+        return aliases
+
+    def _load(self, config: str) -> PathAliases:
+        paths, paths_dir, base_url = _effective_paths(config, self._real_root, frozenset({config}))
+        if base_url is not None and not _inside(base_url, self._real_root):
+            base_url = None
+        base = base_url or paths_dir
+        return PathAliases(rules=_alias_rules(paths, base) if paths and base else (), base_url=base_url)
 
 
 def _resolve_js_path(
@@ -417,72 +616,63 @@ def _resolve_js_path(
     file_dir: str,
     repo_root: str,
     known_files: set[str] | None = None,
-    path_aliases: dict[str, str] | None = None,
+    path_aliases: PathAliases | None = None,
 ) -> str | None:
-    """Resolve a JS/TS import path to a file relative to repo root."""
-    aliased_candidate = None
-    if path_aliases and not import_path.startswith(".") and not import_path.startswith("/"):
-        for alias_prefix, resolved_dir in path_aliases.items():
-            if import_path.startswith(alias_prefix):
-                aliased_candidate = os.path.normpath(os.path.join(resolved_dir, import_path[len(alias_prefix) :]))
-                break
+    """Resolve a JS/TS import path to a file relative to repo root.
 
-    if aliased_candidate is not None:
-        candidate = aliased_candidate
+    Relative and root-absolute paths resolve against the file or the repo. A bare
+    specifier resolves only through the aliases in effect for the file; when none
+    applies it is an external package.
+    """
+    if import_path.startswith("/"):
+        candidates = [os.path.normpath(os.path.join(repo_root, import_path[1:]))]
+    elif import_path.startswith("."):
+        candidates = [os.path.normpath(os.path.join(file_dir, import_path))]
     else:
-        # Skip node_modules / bare specifiers
-        if not import_path.startswith(".") and not import_path.startswith("/"):
+        candidates = path_aliases.candidates(import_path) if path_aliases else []
+        if not candidates:
             return None  # external package
-
-        if import_path.startswith("/"):
-            base = repo_root
-            import_path = import_path[1:]
-        else:
-            base = file_dir
-
-        candidate = os.path.normpath(os.path.join(base, import_path))
-
-    # Reject imports that resolve outside the repo root (e.g. `../../../../etc/passwd`)
-    # to prevent arbitrary-file-read into embeddings and chat history.
     real_repo_root = os.path.realpath(repo_root)
+    for candidate in candidates:
+        found = _resolve_js_candidate(candidate, repo_root, real_repo_root, known_files)
+        if found is not None:
+            return found
+    return None
 
-    def _contained(path: str) -> bool:
-        # Re-resolve per candidate (not just the extension-less base path) so that a
-        # symlink planted inside the repo (e.g. evil.js -> /etc/passwd) is caught too:
-        # the base path may not exist yet, but the final file-with-extension does.
-        try:
-            return os.path.commonpath([os.path.realpath(path), real_repo_root]) == real_repo_root
-        except ValueError:
-            # e.g. candidate and repo_root on different drives on Windows
-            return False
 
-    if not _contained(candidate):
+def _resolve_js_candidate(
+    candidate: str, repo_root: str, real_repo_root: str, known_files: set[str] | None
+) -> str | None:
+    """`candidate` as a file, with an extension, or as a folder's index file, if it is in the repo."""
+    # Reject imports that resolve outside the repo root (e.g. `../../../../etc/passwd`)
+    # to prevent arbitrary-file-read into embeddings and chat history. A string check
+    # here is enough to drop `..` escapes; the realpath check on the file actually found
+    # (below) is what catches symlinks. Calling realpath here too doubled the disk
+    # lookups for every import, which on Windows is most of this function's cost.
+    root = os.path.normcase(os.path.normpath(repo_root))
+    try:
+        if os.path.commonpath([os.path.normcase(candidate), root]) != root:
+            return None
+    except ValueError:  # another drive on Windows
         return None
 
-    def _exists(path: str) -> bool:
-        rel = os.path.relpath(path, repo_root).replace("\\", "/")
-        if known_files is not None:
-            return rel in known_files
-        return os.path.isfile(path)
+    def rel(path: str) -> str:
+        return os.path.relpath(path, repo_root).replace("\\", "/")
 
-    # Try exact, then with extensions
-    js_extensions = [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".vue", ".svelte"]
+    def exists(path: str) -> bool:
+        return rel(path) in known_files if known_files is not None else os.path.isfile(path)
 
-    # Exact match
-    if _exists(candidate) and _contained(candidate):
-        return os.path.relpath(candidate, repo_root).replace("\\", "/")
-
-    # Try adding extensions
-    for ext in js_extensions:
-        if _exists(candidate + ext) and _contained(candidate + ext):
-            return os.path.relpath(candidate + ext, repo_root).replace("\\", "/")
-
-    # Try index files
-    for ext in js_extensions:
-        index_path = os.path.join(candidate, f"index{ext}")
-        if _exists(index_path) and _contained(index_path):
-            return os.path.relpath(index_path, repo_root).replace("\\", "/")
-
+    tries = (
+        candidate,
+        *(candidate + ext for ext in _JS_EXTENSIONS),
+        *(os.path.join(candidate, f"index{ext}") for ext in _JS_EXTENSIONS),
+    )
+    for path in tries:
+        # Re-check containment per path (not just the extension-less base), so a symlink
+        # planted inside the repo (e.g. evil.js -> /etc/passwd) is caught too: the base
+        # path may not exist yet, but the final file-with-extension does.
+        if exists(path) and _inside(path, real_repo_root):
+            return rel(path)
     return None
 
 
@@ -762,6 +952,8 @@ def analyze_dependencies(
     """
     # All file paths in the repo (relative)
     known_files = {f.path for f in file_list}
+    # T29: each JS/TS/Vue/Svelte file sees the aliases of its nearest tsconfig/jsconfig.
+    alias_resolver = PathAliasResolver(repo_root)
 
     edges: list[dict[str, Any]] = []  # { source, target, ... }
     adjacency: dict[str, set] = defaultdict(set)  # file -> imports
@@ -815,13 +1007,20 @@ def analyze_dependencies(
         if extractor in (_extract_python_imports, _extract_js_ts_imports):
             if extractor == _extract_js_ts_imports:
                 imports = extractor(
-                    abs_path, source, repo_root, known_files=known_files, raw_imports_cache=file_info.raw_imports
+                    abs_path,
+                    source,
+                    repo_root,
+                    known_files=known_files,
+                    raw_imports_cache=file_info.raw_imports,
+                    alias_resolver=alias_resolver,
                 )
             else:
                 imports = extractor(abs_path, source, repo_root, known_files=known_files)
         elif extractor == _extract_ipynb_imports:
             # Need to patch ipynb too since it calls python extractor
             imports = extractor(abs_path, source, repo_root, known_files=known_files)
+        elif extractor == _extract_vue_svelte_imports:
+            imports = extractor(abs_path, source, repo_root, known_files=known_files, alias_resolver=alias_resolver)
         else:
             imports = extractor(abs_path, source, repo_root)
         file_imports[rel_path] = imports
