@@ -25,6 +25,7 @@ from .architecture_rules import (
     get_technology_responsibility,
     match_technologies,
 )
+from .config import shown_in_views
 
 GROUPS = (
     ArchitectureGroup(id="actors", label="Actors & Clients", order=1, kind="client"),
@@ -134,6 +135,10 @@ def build_architecture_manifest(
     for profile in file_profiles:
         path = str(profile.get("path") or "")
         if not path:
+            continue
+        if not shown_in_views(
+            path, profile.get("role"), include_tests=request.include.tests, include_docs=request.include.docs
+        ):
             continue
         role = str(profile.get("role") or profile.get("role_label") or "")
         label = determine_node_role(role, path)

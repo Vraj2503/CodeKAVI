@@ -23,7 +23,7 @@ import math
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from rune.analyzer import SUPPORTED_LANGUAGES
@@ -33,7 +33,7 @@ from rune.architecture_rules import format_evidence_sentence
 from rune.auth import verify_supabase_token
 from rune.cache import AnalysisCache
 from rune.config import detect_layer as _detect_layer
-from rune.config import is_test_path
+from rune.config import is_test_path, shown_in_views
 from rune.graph import ROLE_TO_LAYER, export_graph_json
 from rune.limiter import per_minute
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
@@ -896,6 +896,9 @@ async def visualize_dataflow(
 
 class MindmapRequest(BaseModel):
     use_llm: bool = False
+    # T31: tests and docs are left out unless asked for.
+    include_tests: bool = False
+    include_docs: bool = False
 
 
 # ── Mindmap LLM helpers ──────────────────────────────────────────────────────
@@ -1010,15 +1013,23 @@ async def visualize_mindmap(
       meta.fallback_reason  — present only on fallback; describes why
     """
     result, _clone_path = await _load_repo(repo_id, cache, user_id)
-    classification = result.get("file_profiles", [])
+    classification = [
+        fp
+        for fp in result.get("file_profiles", [])
+        if shown_in_views(
+            fp.get("path", ""), fp.get("role"), include_tests=body.include_tests, include_docs=body.include_docs
+        )
+    ]
     valid_paths = {fp.get("path", "") for fp in classification if fp.get("path")}
+    # The cached AI map was made from the default file set; other sets don't reuse or replace it.
+    default_files = not (body.include_tests or body.include_docs)
 
     root: dict
     meta: dict
 
     # ── Cache-hit path (no LLM call) ────────────────────────────────────────
     cached_llm = result.get("mindmap_llm")
-    if body.use_llm and cached_llm:
+    if body.use_llm and cached_llm and default_files:
         root = cached_llm["root"]
         meta = {**cached_llm.get("meta", {}), "cached": True, "is_llm_enriched": True}
         return {
@@ -1073,7 +1084,8 @@ async def visualize_mindmap(
                 # Persist so the next call is free. Only this key, on the record
                 # as it is now (T23): saving the copy loaded before the LLM call
                 # would erase an index_status written meanwhile.
-                await run_sync(cache.update, repo_id, {"mindmap_llm": {"root": root, "meta": meta}})
+                if default_files:
+                    await run_sync(cache.update, repo_id, {"mindmap_llm": {"root": root, "meta": meta}})
             else:
                 fallback_reason = "invalid_llm_response"
                 root = _build_static_mindmap(classification)
@@ -1165,6 +1177,8 @@ _ROLE_TIER: dict[str, int] = {
     "test": 5,
 }
 
+_TEST_TIER = 5
+
 _RADAR_TIERS = [
     {"level": 0, "name": "Hub: Entry Points", "radius": 55, "color": "#a855f7"},
     {"level": 1, "name": "API: Routes & Controllers", "radius": 140, "color": "#38bdf8"},
@@ -1200,14 +1214,23 @@ def _assign_radar_coords(modules: list[dict]) -> None:
 async def visualize_radar(
     request: Request,
     repo_id: str,
+    include_tests: bool = Query(False),
+    include_docs: bool = Query(False),
     cache: AnalysisCache = Depends(get_cache),
     user_id: str = Depends(verify_supabase_token),
 ):
     """
     Build Concentric Radar & Complexity Hull visualization.
+
+    Tests and docs are left out unless asked for (T31): tests filled the outer
+    ring, and with them hidden the "Verification: Tests" ring isn't drawn.
     """
     result, _ = await _load_repo(repo_id, cache, user_id)
-    file_profiles = result.get("file_profiles", [])
+    file_profiles = [
+        fp
+        for fp in result.get("file_profiles", [])
+        if shown_in_views(fp.get("path", ""), fp.get("role"), include_tests=include_tests, include_docs=include_docs)
+    ]
 
     sorted_profiles = sorted(file_profiles, key=lambda fp: fp.get("importance_score", 0), reverse=True)
     if len(sorted_profiles) > _RADAR_MAX_MODULES:
@@ -1308,7 +1331,7 @@ async def visualize_radar(
     return {
         "type": "concentric_radar",
         "data": {
-            "tiers": _RADAR_TIERS,
+            "tiers": [tier for tier in _RADAR_TIERS if include_tests or tier["level"] != _TEST_TIER],
             "modules": modules,
             "edges": edges,
             "stats": {

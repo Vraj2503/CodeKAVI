@@ -19,6 +19,9 @@ class ArchitectureInclude(BaseModel):
     model_names: bool = True
     edge_labels: bool = True
     evidence: Literal["inspector_only", "none"] = "inspector_only"
+    # T31: test and doc files are left out unless asked for.
+    tests: bool = False
+    docs: bool = False
 
 
 class ArchitectureLayout(BaseModel):

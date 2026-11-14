@@ -210,6 +210,19 @@ export interface VizResponse {
   data: unknown;
 }
 
+/** T31: which files a view lists. Tests and docs are left out unless asked for. */
+export interface VizFileFilter {
+  includeTests: boolean;
+  includeDocs: boolean;
+}
+
+/** The views whose endpoints take a file filter; the header shows a toggle on these. */
+export const FILE_FILTER_VIEWS: ReadonlySet<VizType> = new Set<VizType>([
+  "concentric_radar",
+  "architecture",
+  "mindmap",
+]);
+
 // ── Knowledge Graph Types ──
 // Mirrors backend/rune/symbol_graph.py's return shape exactly: one flat,
 // function-level graph — the important symbols in the repo connected by
@@ -731,6 +744,7 @@ export async function fetchVisualization(
   type: VizType,
   useLlm: boolean = false,
   signal?: AbortSignal,
+  files?: VizFileFilter,
 ): Promise<VizResponse> {
   if (repoId === "dev-mock-repo") {
     // Honours `signal` so the mock exercises the same cancel/deadline paths as
@@ -755,7 +769,13 @@ export async function fetchVisualization(
       : type === "concentric_radar"
         ? "radar"
         : type;
-  const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}`;
+  const includeTests = files?.includeTests ?? false;
+  const includeDocs = files?.includeDocs ?? false;
+  const query =
+    type === "concentric_radar" && (includeTests || includeDocs)
+      ? `?include_tests=${includeTests}&include_docs=${includeDocs}`
+      : "";
+  const endpoint = `${API_BASE}/visualize/${vizPath}/${repoId}${query}`;
 
   const res = await fetch(endpoint, {
     method: isPost ? "POST" : "GET",
@@ -770,7 +790,11 @@ export async function fetchVisualization(
               schema_version: "architecture.v2",
               view: "overview",
               detail: "standard",
-              include: { evidence: "inspector_only" },
+              include: {
+                evidence: "inspector_only",
+                tests: includeTests,
+                docs: includeDocs,
+              },
               layout: {
                 direction: "LR",
                 routing: "orthogonal",
@@ -780,7 +804,11 @@ export async function fetchVisualization(
               },
               enrichment: { mode: "llm" },
             }
-          : { use_llm: useLlm },
+          : {
+              use_llm: useLlm,
+              include_tests: includeTests,
+              include_docs: includeDocs,
+            },
       ),
     }),
     signal,

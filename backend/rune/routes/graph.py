@@ -248,15 +248,20 @@ async def get_repo_tour(
     request: Request,
     repo_id: str,
     mode: str = Query("learn", pattern="^(learn|recall)$"),
+    include_tests: bool = Query(False),
+    include_docs: bool = Query(False),
     cache: AnalysisCache = Depends(get_cache),
     user_id: str = Depends(verify_supabase_token),
 ):
-    """E5: assembled tour steps (E1-E3) for the Phase 1 graph. No provider calls."""
+    """E5: assembled tour steps (E1-E3) for the Phase 1 graph. No provider calls.
+
+    Tests and docs get no step unless asked for (T31).
+    """
     result, _ = await _load_repo(repo_id, cache, user_id)
 
     try:
         graph = await run_sync(assemble_graph, result)
-        payload = assemble_tour(graph, mode)
+        payload = assemble_tour(graph, mode, include_tests=include_tests, include_docs=include_docs)
     except Exception as e:
         raise internal_error(e, context="get_repo_tour: assembly failed") from e
 

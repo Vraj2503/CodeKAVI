@@ -32,6 +32,8 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Any
 
+from rune.config import shown_in_views
+
 
 def _kahn_order(all_nodes: set[str], adjacency: dict[str, list[str]]) -> list[str]:
     """Deterministic Kahn's topological sort. Returns only the nodes reachable
@@ -259,17 +261,41 @@ def _file_facts(file: dict, step: dict[str, Any] | None = None) -> list[str]:
     return facts
 
 
-def assemble_tour(graph: dict, mode: str) -> dict[str, Any]:
+def _without_hidden_files(graph: dict, *, include_tests: bool, include_docs: bool) -> dict:
+    """The graph a tour walks (T31): tests and docs left out unless asked for.
+
+    Their file edges go too. A test imports the code it tests, and Kahn's order
+    counts every importer, so a hidden test would still hold its target back.
+    """
+    files = [
+        f
+        for f in graph.get("files", [])
+        if shown_in_views(f["id"], f.get("role"), include_tests=include_tests, include_docs=include_docs)
+    ]
+    shown = {f["id"] for f in files}
+    edges = [
+        e
+        for e in graph.get("edges", [])
+        if e.get("level") != "file" or (e.get("source") in shown and e.get("target") in shown)
+    ]
+    return {**graph, "files": files, "edges": edges}
+
+
+def assemble_tour(graph: dict, mode: str, *, include_tests: bool = False, include_docs: bool = False) -> dict[str, Any]:
     """Assemble the full E5 tour response (spec §8): title/facts/questions
     layered onto the deterministic step skeleton from ``generate_learn_tour``
     / ``generate_recall_tour``. Zero LLM calls — prose is optional polish
     (E4), not the mechanism.
 
+    Tests and docs get no step unless asked for (T31). Nothing imports a doc,
+    so docs sat in the first tier and the learn tour opened on CONTRIBUTING.md.
+
     Args:
         graph: Output of ``assemble_graph()``.
         mode: ``"learn"`` or ``"recall"``.
     """
-    steps = generate_learn_tour(graph) if mode == "learn" else generate_recall_tour(graph)
+    walked = _without_hidden_files(graph, include_tests=include_tests, include_docs=include_docs)
+    steps = generate_learn_tour(walked) if mode == "learn" else generate_recall_tour(walked)
     return _decorate_tour(graph, mode, steps)
 
 

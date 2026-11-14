@@ -391,6 +391,23 @@ def is_test_path(file_path: str) -> bool:
     return bool(_TEST_STEM.search(stem) or _CAMEL_TEST_STEM.search(stem))
 
 
+# Prose formats. Not .txt: requirements.txt and robots.txt are not docs; a README.txt
+# or a .txt under docs/ already carries the classifier's "documentation" role.
+_DOC_EXTENSIONS = frozenset({".md", ".mdx", ".rst", ".adoc"})
+
+
+def shown_in_views(path: str, role: str | None, *, include_tests: bool = False, include_docs: bool = False) -> bool:
+    """Whether a file appears in a view that lists files (T31).
+
+    Tests and docs are hidden unless asked for: tests filled the radar's outer
+    ring, and the learn tour opened on CONTRIBUTING.md. Every view that hides
+    files asks this one function, so a toggle shows the same files everywhere.
+    """
+    if not include_tests and (role == "test" or is_test_path(path)):
+        return False
+    return include_docs or not (role == "documentation" or os.path.splitext(path)[1].lower() in _DOC_EXTENSIONS)
+
+
 # ─────────────────────────────────────────────
 # Configuration Settings are now imported from rune.settings
 

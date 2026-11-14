@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Layers,
@@ -13,7 +13,7 @@ import {
 import { useVisualization } from "@/hooks/useVisualization";
 import { useExplanation } from "@/hooks/useExplanation";
 import { FocusedVisualization } from "./FocusedVisualization";
-import type { VizType } from "@/lib/api";
+import { FILE_FILTER_VIEWS, type VizType } from "@/lib/api";
 
 interface VisualizationPanelProps {
   repoId: string;
@@ -86,6 +86,16 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   const activeViz = (searchParams.get("type") as VizType) || "concentric_radar";
 
   const { generate, getState } = useVisualization(repoId);
+
+  // T31: tests and docs are hidden until asked for, the same in every view.
+  const [showTestsAndDocs, setShowTestsAndDocs] = useState(false);
+  const files = useMemo(
+    () =>
+      FILE_FILTER_VIEWS.has(activeViz)
+        ? { includeTests: showTestsAndDocs, includeDocs: showTestsAndDocs }
+        : undefined,
+    [activeViz, showTestsAndDocs],
+  );
   const { explain, getExplanation } = useExplanation(repoId);
 
   // Controls the sliding AI Explanation right panel
@@ -93,7 +103,7 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
 
   const activeConfig =
     VIZ_CONFIG.find((c) => c.type === activeViz) || VIZ_CONFIG[0];
-  const activeState = getState(activeViz);
+  const activeState = getState(activeViz, files);
   const activeExplanationState = getExplanation(activeViz);
   const costsTokens = TOKEN_COST.has(activeViz);
 
@@ -103,8 +113,8 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
   // rather than looping the request forever.
   useEffect(() => {
     if (costsTokens) return;
-    generate(activeViz);
-  }, [activeViz, costsTokens, generate]);
+    generate(activeViz, false, files);
+  }, [activeViz, costsTokens, generate, files]);
 
   return (
     <div className="flex h-full w-full bg-background">
@@ -117,8 +127,16 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
           state={activeState}
           explanationState={activeExplanationState}
           costsTokens={costsTokens}
-          onGenerate={() => generate(activeViz)}
-          onRefresh={() => generate(activeViz, true)}
+          onGenerate={() => generate(activeViz, false, files)}
+          onRefresh={() => generate(activeViz, true, files)}
+          filesToggle={
+            files
+              ? {
+                  shown: showTestsAndDocs,
+                  onToggle: () => setShowTestsAndDocs((shown) => !shown),
+                }
+              : undefined
+          }
           onExplain={() => {
             setIsExplanationOpen(true);
             explain(activeViz);

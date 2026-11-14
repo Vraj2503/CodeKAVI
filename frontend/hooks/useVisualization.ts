@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useCallback, useRef } from "react";
-import { fetchVisualization, type VizType, type VizResponse } from "@/lib/api";
+import {
+  fetchVisualization,
+  type VizFileFilter,
+  type VizType,
+  type VizResponse,
+} from "@/lib/api";
 import { describeFailure, isAbort, type HumanFailure } from "@/lib/errors";
 
 export type VizStatus = "idle" | "loading" | "success" | "error";
@@ -45,7 +50,10 @@ const SLOW_MS = 12_000;
  * abort-on-repo-change — correctness does not depend on winning that race, and
  * the stray request expires on its own deadline.
  */
-const keyOf = (repoId: string, type: VizType) => `${repoId}::${type}`;
+const keyOf = (repoId: string, type: VizType, files?: VizFileFilter) =>
+  files
+    ? `${repoId}::${type}::tests=${files.includeTests}::docs=${files.includeDocs}`
+    : `${repoId}::${type}`;
 
 /**
  * On-demand visualization generation with an in-memory cache.
@@ -68,8 +76,9 @@ export function useVisualization(repoId: string) {
   }, []);
 
   const generate = useCallback(
-    async (type: VizType, forceRefresh = false) => {
-      const key = keyOf(repoId, type);
+    async (type: VizType, forceRefresh = false, files?: VizFileFilter) => {
+      // Each file filter is its own entry, so flipping the toggle back is instant.
+      const key = keyOf(repoId, type, files);
       const existing = cache.get(key) ?? INITIAL_STATE;
       if (!forceRefresh && existing.status !== "idle") return;
 
@@ -103,6 +112,7 @@ export function useVisualization(repoId: string) {
           type,
           false,
           controller.signal,
+          files,
         );
         patch(key, { status: "success", data, failure: null, slow: false });
       } catch (err: unknown) {
@@ -126,7 +136,8 @@ export function useVisualization(repoId: string) {
   );
 
   const getState = useCallback(
-    (type: VizType): VizState => cache.get(keyOf(repoId, type)) ?? INITIAL_STATE,
+    (type: VizType, files?: VizFileFilter): VizState =>
+      cache.get(keyOf(repoId, type, files)) ?? INITIAL_STATE,
     [cache, repoId],
   );
 

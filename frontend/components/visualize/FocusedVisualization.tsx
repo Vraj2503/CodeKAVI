@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2,
   AlertCircle,
+  Eye,
+  EyeOff,
   Network,
   RefreshCw,
   Telescope,
@@ -192,6 +194,8 @@ interface FocusedVisualizationProps {
   onExplain: () => void;
   isExplanationOpen: boolean;
   toggleExplanation: () => void;
+  /** T31: present on views that list files; shows or hides tests and docs. */
+  filesToggle?: { shown: boolean; onToggle: () => void };
 }
 
 export function FocusedVisualization({
@@ -206,6 +210,7 @@ export function FocusedVisualization({
   onExplain,
   isExplanationOpen,
   toggleExplanation,
+  filesToggle,
 }: FocusedVisualizationProps) {
   const vizContainerRef = useRef<HTMLDivElement>(null);
   const insightsRef = useRef<HTMLDivElement>(null);
@@ -249,6 +254,27 @@ export function FocusedVisualization({
               {config.label}
             </h2>
           </div>
+
+          {filesToggle && (
+            <button
+              type="button"
+              onClick={filesToggle.onToggle}
+              aria-pressed={filesToggle.shown}
+              title={
+                filesToggle.shown
+                  ? "Hide test files and docs"
+                  : "Show test files and docs"
+              }
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl backdrop-blur-md border shadow-sm text-sm font-medium transition-colors pointer-events-auto ${
+                filesToggle.shown
+                  ? "bg-primary/10 border-primary/30 text-primary hover:bg-primary/20"
+                  : "bg-background/90 border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {filesToggle.shown ? <Eye size={16} /> : <EyeOff size={16} />}
+              <span>Tests &amp; docs</span>
+            </button>
+          )}
 
           {/* Right: action buttons */}
           {state.status === "success" && (
