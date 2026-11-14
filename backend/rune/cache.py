@@ -51,7 +51,8 @@ ANALYSIS_VERSION = "3"
 # they build; records from before T28 carry none, which counts as 0.
 #   1: T28 (the version itself)
 #   2: T29, aliases from every tsconfig/jsconfig add frontend import edges
-#   3: T30, the symbol graph's repo-wide fallback takes only bare calls in the caller's language
+#   3: T30, the symbol graph's repo-wide fallback takes only bare calls in the caller's language;
+#      callees in source order (external_calls had drifted with parser reuse)
 PIPELINE_VERSION = 3
 
 # Writes to one repo's record are serialized by a lock picked from this pool

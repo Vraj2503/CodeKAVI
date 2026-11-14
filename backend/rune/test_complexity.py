@@ -209,6 +209,18 @@ def test_bare_callees_name_the_calls_made_without_a_receiver():
     assert "get" not in js["f"]["bare_callees"] and "fetchRepo" not in js["f"]["bare_callees"]
 
 
+def test_callees_come_in_source_order_however_the_parser_was_used_before():
+    """The thread's parser is reused across files, and tree-sitter's capture order drifted
+    with what it had parsed before: the same file gave two different callee orders."""
+    src = "def f(obj):\n    helper()\n    obj.get('k')\n    cloner.clone_repo()\n    helper()\n"
+    orders = set()
+    for i in range(150):
+        file_complexity("def g():\n    x.y()\n    z()\n" * (i % 7 + 1), "b.py", with_symbols=True)
+        orders.add(tuple(_symbols(src, "a.py")["f"]["callees"]))
+
+    assert orders == {("helper", "get", "clone_repo")}
+
+
 def test_symbols_are_off_by_default():
     """The complexity callers must not pay for symbol extraction."""
     assert "symbols" not in file_complexity("def f():\n    pass\n", "a.py")

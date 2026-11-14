@@ -409,7 +409,10 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
             record["bases"] = _class_bases(node, grammar)
         records[node.id] = record
 
-    for call in nodes_by_name.get("callee", []):
+    # Source order, explicitly: tree-sitter's capture order drifts once a parser has been
+    # reused (the same file gave ['helper', 'get', ...] or ['helper', 'clone_repo', ...]),
+    # and symbol_graph keeps the first MAX_EXTERNAL_CALLS unresolved names in this order.
+    for call in sorted(nodes_by_name.get("callee", []), key=lambda node: node.start_byte):
         # `@callee` is the identifier itself (bare call) or the tail of `obj.name`.
         on_receiver = call.parent is not None and call.parent.type in ("attribute", "member_expression")
         parent = call.parent
