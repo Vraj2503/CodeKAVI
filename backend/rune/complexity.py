@@ -419,6 +419,26 @@ def _decorators(node: Any, grammar: str) -> list[str]:
     return found
 
 
+def _innermost(spans: list[tuple[int, int, dict[str, Any]]], positions: list[int]) -> list[dict[str, Any] | None]:
+    """For each position (ascending), the record of the innermost span holding it, or None.
+
+    `spans` are (start, end, record), sorted by start then widest first, and nest
+    like the tree they come from. After popping the spans that ended, the top of
+    the stack is the most recently opened span still open, so it is the innermost.
+    """
+    owners: list[dict[str, Any] | None] = []
+    open_spans: list[tuple[int, int, dict[str, Any]]] = []
+    next_span = 0
+    for position in positions:
+        while next_span < len(spans) and spans[next_span][0] <= position:
+            open_spans.append(spans[next_span])
+            next_span += 1
+        while open_spans and open_spans[-1][1] <= position:
+            open_spans.pop()
+        owners.append(open_spans[-1][2] if open_spans else None)
+    return owners
+
+
 def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[dict[str, Any]]:
     """
     Turn `@f`/`@cls`/`@callee` captures into symbol records, each carrying the
@@ -460,50 +480,45 @@ def _extract_symbols(nodes_by_name: dict[str, list[Any]], grammar: str) -> list[
             record["bases"] = _class_bases(node, grammar)
         records[node.id] = record
 
-    # Source order, explicitly: tree-sitter's capture order drifts once a parser has been
-    # reused (the same file gave ['helper', 'get', ...] or ['helper', 'clone_repo', ...]),
-    # and symbol_graph keeps the first MAX_EXTERNAL_CALLS unresolved names in this order.
-    for call in sorted(nodes_by_name.get("callee", []), key=lambda node: node.start_byte):
-        # `@callee` is the identifier itself (bare call) or the tail of `obj.name`.
-        on_receiver = call.parent is not None and call.parent.type in ("attribute", "member_expression")
-        parent = call.parent
-        while parent is not None:
-            owner = records.get(parent.id)
-            if owner is not None:
-                name = _text(call)
-                if name not in owner["callees"]:
-                    owner["callees"].append(name)
-                if not on_receiver and name not in owner["bare_callees"]:
-                    owner["bare_callees"].append(name)
-                break
-            parent = parent.parent
-
-    # Per-symbol McCabe (T33): 1 + the branches whose nearest enclosing named symbol
-    # this is, by the same walk as the callees. A branch inside a nested function
-    # counts for that function only; one outside every symbol counts for the file
-    # alone. So the symbols' branches plus the top-level ones are the file's count.
-    # One sweep over sorted spans instead of a parent walk per branch: symbol spans
-    # nest, so the innermost open symbol at a branch's start is its owner.
+    # Each call and each branch belongs to the innermost named symbol around it. Symbol
+    # spans nest, so one sweep over sorted spans finds it; this replaced a walk up the
+    # parent chain from every capture, which took 13 of the 19 s React spent here.
     spans = sorted(
         ((node.start_byte, node.end_byte, records[node.id]) for node in symbol_nodes if node.id in records),
         key=lambda span: (span[0], -span[1]),
     )
+
+    # Source order, explicitly: tree-sitter's capture order drifts once a parser has been
+    # reused (the same file gave ['helper', 'get', ...] or ['helper', 'clone_repo', ...]),
+    # and symbol_graph keeps the first MAX_EXTERNAL_CALLS unresolved names in this order.
+    calls = sorted(nodes_by_name.get("callee", []), key=lambda node: node.start_byte)
+    seen: dict[int, set[str]] = {}
+    seen_bare: dict[int, set[str]] = {}
+    for call, owner in zip(calls, _innermost(spans, [call.start_byte for call in calls]), strict=True):
+        if owner is None:
+            continue
+        # `@callee` is the identifier itself (bare call) or the tail of `obj.name`.
+        name = _text(call)
+        names = seen.setdefault(id(owner), set())
+        if name not in names:
+            names.add(name)
+            owner["callees"].append(name)
+        if call.parent is None or call.parent.type not in ("attribute", "member_expression"):
+            bare = seen_bare.setdefault(id(owner), set())
+            if name not in bare:
+                bare.add(name)
+                owner["bare_callees"].append(name)
+
+    # Per-symbol McCabe (T33): 1 + the branches whose innermost enclosing named symbol
+    # this is. A branch inside a nested function counts for that function only; one
+    # outside every symbol counts for the file alone. So the symbols' branches plus the
+    # top-level ones are the file's count.
     for _start, _end, record in spans:
         record["complexity"] = 1
-    open_spans: list[tuple[int, int, dict[str, Any]]] = []
-    next_span = 0
-    for start in sorted(branch.start_byte for branch in nodes_by_name.get("b", [])):
-        while next_span < len(spans) and spans[next_span][0] <= start:
-            open_spans.append(spans[next_span])
-            next_span += 1
-        while open_spans and open_spans[-1][1] <= start:
-            open_spans.pop()
-        # Spans that closed earlier but sit below a still-open one are popped later; the
-        # innermost containing span is the last one on the stack that still holds `start`.
-        for span_start, span_end, record in reversed(open_spans):
-            if span_start <= start < span_end:
-                record["complexity"] += 1
-                break
+    branch_starts = sorted(branch.start_byte for branch in nodes_by_name.get("b", []))
+    for owner in _innermost(spans, branch_starts):
+        if owner is not None:
+            owner["complexity"] += 1
 
     return list(records.values())
 
