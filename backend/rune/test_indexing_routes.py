@@ -148,6 +148,18 @@ def pipeline(monkeypatch):
     return scheduled
 
 
+@pytest.fixture(autouse=True)
+def summary_jobs(monkeypatch):
+    """T34: the file-summary job, recorded instead of calling an LLM."""
+    jobs: list[str] = []
+
+    async def fake_summaries(repo_id, record, job_cache, user_id):
+        jobs.append(repo_id)
+
+    monkeypatch.setattr(analyze_routes, "summarize_files", fake_summaries)
+    return jobs
+
+
 def _configure_indexing(monkeypatch, enabled: bool) -> None:
     values = {"cloudflare_account_id": "acct", "cloudflare_api_token": "token", "zilliz_uri": "https://zilliz"}
     for name, value in values.items():
@@ -572,3 +584,44 @@ def test_chat_labels_each_chunk_with_the_role_this_analysis_gives_its_file(app, 
     assert "File: lib/api.ts\nRole: Shared Utility" in prompts[0]
     assert "Standalone / Leaf" not in prompts[0]
     assert "File: pyproject.toml\nRole: Configuration" in prompts[0]
+
+
+# ── File summaries (T34) ──
+
+
+def test_a_fresh_analysis_writes_file_summaries_beside_the_index(
+    app, cache, clone, pipeline, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+
+    response = client_for(app, "user-a").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert summary_jobs == [NEW]
+    assert [repo_id for repo_id, *_ in pipeline] == [NEW]  # beside the index, not instead of it
+
+
+def test_a_reused_commit_makes_no_summary_calls(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _analysis("user-a", _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert summary_jobs == []  # its origin's sentences are read through _origin_repo_id
+
+
+def test_an_older_pipeline_rerun_writes_new_summaries_and_keeps_its_index(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(ORIGIN, _older_analysis("user-a", {}, _origin_repo_id=ORIGIN, index_status=make_status("complete")))
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert (summary_jobs, pipeline) == ([NEW], [])

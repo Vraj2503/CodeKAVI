@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     # implements it: on React (52% of chunks are tests) top-5 retrieval of the right
     # file went from 13% to 50% without them, and indexing does half the work.
     index_exclude_tests: bool = Field(default=True, validation_alias="INDEX_EXCLUDE_TESTS")
+    # T34: one AI-written sentence per important file, once per analysis, in the
+    # background (at most FILE_SUMMARY_MAX_FILES / 25 LLM calls; none on reuse).
+    file_summaries: bool = Field(default=True, validation_alias="FILE_SUMMARIES")
+    file_summary_max_files: int = Field(default=150, validation_alias="FILE_SUMMARY_MAX_FILES")
     # T5: analyzing a commit that was already analyzed and fully indexed with
     # today's embedding model reuses that analysis and its vectors instead of
     # re-embedding the repo. Set false to always re-analyze, e.g. while

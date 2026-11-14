@@ -129,13 +129,47 @@ class FactStore:
             except Exception as e:
                 logger.warning(f"Saving file facts for {repo_id} to Redis failed: {e}")
         if not self._table_missing:
-            self._run_in_background(lambda: self._upload(repo_id, files))
+            rows = [{"repo_id": repo_id, "path": path, "facts": facts} for path, facts in files.items()]
+            self._run_in_background(lambda: self._upsert(repo_id, rows))
 
-    def _upload(self, repo_id: str, files: dict[str, dict[str, Any]]) -> None:
+    def put_summaries(self, repo_id: str, summaries: dict[str, str]) -> None:
+        """Add the written sentences (T34) to those files' facts, in every tier."""
+        if not summaries:
+            return
+        current = self.get(repo_id, list(summaries))
+        merged = {path: {**current.get(path, {}), "summary": text} for path, text in summaries.items()}
+        with self._lock:
+            entry = self._memory.get(repo_id)
+            if entry is None:
+                entry = self._memory[repo_id] = _Entry()
+            entry.files.update(merged)
+            entry.missing.difference_update(merged)
+        r = self._redis()
+        if r is not None:
+            try:
+                key = _REDIS_PREFIX + repo_id
+                pipe = r.pipeline()
+                pipe.hset(key, mapping={path: json.dumps(facts) for path, facts in merged.items()})
+                pipe.expire(key, FACTS_TTL_SECONDS)
+                pipe.execute()
+            except Exception as e:
+                logger.warning(f"Saving file summaries for {repo_id} to Redis failed: {e}")
+        if not self._table_missing:
+            rows = [
+                {
+                    "repo_id": repo_id,
+                    "path": path,
+                    "facts": {k: v for k, v in facts.items() if k != "summary"},
+                    "summary": facts["summary"],
+                }
+                for path, facts in merged.items()
+            ]
+            self._run_in_background(lambda: self._upsert(repo_id, rows))
+
+    def _upsert(self, repo_id: str, rows: list[dict[str, Any]]) -> None:
         sb = self._supabase()
         if sb is None:
             return
-        rows = [{"repo_id": repo_id, "path": path, "facts": facts} for path, facts in files.items()]
         try:
             for start in range(0, len(rows), _UPLOAD_BATCH):
                 sb.table(FACTS_TABLE).upsert(rows[start : start + _UPLOAD_BATCH]).execute()

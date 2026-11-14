@@ -13,7 +13,9 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -27,6 +29,7 @@ from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
 from rune.embedding import configured_index_embedding, indexing_embedding_is_configured
 from rune.fact_store import shape_file_facts
 from rune.file_selector import SmartFileSelector
+from rune.file_summaries import summarize_files
 from rune.fingerprint import ChangeClassification
 from rune.graph import (
     build_module_graph,
@@ -398,6 +401,18 @@ async def _earlier_analysis_to_reuse(cache: AnalysisCache, clone_info: dict, *, 
     return EarlierAnalysis(repo_id=indexed_repo_id, record=earlier, signature=signature, index_status=status)
 
 
+async def _run_concurrently(*jobs: Callable[[], Awaitable[None]]) -> None:
+    """Background work that need not wait for each other (the index, the file summaries).
+
+    Starlette runs background tasks one after another, so the summaries' few seconds would
+    otherwise wait minutes for the index. One tracked task keeps shutdown's drain (H-02).
+    """
+    results = await asyncio.gather(*(job() for job in jobs), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+            logger.warning(f"Background job failed: {result!r}")
+
+
 def _index_fields(earlier: EarlierAnalysis | None, indexing_enabled: bool) -> dict:
     """A fresh analysis's index: its own, scheduled now, or the earlier analysis's (T28)."""
     if earlier is not None:
@@ -668,15 +683,15 @@ async def analyze(
             await _run_sync(cache.register_signature, signature, repo_id)
 
         # Index repository for RAG in the background (prevents proxy timeouts),
-        # unless this commit's earlier index is kept (T28).
+        # unless this commit's earlier index is kept (T28); write the file
+        # summaries (T34) beside it.
+        jobs: list[Callable[[], Awaitable[None]]] = []
         if indexing_enabled and earlier is None:
-            background_tasks.add_task(
-                task_registry.wrap(index_repository_and_record),
-                repo_id,
-                file_profiles_dicts,
-                clone_info["clone_path"],
-                cache,
+            jobs.append(
+                partial(index_repository_and_record, repo_id, file_profiles_dicts, clone_info["clone_path"], cache)
             )
+        jobs.append(partial(summarize_files, repo_id, result_data, cache, user_id))
+        background_tasks.add_task(task_registry.wrap(_run_concurrently), *jobs)
 
         final_result = {
             "success": True,
@@ -964,14 +979,15 @@ async def analyze_stream(
                     seq=_next_seq(seq_box),
                 )
             elif indexing_enabled:
-                background_tasks.add_task(
-                    task_registry.wrap(index_repository_and_record),
-                    repo_id,
-                    file_profiles,
-                    clone_info["clone_path"],
-                    cache,
-                )
                 yield _sse_event("indexing", 90, "Creating embeddings for RAG in background…", seq=_next_seq(seq_box))
+            # The index (unless kept, T28) and the file summaries (T34), side by side.
+            stream_jobs: list[Callable[[], Awaitable[None]]] = []
+            if indexing_enabled and earlier is None:
+                stream_jobs.append(
+                    partial(index_repository_and_record, repo_id, file_profiles, clone_info["clone_path"], cache)
+                )
+            stream_jobs.append(partial(summarize_files, repo_id, stream_result_data, cache, user_id))
+            background_tasks.add_task(task_registry.wrap(_run_concurrently), *stream_jobs)
 
             # Stage 8: Complete — include full result data
             # T4.4 — register the freshly-computed repo_id under its commit
