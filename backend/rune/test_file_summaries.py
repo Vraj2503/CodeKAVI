@@ -45,7 +45,7 @@ def test_the_files_picked_are_the_important_ones_worth_a_sentence():
         _profile("app/jobs.py", 80),
         _profile("app/util.py", 70),
     ]
-    facts = {p["path"]: {} for p in profiles if p["path"] != "app/no_facts.py"}
+    facts: dict[str, dict] = {p["path"]: {} for p in profiles if p["path"] != "app/no_facts.py"}
 
     assert pick_files(profiles, facts, 2) == ["app/core.py", "app/jobs.py"]
 
