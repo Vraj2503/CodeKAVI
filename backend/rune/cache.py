@@ -56,7 +56,8 @@ ANALYSIS_VERSION = "3"
 #      callees in source order (external_calls had drifted with parser reuse)
 #   4: T32, the module graph is grouped as deep as each repo needs, not by top-level folder
 #   5: T16, per-file facts (purpose line, symbols with their complexity) written to the fact store
-PIPELINE_VERSION = 5
+#   6: T14/T15, import edges carry the names they import (specifiers)
+PIPELINE_VERSION = 6
 
 # Writes to one repo's record are serialized by a lock picked from this pool
 # (striped by repo_id, so the pool stays fixed-size however many repos pass

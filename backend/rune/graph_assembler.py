@@ -292,10 +292,12 @@ def _aggregate_edges(
     """Pre-aggregate the raw per-import edge list at file, container, and
     layer level so the frontend never re-derives topology."""
     file_counts: Counter[tuple[str, str]] = Counter()
+    names: dict[tuple[str, str], list[str]] = defaultdict(list)
     for edge in raw_edges:
         src, tgt = edge.get("source"), edge.get("target")
         if src and tgt and src != tgt:
             file_counts[(src, tgt)] += 1
+            names[(src, tgt)].extend(edge.get("specifiers") or [])
 
     container_counts: Counter[tuple[str, str]] = Counter()
     layer_counts: Counter[tuple[str, str]] = Counter()
@@ -307,8 +309,15 @@ def _aggregate_edges(
         if l_src and l_tgt and l_src != l_tgt:
             layer_counts[(l_src, l_tgt)] += count
 
+    # T18: a file edge says what crosses it, from the import specifiers (T14/T15).
     edges = [
-        {"source": src, "target": tgt, "level": "file", "count": count}
+        {
+            "source": src,
+            "target": tgt,
+            "level": "file",
+            "count": count,
+            **({"specifiers": list(dict.fromkeys(names[(src, tgt)]))} if names[(src, tgt)] else {}),
+        }
         for (src, tgt), count in sorted(file_counts.items())
     ]
     edges += [

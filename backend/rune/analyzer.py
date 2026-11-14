@@ -162,10 +162,42 @@ def _extract_python_imports(
                     "resolved": resolved,
                     "line": node.lineno,
                     "type": "from_import",
+                    # T15: what crosses the edge. `*` names nothing in particular.
+                    **_specifiers([alias.name for alias in node.names if alias.name != "*"]),
                 }
             )
 
     return imports
+
+
+def _specifiers(names: list[str]) -> dict[str, list[str]]:
+    """`{"specifiers": [...]}` for an import that names what it takes, else nothing (T14/T15)."""
+    return {"specifiers": list(dict.fromkeys(names))} if names else {}
+
+
+def _js_specifiers(path_node: Any) -> list[str]:
+    """Names an `import ... from "x"` takes (T14): the default's local name, the named
+    imports under their exported names, and "*" for a namespace import."""
+    statement = path_node.parent.parent if path_node.parent is not None else None
+    if statement is None or statement.type != "import_statement":
+        return []
+    clause = next((c for c in statement.named_children if c.type == "import_clause"), None)
+    names: list[str] = []
+    for part in clause.named_children if clause is not None else []:
+        if part.type == "identifier":
+            names.append(_node_text(part))
+        elif part.type == "namespace_import":
+            names.append("*")
+        elif part.type == "named_imports":
+            for spec in (c for c in part.named_children if c.type == "import_specifier"):
+                imported = spec.child_by_field_name("name")
+                if imported is not None:
+                    names.append(_node_text(imported))
+    return names
+
+
+def _node_text(node: Any) -> str:
+    return (node.text or b"").decode("utf-8", errors="ignore")
 
 
 def _resolve_python_module(
@@ -367,6 +399,7 @@ def _extract_js_ts_imports_with_source(
                         "resolved": resolved,
                         "line": line,
                         "type": "import",
+                        **_specifiers(_js_specifiers(node)),
                     }
                 )
     else:
@@ -385,6 +418,7 @@ def _extract_js_ts_imports_with_source(
                         "resolved": resolved,
                         "line": line,
                         "type": "import",
+                        **_specifiers(_js_specifiers(node)),
                     }
                 )
 
@@ -1036,6 +1070,7 @@ def analyze_dependencies(
                         "raw": imp["raw"],
                         "line": imp["line"],
                         "type": imp["type"],
+                        **_specifiers(imp.get("specifiers") or []),
                     }
                 )
                 adjacency[rel_path].add(target)
