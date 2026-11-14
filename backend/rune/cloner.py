@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -25,6 +26,32 @@ MAX_REPO_AGE_HOURS = 24
 
 # How often to poll on-disk clone size while `git clone` is running (seconds).
 CLONE_SIZE_POLL_INTERVAL_S = 0.5
+
+
+def remove_tree(path: str) -> None:
+    """Delete a directory tree, git's read-only files included. Raises OSError if it can't.
+
+    Git writes its object and pack files read-only, and Windows refuses to delete a
+    read-only file, so a plain rmtree stopped inside `.git`: the working tree went, the
+    history stayed, and every clone folder survived as a `.git`-only shell.
+    """
+
+    def _clear_read_only_and_retry(func, target, exc):
+        if func not in (os.unlink, os.remove, os.rmdir) or not isinstance(exc, PermissionError):
+            raise exc
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    shutil.rmtree(path, onexc=_clear_read_only_and_retry)
+
+
+def _discard_partial_clone(clone_path: str) -> None:
+    """Best effort: a failed clone must not leave a folder behind, nor hide the real error."""
+    if os.path.exists(clone_path):
+        try:
+            remove_tree(clone_path)
+        except OSError as e:
+            logger.warning(f"Could not remove the partial clone at {clone_path}: {e}")
 
 
 def _dir_size_bytes(path: str) -> int:
@@ -110,7 +137,7 @@ def clone_repo(github_url: str) -> dict:
 
     # Clean up if path already exists
     if os.path.exists(clone_path):
-        shutil.rmtree(clone_path)
+        remove_tree(clone_path)
 
     try:
         # Clone via a raw subprocess (not GitPython's Repo.clone_from) so the
@@ -136,16 +163,12 @@ def clone_repo(github_url: str) -> dict:
                 with contextlib.suppress(OSError):
                     total_size += os.path.getsize(fp)
                 if total_files > settings.repo_file_limit:
-                    shutil.rmtree(clone_path, ignore_errors=True)
                     raise ValueError(f"Repository exceeds file limit of {settings.repo_file_limit} files.")
                 if total_size > settings.repo_size_limit_bytes:
-                    shutil.rmtree(clone_path, ignore_errors=True)
                     raise ValueError(f"Repository exceeds size limit of {settings.repo_size_limit_bytes} bytes.")
 
     except Exception as e:
-        # Clean up partial clone on failure
-        if os.path.exists(clone_path):
-            shutil.rmtree(clone_path, ignore_errors=True)
+        _discard_partial_clone(clone_path)
         from rune.exceptions import CloneError
 
         raise CloneError(f"Failed to clone repository: {e}") from e
@@ -203,24 +226,36 @@ def cleanup_repo(clone_path: str) -> None:
     already catch and log a warning, so this can't surface as a 500.
     """
     if os.path.exists(clone_path):
-        shutil.rmtree(clone_path)
+        remove_tree(clone_path)
 
 
 def cleanup_old_repos(max_age_hours: int = MAX_REPO_AGE_HOURS) -> None:
-    """Remove cloned repos older than max_age_hours. Called on startup."""
+    """Remove cloned repos older than max_age_hours. Called on startup.
+
+    Only folders that are actually gone count as removed; the rest are logged.
+    """
     if not os.path.isdir(CLONE_BASE_DIR):
         return
     cutoff = time.time() - (max_age_hours * 3600)
-    removed = 0
+    removed, failed = 0, 0
     for entry in os.listdir(CLONE_BASE_DIR):
         full_path = os.path.join(CLONE_BASE_DIR, entry)
-        if os.path.isdir(full_path):
-            try:
-                mtime = os.path.getmtime(full_path)
-                if mtime < cutoff:
-                    shutil.rmtree(full_path, ignore_errors=True)
-                    removed += 1
-            except OSError:
+        if not os.path.isdir(full_path):
+            continue
+        try:
+            if os.path.getmtime(full_path) >= cutoff:
                 continue
+        except OSError:
+            continue
+        try:
+            remove_tree(full_path)
+        except OSError as e:
+            logger.warning(f"Startup cleanup could not remove {full_path}: {e}")
+        if os.path.exists(full_path):
+            failed += 1
+        else:
+            removed += 1
     if removed:
         logger.info(f"Startup cleanup: removed {removed} old cloned repos")
+    if failed:
+        logger.warning(f"Startup cleanup: {failed} old cloned repos could not be removed")
