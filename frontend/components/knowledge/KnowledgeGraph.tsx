@@ -34,6 +34,11 @@ const EDGE_TYPES: EdgeTypes = {
   knowledgeEdge: KnowledgeEdge,
 };
 
+// Forty 200x88 symbols can't fit a laptop-sized canvas above ~zoom 0.35. React
+// Flow's default floor is 0.5, so the first fit stopped there and part of the
+// graph started off-screen. The floor applies to the user's zoom as well.
+const KNOWLEDGE_MIN_ZOOM = 0.1;
+
 // ── Props ──────────────────────────────────────────────────────────────────
 
 export interface KnowledgeGraphProps {
@@ -146,8 +151,9 @@ function KnowledgeGraphInner({
           onNodeClick={handleNodeClick}
           onPaneClick={handlePaneClick}
           colorMode={colorMode}
+          minZoom={KNOWLEDGE_MIN_ZOOM}
           fitView
-          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+          fitViewOptions={{ padding: 0.15, maxZoom: 1, minZoom: KNOWLEDGE_MIN_ZOOM }}
         >
           <Background />
           <Controls position="bottom-right" showInteractive={false} />
