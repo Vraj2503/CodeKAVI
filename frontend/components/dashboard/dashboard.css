@@ -1,0 +1,952 @@
+/* ─────────────────────────────────────────────────────────────
+   Dashboard — the landing page's world, scoped to `.db`
+
+   The marketing page is a fixed dark world: deep teal ink, bone
+   text, one clay accent, Bricolage Grotesque over Hanken Grotesk
+   over JetBrains Mono, pill controls, window panels. This is that
+   same world at
+
+       Operate density rather than Persuade scale
+
+   — same palette, same faces, same radii and borders, without the
+   hero's type sizes.
+
+   Everything is namespaced so it cannot reach the theme-obedient
+   app shell (repo views, studio) which keeps its own tokens.
+
+   Two sets of variables live here on purpose. `--bg/--ink/--acc`
+   drive this file. The app's HSL tokens are re-pointed at the same
+   palette underneath them, so anything rendered inside the dashboard
+   that was written against the app theme — the analysis overlay, a
+   toast — lands in this world instead of flashing paper-white in the
+   middle of a dark flow.
+   ───────────────────────────────────────────────────────────── */
+
+.db {
+  color-scheme: dark;
+
+  --bg: #0c1519;
+  --paper: #162127;
+  --ink: #f1e6da;
+  --mut: #a8a39d;
+  --acc: #cf9d7b;
+  --amb: #e0674b;
+  --jet: #3a3534;
+  --line: rgba(241, 230, 218, 0.16);
+
+  --disp: var(--font-bricolage), system-ui, sans-serif;
+  --text: var(--font-hanken), system-ui, sans-serif;
+  --mono: var(--font-jetbrains), ui-monospace, Menlo, Consolas, monospace;
+
+  --pad: clamp(20px, 5vw, 72px);
+  --r: 14px;
+
+  /* The app's tokens, re-pointed. */
+  --background: 196 34% 7%;
+  --foreground: 34 43% 90%;
+  --card: 197 21% 13%;
+  --card-foreground: 34 43% 90%;
+  --popover: 197 21% 13%;
+  --popover-foreground: 34 43% 90%;
+  --primary: 34 43% 90%;
+  --primary-foreground: 196 34% 7%;
+  --secondary: 196 12% 19%;
+  --secondary-foreground: 34 43% 90%;
+  --muted: 196 12% 17%;
+  --muted-foreground: 28 6% 64%;
+  --accent: 196 12% 21%;
+  --accent-foreground: 34 43% 90%;
+  --border: 34 18% 25%;
+  --input: 34 18% 25%;
+  --ring: 25 45% 65%;
+  --signal: 25 45% 65%;
+  --signal-foreground: 196 34% 7%;
+  --signal-muted: 25 30% 20%;
+  --success: 25 45% 65%;
+  --success-foreground: 196 34% 7%;
+  --destructive: 12 71% 59%;
+  --destructive-foreground: 196 34% 7%;
+  --shadow-color: 200 40% 2%;
+
+  min-height: 100svh;
+  color: var(--ink);
+  font: 400 clamp(1rem, 0.95rem + 0.2vw, 1.0625rem) / 1.6 var(--text);
+  -webkit-font-smoothing: antialiased;
+
+  /* The landing hero's single warm wash, quieter and pushed off-corner:
+     enough to give the page a light source where the marketing page has
+     a whole glowing sky. */
+  background:
+    radial-gradient(
+      56% 40% at 86% -12%,
+      rgba(114, 75, 57, 0.42),
+      transparent 72%
+    ),
+    var(--bg);
+}
+
+.db *,
+.db *::before,
+.db *::after {
+  box-sizing: border-box;
+}
+
+.db :focus-visible {
+  outline: 3px solid var(--acc);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.db ::selection {
+  background: rgba(207, 157, 123, 0.32);
+}
+
+/* ── the header pill ────────────────────────────────────────────
+   Same object as the landing's floating navbar: the dashboard is
+   the same product one click in, so the way back to it should not
+   look like a different application. */
+
+.db-nav {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2.4vw, 24px);
+  max-width: calc(100vw - 28px);
+  padding: 6px 8px 6px 16px;
+  /* The same translucent glass as the landing's navbar — identical fill,
+     blur, sheen and rim, so scrolling between the two pages does not change
+     the material under the cursor. */
+  background-color: rgba(22, 33, 39, 0.38);
+  background-image: linear-gradient(
+    to bottom,
+    rgba(241, 230, 218, 0.11),
+    rgba(241, 230, 218, 0.03) 52%,
+    rgba(241, 230, 218, 0) 100%
+  );
+  backdrop-filter: blur(26px) saturate(180%);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  border: 1px solid rgba(241, 230, 218, 0.18);
+  border-radius: 9999px;
+  box-shadow: 0 18px 44px -16px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  transition: background-color 0.25s, border-color 0.25s, box-shadow 0.25s;
+}
+
+.db-nav:hover {
+  background-color: rgba(22, 33, 39, 0.5);
+  border-color: rgba(241, 230, 218, 0.26);
+  box-shadow: 0 22px 52px -16px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+}
+
+.db-nav__logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  font: 700 0.98rem var(--disp);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.db-nav__sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
+.db-nav__where {
+  display: none;
+  font: 500 0.78rem var(--mono);
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.db-nav__out {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: 500 0.82rem var(--text);
+  transition: border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+
+.db-nav__out:hover {
+  border-color: var(--ink);
+  background: rgba(241, 230, 218, 0.06);
+}
+
+@media (min-width: 560px) {
+  .db-nav__where {
+    display: inline;
+  }
+}
+
+/* ── page frame ─────────────────────────────────────────────── */
+
+.db-main {
+  padding: calc(clamp(16px, 2.4vw, 24px) + 84px) var(--pad) 96px;
+  max-width: 1320px;
+  margin-inline: auto;
+}
+
+.db-main--narrow {
+  max-width: 1040px;
+}
+
+.db-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-bottom: 22px;
+  font: 500 0.8rem var(--mono);
+  color: var(--mut);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.db-back:hover {
+  color: var(--ink);
+}
+
+.db-top {
+  display: grid;
+  gap: 26px;
+}
+
+@media (min-width: 860px) {
+  .db-top {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: clamp(32px, 5vw, 72px);
+  }
+}
+
+/* ── identity ───────────────────────────────────────────────── */
+
+.db-id {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.db-id__avatar {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  overflow: hidden;
+  font: 500 0.95rem var(--mono);
+  color: var(--mut);
+  transition: border-color 0.2s;
+}
+
+.db-id:hover .db-id__avatar {
+  border-color: var(--acc);
+}
+
+.db-id__text {
+  min-width: 0;
+}
+
+.db-id__name {
+  display: block;
+  font: 600 clamp(1.35rem, 2.2vw, 1.85rem) / 1.1 var(--disp);
+  letter-spacing: -0.035em;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.db-id:hover .db-id__name {
+  color: var(--acc);
+}
+
+.db-id__mail {
+  display: block;
+  margin-top: 4px;
+  font: 400 0.9rem var(--text);
+  color: var(--mut);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-id__go {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font: 500 0.78rem var(--mono);
+  color: var(--acc);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.db-id:hover .db-id__go,
+.db-id:focus-visible .db-id__go {
+  opacity: 1;
+}
+
+@media (min-width: 860px) {
+  .db-id__avatar {
+    width: 96px;
+    height: 96px;
+    font-size: 1.5rem;
+  }
+}
+
+/* The settings header, where the avatar is a detail rather than the subject. */
+.db-id__avatar.is-sm,
+.db-id__avatar.is-sm:is(:hover) {
+  width: 64px;
+  height: 64px;
+  font-size: 1.05rem;
+}
+
+@media (min-width: 860px) {
+  .db-id__avatar.is-sm {
+    width: 80px;
+    height: 80px;
+    font-size: 1.2rem;
+  }
+}
+
+/* ── the one action ─────────────────────────────────────────── */
+
+.db-action {
+  min-width: 0;
+}
+
+.db-action__lead {
+  margin: 0 0 14px;
+  font: 600 clamp(1.15rem, 2vw, 1.5rem) / 1.15 var(--disp);
+  letter-spacing: -0.035em;
+  color: var(--ink);
+}
+
+.db-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(22, 33, 39, 0.78);
+  border: 1px solid rgba(241, 230, 218, 0.18);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.db-field:focus-within {
+  border-color: var(--acc);
+  background: rgba(22, 33, 39, 0.94);
+}
+
+.db-field.is-bad {
+  border-color: var(--amb);
+}
+
+.db-field input {
+  min-width: 0;
+  flex: 1;
+  height: 46px;
+  padding: 0 8px 0 18px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  font: 500 0.95rem var(--mono);
+  caret-color: var(--acc);
+}
+
+.db-field input::placeholder {
+  color: rgba(168, 163, 157, 0.8);
+  font-weight: 400;
+}
+
+/* The pill is the focus indicator; a ring inside it would read as two
+   competing borders. */
+.db-field input:focus,
+.db-field input:focus-visible {
+  outline: none;
+}
+
+.db-btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5em;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 1.5em;
+  border-radius: 999px;
+  border: 1.5px solid var(--acc);
+  background: var(--acc);
+  color: var(--bg);
+  font: 600 0.9rem var(--text);
+  transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.2s;
+}
+
+.db-btn:hover:not(:disabled) {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.db-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.db-hint,
+.db-err {
+  margin: 10px 4px 0;
+  font: 400 0.85rem / 1.45 var(--text);
+}
+
+.db-hint {
+  color: var(--mut);
+}
+
+.db-hint code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--ink);
+}
+
+.db-err {
+  color: var(--amb);
+}
+
+/* ── first-run note ─────────────────────────────────────────── */
+
+.db-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: clamp(24px, 3.4vw, 36px);
+  padding: 16px 18px;
+  border-radius: var(--r);
+  border: 1px solid rgba(207, 157, 123, 0.34);
+  background: rgba(207, 157, 123, 0.08);
+}
+
+.db-note__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.db-note__t {
+  margin: 0;
+  font: 600 0.98rem var(--text);
+  color: var(--ink);
+}
+
+.db-note__b {
+  margin: 3px 0 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--mut);
+}
+
+.db-note__x {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  margin: -6px -6px 0 0;
+  border-radius: 999px;
+  color: var(--mut);
+  transition: color 0.2s, background 0.2s;
+}
+
+.db-note__x:hover {
+  color: var(--ink);
+  background: rgba(241, 230, 218, 0.08);
+}
+
+/* ── the two panels ─────────────────────────────────────────── */
+
+.db-grid {
+  display: grid;
+  gap: clamp(24px, 3vw, 40px);
+  margin-top: clamp(32px, 5vw, 56px);
+}
+
+@media (min-width: 900px) {
+  .db-grid {
+    grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+@media (min-width: 820px) {
+  .db-grid--settings {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  }
+}
+
+/* Settings header: name beside the avatar, sized like a detail page. */
+.db-account {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: clamp(28px, 4vw, 40px);
+}
+
+.db-account .db-id__name {
+  font-size: clamp(1.45rem, 2.6vw, 2rem);
+}
+
+.db-anchor {
+  scroll-margin-top: 96px;
+}
+
+/* Definition rows, matched to the landing's list hairlines. */
+.db-def {
+  margin: 0;
+  padding: 8px 18px 6px;
+}
+
+.db-def__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.db-def__row:last-child {
+  border-bottom: 0;
+}
+
+.db-def dt {
+  font: 400 0.8rem var(--mono);
+  color: var(--mut);
+}
+
+.db-def dd {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 0.92rem var(--text);
+  color: var(--ink);
+}
+
+/* The landing's window panel, borrowed whole: a mono title strip over a
+   paper body. It is the page's most characteristic container and it does
+   real work here — it labels the list and carries the count. */
+.db-win {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  overflow: hidden;
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+}
+
+.db-win__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  font: 500 0.78rem var(--mono);
+  color: var(--mut);
+}
+
+.db-win__bar h2 {
+  margin: 0;
+  font: 500 0.78rem var(--mono);
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+.db-win__bar em {
+  margin-left: auto;
+  font-style: normal;
+}
+
+/* ── history rows ───────────────────────────────────────────── */
+
+.db-rows {
+  max-height: min(58vh, 560px);
+  overflow-y: auto;
+}
+
+@media (max-width: 899px) {
+  .db-rows {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+.db-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 2.2em minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 58px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.2s, padding-left 0.2s;
+}
+
+.db-row:last-child {
+  border-bottom: 0;
+}
+
+/* The padding shift is the landing's row gesture (`.q` slides 6px). Here it
+   moves the content instead of the row so the hairline stays put. */
+.db-row:hover {
+  background: rgba(241, 230, 218, 0.04);
+  padding-left: 24px;
+}
+
+.db-row:focus-visible {
+  outline: 3px solid var(--acc);
+  outline-offset: -3px;
+  border-radius: 0;
+}
+
+.db-row__n {
+  grid-row: 1 / span 2;
+  align-self: center;
+  font: 400 0.74rem var(--mono);
+  color: var(--mut);
+}
+
+.db-row__stack {
+  grid-column: 2;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.db-row__repo {
+  font: 500 0.92rem var(--mono);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-row__repo span {
+  color: var(--mut);
+}
+
+.db-row__langs {
+  font: 400 0.78rem var(--mono);
+  color: var(--mut);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-row__aside {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.db-row__msgs {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  font: 400 0.78rem var(--mono);
+  color: var(--mut);
+}
+
+.db-row__time {
+  font: 400 0.78rem var(--mono);
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.db-row__go {
+  color: var(--mut);
+  transition: color 0.2s, transform 0.2s;
+}
+
+.db-row:hover .db-row__go {
+  color: var(--acc);
+  transform: translateX(2px);
+}
+
+@media (min-width: 640px) {
+  .db-row__msgs {
+    display: flex;
+  }
+}
+
+/* ── panel footer / pager ───────────────────────────────────── */
+
+.db-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  font: 400 0.78rem var(--mono);
+  color: var(--mut);
+}
+
+.db-pager__btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-sbtn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  min-width: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font: 500 0.84rem var(--text);
+  transition: border-color 0.2s, background 0.2s, opacity 0.2s;
+}
+
+.db-sbtn:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: rgba(241, 230, 218, 0.06);
+}
+
+.db-sbtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── empty and failed states ────────────────────────────────── */
+
+.db-empty {
+  padding: clamp(32px, 4.5vw, 52px) 20px;
+  text-align: center;
+}
+
+.db-empty__t {
+  margin: 0;
+  font: 600 1.05rem var(--text);
+  color: var(--ink);
+}
+
+.db-empty__b {
+  margin: 7px auto 0;
+  max-width: 42ch;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--mut);
+}
+
+.db-fail {
+  display: grid;
+  gap: 7px;
+  padding: 22px 20px 24px;
+}
+
+.db-fail__t {
+  margin: 0;
+  font: 600 0.98rem var(--text);
+  color: var(--ink);
+}
+
+.db-fail__b {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--mut);
+}
+
+.db-fail .db-sbtn {
+  justify-self: start;
+  margin-top: 6px;
+}
+
+/* ── the plan ───────────────────────────────────────────────── */
+
+.db-plan {
+  padding: clamp(20px, 2.4vw, 26px);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+}
+
+.db-plan__label {
+  margin: 0;
+  font: 500 0.78rem var(--mono);
+  color: var(--mut);
+}
+
+.db-plan__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 0.74rem var(--mono);
+  color: var(--ink);
+}
+
+.db-badge i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--acc);
+}
+
+.db-plan__name {
+  margin: 14px 0 0;
+  font: 700 clamp(1.7rem, 2.6vw, 2.05rem) / 1 var(--disp);
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+
+.db-plan__note {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--mut);
+}
+
+.db-plan__block {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.db-plan__use {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font: 400 0.8rem var(--mono);
+  color: var(--mut);
+}
+
+.db-plan__use b {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.db-bar {
+  height: 3px;
+  margin-top: 10px;
+  border-radius: 3px;
+  background: rgba(241, 230, 218, 0.12);
+  overflow: hidden;
+}
+
+.db-bar i {
+  display: block;
+  height: 100%;
+  background: var(--acc);
+  transition: width 0.4s ease;
+}
+
+.db-plan__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 20px;
+  min-height: 44px;
+  font: 500 0.86rem var(--text);
+  color: var(--acc);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.db-plan__link:hover {
+  color: var(--ink);
+}
+
+/* ── skeletons ──────────────────────────────────────────────── */
+
+.db-skel {
+  display: block;
+  background: rgba(241, 230, 218, 0.08);
+  border-radius: 5px;
+  animation: db-pulse 1.9s ease-in-out infinite;
+}
+
+@keyframes db-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── arrival ────────────────────────────────────────────────────
+   One orchestrated entrance, not an identical fade per section: the
+   identity and the field arrive together, and the list rows follow in
+   a short stagger that stops after the first screenful. */
+
+@keyframes db-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.db-in {
+  animation: db-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.db-rows .db-row {
+  animation: db-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 26ms);
+}

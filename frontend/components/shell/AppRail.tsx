@@ -67,7 +67,7 @@ export function AppRail({ repoId }: { repoId: string }) {
         className="z-30 flex w-14 flex-shrink-0 flex-col items-center border-r border-border bg-card/60 py-3"
       >
         <Link
-          href="/"
+          href="/dashboard"
           aria-label="Rune home"
           className="press mb-4 grid h-9 w-9 place-items-center rounded-md border border-border bg-background"
         >
@@ -112,7 +112,7 @@ export function AppRail({ repoId }: { repoId: string }) {
           <Tooltip>
             <TooltipTrigger asChild>
               <Link
-                href="/"
+                href="/dashboard"
                 className="press grid h-9 w-9 place-items-center rounded-md text-muted-foreground transition-colors duration-150 ease-out hover:bg-accent/60 hover:text-foreground"
               >
                 <Plus size={18} strokeWidth={1.75} />

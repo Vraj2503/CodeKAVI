@@ -778,7 +778,7 @@ export async function fetchVisualization(
                 max_edges: 26,
                 collapse_supporting_components: true,
               },
-              enrichment: { mode: "static" },
+              enrichment: { mode: "llm" },
             }
           : { use_llm: useLlm },
       ),

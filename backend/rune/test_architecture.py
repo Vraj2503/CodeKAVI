@@ -52,6 +52,17 @@ def test_architecture_manifest_uses_responsibilities_and_explicit_products():
     assert all(edge.source != edge.target for edge in manifest.edges)
     assert all(edge.label for edge in manifest.edges)
 
+    # Verify all node summaries are multi-sentence, non-generic explanations
+    for node in manifest.nodes:
+        # Must have at least 3-4 sentences
+        sentences = [s.strip() for s in node.summary.split(". ") if s.strip()]
+        assert len(sentences) >= 3, f"Node {node.label} summary has too few sentences ({len(sentences)}): {node.summary}"
+        assert not node.summary.startswith("Provides ") or not node.summary.endswith("responsibilities."), (
+            f"Node {node.label} has generic summary: {node.summary}"
+        )
+        assert len(node.summary) >= 120, f"Node {node.label} summary is too short: {node.summary}"
+        assert "Role in project:" in node.summary, f"Node {node.label} does not describe its role in project: {node.summary}"
+
 
 def test_architecture_manifest_applies_overview_budget_and_view_filter():
     profiles = _profiles() + [

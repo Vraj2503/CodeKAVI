@@ -108,6 +108,10 @@ export interface ArchitectureDiagnostics {
   unsupported_languages: string[];
   excluded_low_confidence_edges: number;
   source_coverage: number;
+  is_llm_enriched?: boolean;
+  fallback_reason?: string | null;
+  cached?: boolean;
+  model_name?: string | null;
 }
 
 export interface ArchitectureGraphData {

@@ -9,7 +9,7 @@ import type { Config } from "tailwindcss";
  * a variable swap.
  */
 const config: Config = {
-  darkMode: ["class", "class"],
+  darkMode: "class",
   content: [
     "./app/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",

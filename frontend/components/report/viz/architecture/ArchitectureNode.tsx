@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Handle, Position, NodeProps, Node } from "@xyflow/react";
 import { ArchitectureNodeData, ArchitectureTechnology } from "./types";
 import { cn } from "@/lib/utils";
 import { Circle, Server, Database, CloudCog, ArrowRightLeft, Users } from "lucide-react";
+import { getRichResponsibility } from "./responsibilities";
 
 const KindIcon = ({ kind, className }: { kind: string; className?: string }) => {
   switch (kind) {
@@ -24,6 +25,9 @@ const KindIcon = ({ kind, className }: { kind: string; className?: string }) => 
 };
 
 export function ArchitectureNode({ data, selected }: NodeProps<Node<ArchitectureNodeData>>) {
+  const responsibilities = useMemo(() => getRichResponsibility(data), [data]);
+  const fullSummary = responsibilities.join(" ");
+
   return (
     <div
       className={cn(
@@ -45,9 +49,9 @@ export function ArchitectureNode({ data, selected }: NodeProps<Node<Architecture
           </div>
         </div>
         
-        {data.summary && (
-          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2" title={data.summary}>
-            {data.summary}
+        {fullSummary && (
+          <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2" title={fullSummary}>
+            {fullSummary}
           </p>
         )}
         

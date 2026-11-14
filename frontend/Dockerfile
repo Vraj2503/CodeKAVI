@@ -6,11 +6,13 @@ WORKDIR /app
 RUN addgroup -g 10001 -S appgroup && adduser -u 10001 -S appuser -G appgroup
 
 # Install dependencies
-COPY package.json package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-# Copy source code and build
-COPY . .
+# Copy source code and the supplied mind-map template. The Compose build
+# context is the repository root so the template remains part of the image.
+COPY frontend/ .
+COPY ["Mind Map.html", "./Mind Map.html"]
 
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1

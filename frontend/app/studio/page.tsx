@@ -32,7 +32,7 @@ export default function StudioPage() {
     <NNEditor
       initial={model}
       onApply={setModel}
-      onClose={() => router.push("/")}
+      onClose={() => router.push("/dashboard")}
     />
   );
 }

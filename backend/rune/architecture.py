@@ -11,7 +11,10 @@ from .architecture_models import (
     ArchitectureEdge, ArchitectureEvidence, ArchitectureGraphData, ArchitectureGroup,
     ArchitectureNode, ArchitectureRepository, ArchitectureRequest,
 )
-from .architecture_rules import determine_node_kind, determine_node_role, match_technologies
+from .architecture_rules import (
+    determine_node_kind, determine_node_role, match_technologies,
+    generate_node_responsibility, get_technology_responsibility,
+)
 
 
 GROUPS = (
@@ -122,7 +125,7 @@ def build_architecture_manifest(
         if node_id not in nodes:
             nodes[node_id] = ArchitectureNode(
                 id=node_id, label=label, kind=kind, group_id=group_id,
-                summary=f"Provides {label.lower()} responsibilities.", confidence=confidence,
+                summary="", confidence=confidence,
                 evidence=[evidence], importance=float(profile.get("importance_score") or 0),
             )
         else:
@@ -130,6 +133,11 @@ def build_architecture_manifest(
             node.evidence.append(evidence)
             node.confidence = max(node.confidence, confidence)
             node.importance = max(node.importance, float(profile.get("importance_score") or 0))
+
+    # Generate 3-4 sentence non-generic responsibility explanations using full evidence
+    for node in nodes.values():
+        evidence_paths = [e.path for e in node.evidence]
+        node.summary = generate_node_responsibility(node.label, node.kind, node.group_id, evidence_paths)
 
     edges: dict[tuple[str, str], ArchitectureEdge] = {}
     for source_path, targets in adjacency.items():
@@ -154,9 +162,10 @@ def build_architecture_manifest(
             group_id = "state" if kind == "datastore" else "external"
             target = _id("tech", f"{tech.vendor}:{tech.product}")
             if target not in nodes:
+                tech_summary = get_technology_responsibility(tech.vendor, tech.product, tech.purpose)
                 nodes[target] = ArchitectureNode(
                     id=target, label=f"{tech.vendor} — {tech.product}", kind=kind, group_id=group_id,
-                    summary=tech.purpose or f"Provides {tech.product.lower()}.", technologies=[tech],
+                    summary=tech_summary, technologies=[tech],
                     confidence=tech.confidence, evidence=[ArchitectureEvidence(path=path, reason="Detected from an imported SDK or client.")], importance=100,
                 )
             else:

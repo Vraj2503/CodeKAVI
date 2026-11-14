@@ -33,7 +33,7 @@ class ArchitectureLayout(BaseModel):
 
 class ArchitectureEnrichment(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    mode: Literal["static"] = "static"
+    mode: Literal["static", "llm"] = "llm"
 
 
 class ArchitectureFocus(BaseModel):
@@ -125,6 +125,10 @@ class ArchitectureDiagnostics(BaseModel):
     unsupported_languages: list[str] = Field(default_factory=list)
     excluded_low_confidence_edges: int = 0
     source_coverage: float = Field(default=0, ge=0, le=1)
+    is_llm_enriched: bool = False
+    fallback_reason: str | None = None
+    cached: bool = False
+    model_name: str | None = None
 
 
 class ArchitectureGraphData(BaseModel):
