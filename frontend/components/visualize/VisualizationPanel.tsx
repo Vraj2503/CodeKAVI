@@ -141,6 +141,7 @@ export function VisualizationPanel({ repoId }: VisualizationPanelProps) {
             setIsExplanationOpen(true);
             explain(activeViz);
           }}
+          onRegenerateExplanation={() => explain(activeViz, true)}
           isExplanationOpen={isExplanationOpen}
           toggleExplanation={() => setIsExplanationOpen(!isExplanationOpen)}
         />

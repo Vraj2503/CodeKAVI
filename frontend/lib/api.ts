@@ -349,6 +349,8 @@ export interface ExplanationResponse {
   explanation: string;
   tokens_used: number;
   model: string;
+  /** T35: the answer kept for this analysis, returned without a new call (0 tokens). */
+  cached?: boolean;
 }
 
 // ── Semantic Graph Types (Phase 1) ──
@@ -875,6 +877,7 @@ export async function enrichKnowledgeGraph(
 export async function fetchVisualizationExplanation(
   repoId: string,
   vizType: string,
+  refresh: boolean = false,
 ): Promise<ExplanationResponse> {
   if (repoId === "dev-mock-repo") {
     return new Promise((resolve) =>
@@ -897,7 +900,7 @@ export async function fetchVisualizationExplanation(
       "Content-Type": "application/json",
       ...authHeaders,
     },
-    body: JSON.stringify({ repo_id: repoId }),
+    body: JSON.stringify({ repo_id: repoId, refresh }),
   });
 
   if (res.status === 202) throw new ApiError(202, "re-analyzing");

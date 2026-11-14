@@ -1377,6 +1377,8 @@ async def visualize_radar(
 
 class ExplainVizRequest(BaseModel):
     repo_id: str
+    # T35: answers are kept per analysis; true asks for a new one.
+    refresh: bool = False
 
 
 @router.post("/explain/visualization/{viz_type}", dependencies=[Depends(per_minute(5))])
@@ -1393,6 +1395,14 @@ async def explain_visualization(
     Only called when user explicitly clicks "Explain This Graph".
     """
     result, _clone_path = await _load_repo(body.repo_id, cache, user_id)
+
+    # T35: one answer per view per analysis. A second click returns it, costs no
+    # tokens and needs no quota; each view has its own key, so answers for two
+    # views saved at once both survive (cache.update replaces only its key).
+    cache_key = f"insights_{viz_type}"
+    cached = result.get(cache_key)
+    if isinstance(cached, dict) and cached.get("explanation") and not body.refresh:
+        return {"explanation": cached["explanation"], "tokens_used": 0, "model": cached.get("model"), "cached": True}
 
     # M-22: this endpoint is LLM-only (no static fallback) yet never gated
     # on the per-user daily quota — mirror the check every other LLM route
@@ -1421,29 +1431,25 @@ async def explain_visualization(
 
     provider = get_provider("explain")
 
-    # Build a focused prompt based on visualization type
+    # T35: each prompt carries what its view draws, with what each file is for (T16).
     classification = result.get("file_profiles", [])
     analysis = result.get("dep_data", {})
+    shown = [p for p in classification if p.get("path") and shown_in_views(p.get("path", ""), p.get("role"))]
+    ranked = sorted(shown, key=lambda p: -(p.get("importance_score") or 0))[:_INSIGHT_FILES]
+    facts = await run_sync(cache.facts.get, facts_repo_id(result, body.repo_id), [p["path"] for p in ranked])
 
-    prompts = {
-        "dependencies": _explain_prompt_dependencies(analysis),
-        "complexity": _explain_prompt_complexity(classification),
-        "architecture": _explain_prompt_architecture(result),
-        "dataflow": _explain_prompt_dataflow(analysis),
-        "mindmap": _explain_prompt_mindmap(classification),
-        "concentric_radar": (
-            "You are analyzing a Concentric Radar & Complexity Hull visualization of a codebase. "
-            "Modules are arranged on concentric rings by architectural depth — entry points at the center, "
-            "tests at the outer ring. Each module's distance from its ring center reflects its McCabe "
-            "Cyclomatic Complexity (CC). The red hull polygon spikes outward at hotspot files (CC ≥ 50). "
-            "Explain the architectural layering, identify complexity hotspots visible as hull spikes, "
-            "and note any cross-tier dependency patterns that may indicate design concerns."
-        ),
+    builders = {
+        "dependencies": lambda: _explain_prompt_dependencies(analysis),
+        "complexity": lambda: _explain_prompt_complexity(classification),
+        "architecture": lambda: _explain_prompt_architecture(result, body.repo_id, facts),
+        "dataflow": lambda: _explain_prompt_dataflow(analysis, facts),
+        "mindmap": lambda: _explain_prompt_mindmap(ranked, facts),
+        "concentric_radar": lambda: _explain_prompt_radar(ranked, facts),
     }
-
-    prompt = prompts.get(viz_type)
-    if not prompt:
+    builder = builders.get(viz_type)
+    if builder is None:
         raise HTTPException(status_code=400, detail=f"Unknown visualization type: {viz_type}")
+    prompt = builder()
 
     try:
         # M-22/L-13: thread user_id through so usage is attributed correctly,
@@ -1453,20 +1459,69 @@ async def explain_visualization(
             system_prompt=(
                 "You are a senior software architect. Explain the visualization data "
                 "in 3-5 concise paragraphs. Highlight key patterns, risks, and recommendations. "
-                "Use markdown formatting."
+                "Refer to files and functions by name, using only those in the data. "
+                "Use markdown formatting.\n\n" + UNTRUSTED_CODE_DISCLAIMER
             ),
             user_prompt=prompt,
             temperature=0.3,
             max_tokens=2000,
             user_id=user_id,
         )
-        return {
-            "explanation": response,
-            "tokens_used": usage.get("total_tokens", 0),
-            "model": provider.name,
-        }
     except Exception as e:
         raise internal_error(e, context="explain_visualization: generation failed") from e
+
+    if response:
+        await run_sync(cache.update, body.repo_id, {cache_key: {"explanation": response, "model": provider.name}})
+    return {
+        "explanation": response,
+        "tokens_used": usage.get("total_tokens", 0),
+        "model": provider.name,
+        "cached": False,
+    }
+
+
+#: Files an AI Insights prompt describes: the most important ones the view shows.
+_INSIGHT_FILES = 40
+
+
+def _described(path: str, facts: dict[str, dict]) -> str:
+    """`path — what it is for`, or the path alone when nothing is known."""
+    text, _source = file_description(facts.get(path))
+    return f"{path} — {text}" if text else path
+
+
+def _hot_functions(path: str, facts: dict[str, dict], limit: int = 3) -> str:
+    named = [
+        f"{s['name']} (CC {s.get('complexity') or 0})" for s in top_symbols(facts.get(path), limit) if s.get("name")
+    ]
+    return f"; most complex: {', '.join(named)}" if named else ""
+
+
+def _explain_prompt_radar(profiles: list[dict], facts: dict[str, dict]) -> str:
+    """What the radar draws: files on rings by depth, each with its complexity, purpose and hot functions."""
+    lines = [
+        "Concentric radar of a codebase. Files sit on rings by architectural depth; CC is each file's "
+        "McCabe cyclomatic complexity, and files with CC >= 50 are hotspots.",
+    ]
+    by_tier: dict[int, list[dict]] = {}
+    for profile in profiles:
+        by_tier.setdefault(_ROLE_TIER.get(profile.get("role", "other"), 4), []).append(profile)
+    for tier in sorted(by_tier):
+        name = _RADAR_TIERS[tier]["name"] if tier < len(_RADAR_TIERS) else f"Ring {tier}"
+        lines.append(f"\n{name}:")
+        for profile in by_tier[tier][:8]:
+            path = profile["path"]
+            lines.append(
+                f"- {_described(path, facts)} (CC {profile.get('complexity') or 0}){_hot_functions(path, facts)}"
+            )
+    hotspots = [p for p in profiles if (p.get("complexity") or 0) >= 50]
+    if hotspots:
+        lines.append("\nHotspots: " + ", ".join(f"{p['path']} (CC {p.get('complexity')})" for p in hotspots[:8]))
+    lines.append(
+        "\nExplain the layering, name the functions that drive the hotspots' complexity, and point out "
+        "dependencies across rings that look like design concerns."
+    )
+    return "\n".join(lines)
 
 
 def _explain_prompt_dependencies(analysis: dict) -> str:
@@ -1490,35 +1545,64 @@ def _explain_prompt_complexity(classification: list) -> str:
     )
 
 
-def _explain_prompt_architecture(result: dict) -> str:
-    module_graph = result.get("module_graph", {})
-    modules = module_graph.get("modules", []) if isinstance(module_graph, dict) else []
-    items = [f"- {m.get('name', '')}: {m.get('file_count', 0)} files" for m in modules[:10]]
-    return (
-        f"Architecture graph: {len(modules)} modules.\n" + "\n".join(items) + "\n"
-        "Explain the architectural pattern, module responsibilities, and communication."
+def _explain_prompt_architecture(result: dict, repo_id: str, facts: dict[str, dict]) -> str:
+    """The components and links the architecture view draws, each with its main files (T35)."""
+    manifest = build_architecture_manifest(
+        repo_id=repo_id,
+        dep_data=result.get("dep_data", {}),
+        file_profiles=result.get("file_profiles", []),
+        facts=facts,
     )
-
-
-def _explain_prompt_dataflow(analysis: dict) -> str:
-    entry_points = analysis.get("entry_points", [])[:5]
-    items = [f"- {ep.get('file', '')}" for ep in entry_points]
-    return (
-        f"Data flow from {len(entry_points)} entry points:\n" + "\n".join(items) + "\n"
-        "Trace the main data flows and explain how requests are processed."
+    labels = {node.id: node.label for node in manifest.nodes}
+    lines = [f"Architecture diagram: {len(manifest.nodes)} components, {len(manifest.edges)} links."]
+    for node in manifest.nodes:
+        files = sorted({e.path for e in node.evidence})
+        main = "; ".join(_described(path, facts) for path in files[:3])
+        lines.append(f"- {node.label} ({node.kind}, {len(files)} files): {main}")
+    if manifest.edges:
+        lines.append("\nLinks:")
+        for edge in manifest.edges[:30]:
+            lines.append(
+                f"- {labels.get(edge.source, edge.source)} -> {labels.get(edge.target, edge.target)}: {edge.label}"
+            )
+    lines.append(
+        "\nExplain the architectural pattern, what each component is responsible for, and how they communicate."
     )
+    return "\n".join(lines)
 
 
-def _explain_prompt_mindmap(classification: list) -> str:
-    roles: dict[str, int] = {}
-    for fp in classification[:30]:
-        role = fp.get("role_label", "Unknown")
-        roles[role] = roles.get(role, 0) + 1
-    items = [f"- {r}: {c} files" for r, c in sorted(roles.items(), key=lambda x: -x[1])]
-    return (
-        f"Codebase mind map — {len(classification)} files classified:\n" + "\n".join(items) + "\n"
-        "Explain the codebase organization and key categories."
-    )
+def _explain_prompt_dataflow(analysis: dict, facts: dict[str, dict]) -> str:
+    """Entry points with what they are for and the routes they serve, and what each imports (T35)."""
+    entry_points = [ep for ep in analysis.get("entry_points", []) if ep.get("file") and not is_test_path(ep["file"])][
+        :8
+    ]
+    adjacency = analysis.get("adjacency", {}) or {}
+    lines = [f"Data flow from {len(entry_points)} entry points:"]
+    for ep in entry_points:
+        path = ep["file"]
+        routes = (facts.get(path) or {}).get("routes") or []
+        line = f"- {_described(path, facts)}"
+        if routes:
+            line += f" | serves {', '.join(routes[:4])}"
+        targets = sorted(adjacency.get(path, []) or [])[:5]
+        if targets:
+            line += f" | imports {', '.join(targets)}"
+        lines.append(line)
+    lines.append("\nTrace the main data flows and explain how requests are processed, naming the files involved.")
+    return "\n".join(lines)
+
+
+def _explain_prompt_mindmap(profiles: list[dict], facts: dict[str, dict]) -> str:
+    """The mind map's categories, each with its main files and what they are for (T35)."""
+    groups: dict[str, list[dict]] = {}
+    for profile in profiles:
+        groups.setdefault(profile.get("role_label") or profile.get("role") or "Other", []).append(profile)
+    lines = [f"Codebase mind map: {len(profiles)} main files in {len(groups)} categories."]
+    for role, members in sorted(groups.items(), key=lambda item: -len(item[1])):
+        lines.append(f"\n{role} ({len(members)}):")
+        lines.extend(f"- {_described(p['path'], facts)}" for p in members[:5])
+    lines.append("\nExplain how the codebase is organized and what each category is for.")
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────

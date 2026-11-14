@@ -196,6 +196,8 @@ interface FocusedVisualizationProps {
   toggleExplanation: () => void;
   /** T31: present on views that list files; shows or hides tests and docs. */
   filesToggle?: { shown: boolean; onToggle: () => void };
+  /** T35: replace the kept AI Insights answer with a new one. */
+  onRegenerateExplanation?: () => void;
 }
 
 export function FocusedVisualization({
@@ -211,6 +213,7 @@ export function FocusedVisualization({
   isExplanationOpen,
   toggleExplanation,
   filesToggle,
+  onRegenerateExplanation,
 }: FocusedVisualizationProps) {
   const vizContainerRef = useRef<HTMLDivElement>(null);
   const insightsRef = useRef<HTMLDivElement>(null);
@@ -455,13 +458,26 @@ export function FocusedVisualization({
                   AI Insights
                 </h3>
               </div>
-              <button
-                onClick={toggleExplanation}
-                className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                title="Close AI Insights"
-              >
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-1">
+                {onRegenerateExplanation && explanationState.status === "success" && (
+                  <button
+                    type="button"
+                    onClick={onRegenerateExplanation}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title="Regenerate AI Insights"
+                    aria-label="Regenerate AI Insights"
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                )}
+                <button
+                  onClick={toggleExplanation}
+                  className="p-1.5 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  title="Close AI Insights"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {/* Content */}

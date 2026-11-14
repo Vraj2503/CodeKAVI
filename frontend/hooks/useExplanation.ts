@@ -41,7 +41,8 @@ export function useExplanation(repoId: string) {
       });
 
       try {
-        const data = await fetchVisualizationExplanation(repoId, vizType);
+        // T35: the backend keeps one answer per view; forcing asks it for a new one.
+        const data = await fetchVisualizationExplanation(repoId, vizType, forceRefresh);
 
         setCache((prev) => {
           const next = new Map(prev);
