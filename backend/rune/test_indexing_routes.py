@@ -519,3 +519,56 @@ def test_chat_on_a_repo_that_is_still_indexing_says_so(app, cache, zilliz):
     body = response.json()
     assert zilliz.searched == [NEW]
     assert "still being indexed" in body["error"]
+
+
+def test_chat_labels_each_chunk_with_the_role_this_analysis_gives_its_file(app, cache, zilliz, monkeypatch):
+    # The index may be kept from an earlier analysis of the commit (T28), which gave files
+    # other roles: T29's import edges move roles. The analysis is the source of truth;
+    # the stored role only covers a file the analysis doesn't list.
+    profiles = [{"path": "lib/api.ts", "role_label": "Shared Utility"}]
+    cache.set(NEW, _analysis("user-b", index_status=make_status("complete"), file_profiles=profiles))
+    cache.set_session_path(NEW, "/clones/demo")
+    hits = [
+        {
+            "text": "export const api = 1;",
+            "start_line": 1,
+            "file_path": "lib/api.ts",
+            "role": "Standalone / Leaf",
+            "language": "TypeScript",
+            "layer": "frontend",
+            "score": 0.9,
+        },
+        {
+            "text": "[tool]",
+            "start_line": 1,
+            "file_path": "pyproject.toml",
+            "role": "Configuration",
+            "language": "TOML",
+            "layer": "config",
+            "score": 0.5,
+        },
+    ]
+
+    async def search(*args, **kwargs):
+        return hits
+
+    prompts: list[str] = []
+
+    class Provider:
+        name = "groq"
+
+        def complete(self, messages, **kwargs):
+            prompts.append(messages[0].content)
+            return SimpleNamespace(content="ok", usage={"total_tokens": 1})
+
+    monkeypatch.setattr(zilliz, "search", search)
+    monkeypatch.setattr(chat_routes, "get_provider", lambda name: Provider())
+    tracker = SimpleNamespace(check_quota=lambda u: True, get_remaining=lambda u: 1000, record=lambda *a, **k: None)
+    monkeypatch.setattr(chat_routes, "get_token_tracker", lambda: tracker)
+
+    response = client_for(app, "user-b").post(f"/api/chat/{NEW}", json={"query": "what does api do?"})
+
+    assert response.status_code == 200, response.text
+    assert "File: lib/api.ts\nRole: Shared Utility" in prompts[0]
+    assert "Standalone / Leaf" not in prompts[0]
+    assert "File: pyproject.toml\nRole: Configuration" in prompts[0]

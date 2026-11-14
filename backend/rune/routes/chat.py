@@ -73,6 +73,17 @@ _TECHNICAL_KEYWORDS = [
 ]
 
 
+def _roles_by_path(result: dict) -> dict[str, str]:
+    """path -> role label, from the analysis's file profiles (dicts once cached, models before)."""
+    roles: dict[str, str] = {}
+    for profile in result.get("file_profiles") or []:
+        fields = profile if isinstance(profile, dict) else getattr(profile, "__dict__", {})
+        path, role = fields.get("path"), fields.get("role_label")
+        if path and role:
+            roles[path] = role
+    return roles
+
+
 @router.post("/chat/{repo_id}", dependencies=[Depends(per_minute(5))])
 async def chat_repo(
     request: Request,
@@ -188,6 +199,11 @@ async def chat_repo(
                 "index_status": index_status,
             }
 
+        # A chunk's role comes from this analysis, not from the index. An index kept from an
+        # earlier analysis of the commit (T28) still carries the roles that analysis gave its
+        # files, and roles move when the import graph does (T29). The stored role stays as
+        # the fallback for a file this analysis doesn't list.
+        roles = _roles_by_path(result)
         context_blocks = []
         for i, res in enumerate(results):
             chunk_text = res["text"]
@@ -205,7 +221,7 @@ async def chat_repo(
             context_blocks.append(
                 f"--- Context {i + 1} ---\n"
                 f"File: {res['file_path']}\n"
-                f"Role: {res['role']}\n"
+                f"Role: {roles.get(res['file_path']) or res['role']}\n"
                 f"Language: {res.get('language', 'Unknown')}\n"
                 f"Layer: {res.get('layer', 'other')}\n"
                 f"Code Snippet:\n{display_text}\n"
