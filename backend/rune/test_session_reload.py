@@ -67,7 +67,7 @@ def _cache(supabase: _FakeSupabase) -> tuple[AnalysisCache, list[str]]:
     cache._redis_available = False
     cache._supabase, cache._supabase_available = supabase, True
     writes: list[str] = []
-    cache._supabase_set_raw = lambda repo_id, *_args: writes.append(repo_id)
+    setattr(cache, "_supabase_set_raw", lambda repo_id, *_args: writes.append(repo_id))  # noqa: B010
     return cache, writes
 
 
@@ -118,6 +118,7 @@ def test_an_outdated_record_keeps_its_owner_vectors_and_signature(clones):
 
     assert raised.value.status_code == 202  # re-analyzing; ran inline here
     saved = cache.get(REPO)
+    assert saved is not None
     assert writes == [REPO]
     assert (saved["owner_user_id"], saved["owner"], saved["repo_name"]) == ("user-a", "octo", "demo")
     assert (saved["vector_repo_id"], saved["_origin_repo_id"]) == (ORIGIN, ORIGIN)
@@ -157,7 +158,8 @@ def test_a_real_miss_with_a_clone_still_reanalyzes_for_the_requester(clones):
 
     assert raised.value.status_code == 202
     assert writes == [REPO]
-    assert cache.get(REPO)["owner_user_id"] == "user-a"
+    saved = cache.get(REPO)
+    assert saved is not None and saved["owner_user_id"] == "user-a"
 
 
 def test_lookup_tells_a_failed_read_from_a_miss_and_get_is_unchanged():
@@ -167,7 +169,8 @@ def test_lookup_tells_a_failed_read_from_a_miss_and_get_is_unchanged():
 
     assert (failed.lookup(REPO).record, failed.lookup(REPO).unread) == (None, True)
     assert (missing.lookup(REPO).record, missing.lookup(REPO).unread) == (None, False)
-    assert outdated.lookup(REPO).outdated["owner_user_id"] == "user-a"
+    earlier = outdated.lookup(REPO).outdated
+    assert earlier is not None and earlier["owner_user_id"] == "user-a"
     assert failed.get(REPO) is None and missing.get(REPO) is None and outdated.get(REPO) is None
 
 

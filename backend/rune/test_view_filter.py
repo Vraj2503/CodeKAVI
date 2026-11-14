@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from rune.architecture import build_architecture_manifest
-from rune.architecture_models import ArchitectureRequest
+from rune.architecture_models import ArchitectureInclude, ArchitectureRequest
 from rune.config import shown_in_views
 from rune.graph_assembler import assemble_graph
 from rune.routes import visualize
@@ -135,7 +135,7 @@ def test_the_architecture_diagram_leaves_out_tests_and_docs_unless_asked():
         "r",
         record["dep_data"],
         record["file_profiles"],
-        ArchitectureRequest(include={"tests": True, "docs": True}),
+        ArchitectureRequest(include=ArchitectureInclude(tests=True, docs=True)),
     )
 
     assert TEST not in _evidence_paths(default) and DOC not in _evidence_paths(default)
