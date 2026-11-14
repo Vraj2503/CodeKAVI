@@ -91,9 +91,11 @@ TECHNOLOGY_CATALOG: list[TechRule] = [
         "Gemini",
         "external",
         purpose="Multimodal foundation models",
-        triggers=["@google/genai", "google-generativeai"],
+        # Python imports name the module, never the pip package.
+        triggers=["@google/genai", "google-generativeai", "google.genai", "google.generativeai"],
     ),
-    TechRule("Groq", "Llama", "external", purpose="Low-latency LPU inference", triggers=["groq-sdk", "groq"]),
+    # Not "Llama": Groq serves several model families (CodeKAVI runs gpt-oss-120b on it).
+    TechRule("Groq", "Inference API", "external", purpose="Low-latency LPU inference", triggers=["groq-sdk", "groq"]),
     TechRule("Ollama", "Local LLM", "external", purpose="Self-hosted local models", triggers=["ollama"]),
     # Message Queues & Async
     TechRule(
@@ -118,14 +120,22 @@ TECHNOLOGY_CATALOG: list[TechRule] = [
 ]
 
 
+def _names_package(names: set[str], trigger: str) -> bool:
+    """Whether an import is the trigger package or one of its submodules (T39).
+
+    Whole names only: substring matching made `pg` fire on `upgrade` and `jpg`,
+    and `github` on any path that mentioned it.
+    """
+    return any(name == trigger or name.startswith((trigger + ".", trigger + "/")) for name in names)
+
+
 def match_technologies(hints: set[str]) -> list[ArchitectureTechnology]:
     """
     Given a set of strings (e.g. package names, explicit imports, config keywords),
     return matched ArchitectureTechnology instances.
     """
     matched: dict[str, ArchitectureTechnology] = {}
-
-    hint_lower = "\n".join(h.lower() for h in hints)
+    names = {h.strip().lower() for h in hints if h and h.strip()}
 
     for rule in TECHNOLOGY_CATALOG:
         # Prevent duplicate vendors if we already matched a broader rule
@@ -134,7 +144,7 @@ def match_technologies(hints: set[str]) -> list[ArchitectureTechnology]:
             continue
 
         for trigger in rule.triggers:
-            if trigger.lower() in hint_lower:
+            if _names_package(names, trigger.lower()):
                 matched[key] = ArchitectureTechnology(
                     vendor=rule.vendor,
                     product=rule.product,
@@ -424,7 +434,7 @@ TECH_RESPONSIBILITIES: dict[tuple[str, str], list[str]] = {
         "Value to the project: Detects subtle cross-module patterns and answers complex architectural queries across large multi-language codebases.",
         "Project integration: Powers the project's high-level repository summary generator and full-codebase explanation features.",
     ],
-    ("Groq", "Llama"): [
+    ("Groq", "Inference API"): [
         "Role in project: Delivers ultra-low-latency LPU model inference for the project's real-time streaming chat and code explanations.",
         "What it does in the project: Generates instant streaming responses for chat queries, quick file summaries, and symbol lookups with near-zero latency.",
         "Value to the project: Eliminates wait times for interactive user experiences, ensuring developer questions receive immediate conversational feedback.",

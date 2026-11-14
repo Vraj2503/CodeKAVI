@@ -21,11 +21,13 @@ from .architecture_models import (
 from .architecture_rules import (
     determine_node_kind,
     determine_node_role,
+    format_evidence_sentence,
     generate_node_responsibility,
     get_technology_responsibility,
     match_technologies,
 )
 from .config import shown_in_views
+from .fact_store import file_description
 
 GROUPS = (
     ArchitectureGroup(id="actors", label="Actors & Clients", order=1, kind="client"),
@@ -115,11 +117,44 @@ def _apply_view(
     ]
 
 
+def _capability_summary(node: ArchitectureNode, importance: dict[str, float], facts: dict[str, dict]) -> str:
+    """What a capability holds, from its member files and their facts (T39).
+
+    In the teammates' structured form ("Role in project: ...", read as separate
+    points by the inspector), filled from the code: how many files, the main ones,
+    and what each says it does. With no facts for any member (an analysis saved
+    before the fact store), their fixed paragraph for the label is the fallback.
+    """
+    paths = sorted({e.path for e in node.evidence}, key=lambda p: (-importance.get(p, 0.0), p))
+    described = [(path, text) for path in paths[:3] if (text := file_description(facts.get(path))[0])]
+    if not described:
+        return generate_node_responsibility(node.label, node.kind, node.group_id, paths)
+    count = f"{len(paths)} source file{'s' if len(paths) != 1 else ''}"
+    what = " ".join(f"{path.rsplit('/', 1)[-1]}: {text.rstrip('.')}." for path, text in described)
+    return " ".join(
+        [
+            f"Role in project: {node.label} spans {count}, led by {paths[0]}.",
+            f"What it does in the project: {what}",
+            format_evidence_sentence(paths),
+        ]
+    )
+
+
+def _technology_summary(tech: Any, paths: list[str]) -> str:
+    """The provider's description, then the files that import it, so the node says where it is used (T39)."""
+    imported = ", ".join(paths[:3]) + (", ..." if len(paths) > 3 else "")
+    return (
+        f"{get_technology_responsibility(tech.vendor, tech.product, tech.purpose)} "
+        f"Used in this repository by {imported}."
+    )
+
+
 def build_architecture_manifest(
     repo_id: str,
     dep_data: dict[str, Any],
     file_profiles: list[dict[str, Any]],
     request_params: ArchitectureRequest | dict[str, Any] | None = None,
+    facts: dict[str, dict] | None = None,
 ) -> ArchitectureGraphData:
     """Create role-level nodes and runtime-oriented, source-backed edges."""
     request = (
@@ -173,10 +208,10 @@ def build_architecture_manifest(
             node.confidence = max(node.confidence, confidence)
             node.importance = max(node.importance, float(profile.get("importance_score") or 0))
 
-    # Generate 3-4 sentence non-generic responsibility explanations using full evidence
+    # T39: what each capability holds, from its member files and their facts (T16).
+    importance = {str(p.get("path")): float(p.get("importance_score") or 0) for p in file_profiles}
     for node in nodes.values():
-        evidence_paths = [e.path for e in node.evidence]
-        node.summary = generate_node_responsibility(node.label, node.kind, node.group_id, evidence_paths)
+        node.summary = _capability_summary(node, importance, facts or {})
 
     edges: dict[tuple[str, str], ArchitectureEdge] = {}
     for source_path, targets in adjacency.items():
@@ -209,13 +244,12 @@ def build_architecture_manifest(
             group_id = "state" if kind == "datastore" else "external"
             target = _id("tech", f"{tech.vendor}:{tech.product}")
             if target not in nodes:
-                tech_summary = get_technology_responsibility(tech.vendor, tech.product, tech.purpose)
                 nodes[target] = ArchitectureNode(
                     id=target,
                     label=f"{tech.vendor} — {tech.product}",
                     kind=kind,
                     group_id=group_id,
-                    summary=tech_summary,
+                    summary="",
                     technologies=[tech],
                     confidence=tech.confidence,
                     evidence=[ArchitectureEvidence(path=path, reason="Detected from an imported SDK or client.")],
@@ -240,6 +274,10 @@ def build_architecture_manifest(
                 )
             else:
                 edges[key].evidence_count += 1
+
+    for node in nodes.values():
+        if node.technologies:
+            node.summary = _technology_summary(node.technologies[0], sorted({e.path for e in node.evidence}))
 
     eligible = [node for node in nodes.values() if _included(node, request)]
     eligible_ids = {node.id for node in eligible}

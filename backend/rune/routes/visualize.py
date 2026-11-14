@@ -48,6 +48,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _RADAR_MAX_MODULES = 150
+_ARCHITECTURE_FACT_FILES = 150
 _RADAR_MAX_EDGES = 500
 
 
@@ -415,10 +416,16 @@ def _build_architecture_domain_prompt(
     owner: str,
     project_summary: str,
     nodes: list[Any],
+    facts: dict[str, dict] | None = None,
 ) -> str:
+    facts = facts or {}
     nodes_info = []
     for node in nodes:
-        sample_files = [e.path for e in node.evidence[:4]]
+        # T39: each sample file with what it is for, so the answer can rest on the code.
+        sample_files = [
+            f"{e.path} ({text})" if (text := file_description(facts.get(e.path))[0]) else e.path
+            for e in node.evidence[:4]
+        ]
         tech_list = [f"{t.vendor} {t.product}" for t in node.technologies]
         nodes_info.append(
             f"- Node ID: `{node.id}`\n"
@@ -548,11 +555,19 @@ async def visualize_architecture_v2(
     dep_data = result.get("dep_data", {})
     file_profiles = result.get("file_profiles", [])
 
+    # T39: what the main files are for, so a capability is described by its members
+    # and the LLM text rests on them. The most important files only.
+    ranked = sorted((p for p in file_profiles if p.get("path")), key=lambda p: -(p.get("importance_score") or 0))
+    facts = await run_sync(
+        cache.facts.get, facts_repo_id(result, repo_id), [p["path"] for p in ranked[:_ARCHITECTURE_FACT_FILES]]
+    )
+
     manifest = build_architecture_manifest(
         repo_id=repo_id,
         dep_data=dep_data,
         file_profiles=file_profiles,
         request_params=body,
+        facts=facts,
     )
 
     # ── Check if LLM enrichment requested ──
@@ -595,6 +610,7 @@ async def visualize_architecture_v2(
                 owner=owner,
                 project_summary=project_summary,
                 nodes=manifest.nodes,
+                facts=facts,
             )
 
             logger.info(

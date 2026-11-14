@@ -46,7 +46,7 @@ def test_architecture_manifest_uses_responsibilities_and_explicit_products():
     labels = {node.label for node in manifest.nodes}
     assert "routes/chat.py" not in labels
     assert all(not label.endswith((".py", ".ts", ".tsx")) for label in labels)
-    assert "Groq — Llama" in labels
+    assert "Groq — Inference API" in labels
     assert "Zilliz Cloud — Milvus" in labels
     assert "Redis — Cache & Rate Limits" in labels
     assert all(edge.source != edge.target for edge in manifest.edges)

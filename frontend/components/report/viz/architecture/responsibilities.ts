@@ -210,7 +210,7 @@ const TECH_RESPONSIBILITIES: Record<string, string[]> = {
     "Value to the project: Detects subtle cross-module patterns and answers complex architectural queries across large multi-language codebases.",
     "Project integration: Powers the project's high-level repository summary generator and full-codebase explanation features.",
   ],
-  "Groq:Llama": [
+  "Groq:Inference API": [
     "Role in project: Delivers ultra-low-latency LPU model inference for the project's real-time streaming chat and code explanations.",
     "What it does in the project: Generates instant streaming responses for chat queries, quick file summaries, and symbol lookups with near-zero latency.",
     "Value to the project: Eliminates wait times for interactive user experiences, ensuring developer questions receive immediate conversational feedback.",
