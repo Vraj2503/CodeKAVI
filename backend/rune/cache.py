@@ -17,6 +17,7 @@ from typing import Any
 
 from cachetools import LRUCache, TTLCache
 
+from rune.fact_store import FactStore
 from rune.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,8 @@ ANALYSIS_VERSION = "3"
 #   3: T30, the symbol graph's repo-wide fallback takes only bare calls in the caller's language;
 #      callees in source order (external_calls had drifted with parser reuse)
 #   4: T32, the module graph is grouped as deep as each repo needs, not by top-level folder
-PIPELINE_VERSION = 4
+#   5: T16, per-file facts (purpose line, symbols with their complexity) written to the fact store
+PIPELINE_VERSION = 5
 
 # Writes to one repo's record are serialized by a lock picked from this pool
 # (striped by repo_id, so the pool stays fixed-size however many repos pass
@@ -142,6 +144,9 @@ class AnalysisCache:
         # a slow upload can't land after a newer one and roll the persisted
         # record back.
         self._write_locks = [threading.Lock() for _ in range(_WRITE_LOCK_STRIPES)]
+
+        # T16: per-file facts (purpose, symbols) live beside the records, never in them.
+        self.facts = FactStore(self._get_redis, self._get_supabase)
 
     # ── Redis connection (lazy) ──
 
@@ -295,6 +300,7 @@ class AnalysisCache:
             self._memory.pop(repo_id, None)
             self._redis_delete(repo_id)
             self._supabase_delete(repo_id)
+        self.facts.delete(repo_id)
 
     def _write_lock(self, repo_id: str) -> threading.Lock:
         return self._write_locks[hash(repo_id) % _WRITE_LOCK_STRIPES]

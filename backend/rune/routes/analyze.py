@@ -25,6 +25,7 @@ from rune.cache import PIPELINE_VERSION, AnalysisCache
 from rune.classifier import classify_files, summarize_roles
 from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
 from rune.embedding import configured_index_embedding, indexing_embedding_is_configured
+from rune.fact_store import shape_file_facts
 from rune.file_selector import SmartFileSelector
 from rune.fingerprint import ChangeClassification
 from rune.graph import (
@@ -195,6 +196,7 @@ async def _run_pipeline(
     # Symbols ride along with the complexity parse classify_files already does;
     # they must be collected here because content_cache is cleared before graphing.
     symbols_by_file: dict[str, list[dict]] = {}
+    purposes: dict[str, dict] = {}
     try:
         with analysis_stage_timer("classifying"):
             file_profiles = await _run_sync(
@@ -204,6 +206,7 @@ async def _run_pipeline(
                 dep_data,
                 content_cache=content_cache,
                 symbols_out=symbols_by_file,
+                facts_out=purposes,
             )
             role_summary = summarize_roles(file_profiles)
         duration = (time.perf_counter() - start_time) * 1000
@@ -213,6 +216,14 @@ async def _run_pipeline(
     except Exception as e:
         file_profiles = []
         role_summary = {"error": f"Classification failed: {e}"}
+
+    # T16: the views' per-file facts, saved before the record so a view opened the
+    # moment the analysis finishes finds them. A failure costs the views their
+    # facts, never the analysis.
+    try:
+        await _run_sync(cache.facts.put, repo_id, shape_file_facts(symbols_by_file, purposes))
+    except Exception as e:
+        logger.warning(f"Saving file facts for {repo_id} failed: {e}")
 
     # NN Model Extraction (before content_cache is cleared)
     # Candidates come from the parsed import graph (immune to the classifier's

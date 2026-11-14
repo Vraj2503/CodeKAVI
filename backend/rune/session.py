@@ -13,6 +13,7 @@ from fastapi import HTTPException
 
 from rune.cache import AnalysisCache
 from rune.config import CLONE_BASE_DIR
+from rune.fact_store import shape_file_facts
 from rune.settings import settings
 from rune.utils import BoundedContentCache
 
@@ -155,6 +156,8 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
             for k, v in content_cache_dict.items():
                 content_cache[k] = v
 
+            symbols_by_file: dict = {}
+            purposes: dict = {}
             try:
                 dep_data = analyze_dependencies(clone_path, repo_data.files, content_cache)
                 file_profiles = classify_files(
@@ -162,6 +165,8 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
                     repo_data.files,
                     dep_data,
                     content_cache=content_cache,
+                    symbols_out=symbols_by_file,
+                    facts_out=purposes,
                 )
             finally:
                 content_cache.clear()
@@ -202,6 +207,11 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
 
             cache.set(repo_id, result)
             cache.set_session_path(repo_id, clone_path)
+            # T16: the views' per-file facts, as a fresh analysis saves them.
+            try:
+                cache.facts.put(repo_id, shape_file_facts(symbols_by_file, purposes))
+            except Exception as e:
+                logger.warning(f"Saving file facts for {repo_id} failed: {e}")
 
         except Exception as e:
             logger.error(f"Re-analysis failed for {repo_id}: {e}", exc_info=True)
