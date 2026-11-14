@@ -174,7 +174,7 @@ def ensure_repo_loaded(repo_id: str, cache: AnalysisCache, user_id: str) -> tupl
 
             role_summary = summarize_roles(file_profiles)
             graph_json = export_graph_json(dep_data_dict, file_profiles_dicts)
-            module_graph = build_module_graph(dep_data_dict, file_profiles_dicts, depth=1)
+            module_graph = build_module_graph(dep_data_dict, file_profiles_dicts)
 
             selector = SmartFileSelector()
             selected_files = selector.select_files(repo_files_dicts, dep_data_dict, file_profiles_dicts)

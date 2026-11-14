@@ -418,10 +418,66 @@ def _mermaid_safe_id(s: str) -> str:
 # ─────────────────────────────────────────────
 
 
+#: Module grouping (T32): split the biggest module one folder deeper while it holds
+#: more than MODULE_MAX_SHARE of the files, up to MODULE_MAX_COUNT modules.
+MODULE_MAX_SHARE = 0.2
+MODULE_MAX_COUNT = 25
+
+
+def choose_modules(
+    paths: list[str], max_share: float = MODULE_MAX_SHARE, max_modules: int = MODULE_MAX_COUNT
+) -> dict[str, str]:
+    """path -> module (a folder), grouped only as finely as the repo needs (T32).
+
+    Grouping every repo by its top-level folders gave CodeKAVI four modules
+    (backend, frontend, ...) and no links between them, since every import
+    stays inside its own half. This starts from the top-level folders and
+    splits the biggest module one folder level deeper while it holds more than
+    `max_share` of the files. A folder whose files all sit in one subfolder
+    descends into it; a module whose remaining files sit directly in its folder
+    can't split further; no split takes the count past `max_modules`. A flat
+    repo stays at top-level folders. Files at the repo root are "(root)".
+    """
+
+    def folders(path: str) -> list[str]:
+        return path.split("/")[:-1]
+
+    groups: dict[str, set[str]] = defaultdict(set)
+    depth_of: dict[str, int] = {}
+    for path in paths:
+        parts = folders(path)
+        name = parts[0] if parts else "(root)"
+        groups[name].add(path)
+        depth_of[name] = 1 if parts else 0
+
+    final = {"(root)"}  # modules that can't, or may not, split further
+    while True:
+        oversized = [m for m in groups if m not in final and len(groups[m]) > max_share * len(paths)]
+        if not oversized:
+            break
+        biggest = max(oversized, key=lambda m: (len(groups[m]), m))
+        depth = depth_of[biggest]
+        split: dict[str, set[str]] = defaultdict(set)
+        for path in groups[biggest]:
+            parts = folders(path)
+            split["/".join(parts[: depth + 1]) if len(parts) > depth else biggest].add(path)
+        if set(split) == {biggest} or len(groups) - 1 + len(split) > max_modules:
+            final.add(biggest)
+            continue
+        del groups[biggest]
+        for child, files in split.items():
+            groups[child] = files
+            if child == biggest:
+                final.add(child)  # what's left sits directly in this folder
+            else:
+                depth_of[child] = depth + 1
+    return {path: module for module, files in groups.items() for path in files}
+
+
 def build_module_graph(
     dep_data: dict,
     file_profiles: list[dict] | None = None,
-    depth: int = 1,
+    depth: int | None = None,
 ) -> dict:
     """
     Collapse file-level dependencies into directory/module-level dependencies.
@@ -432,8 +488,9 @@ def build_module_graph(
     Args:
         dep_data:       Output from analyze_dependencies().
         file_profiles:  Optional output from classify_files() for enrichment.
-        depth:          Directory depth for grouping (1 = top-level dirs,
-                        2 = second-level dirs, etc.).
+        depth:          A fixed directory depth for grouping (1 = top-level
+                        dirs, ...). None, the default: as deep as the repo
+                        needs, per folder (`choose_modules`, T32).
 
     Returns:
         dict with:
@@ -452,7 +509,6 @@ def build_module_graph(
             profile_map[p["path"]] = p
 
     # Group files into modules
-    file_to_module: dict[str, str] = {}
     module_files: dict[str, set] = defaultdict(set)
 
     all_files = set()
@@ -463,9 +519,11 @@ def build_module_graph(
         for p in file_profiles:
             all_files.add(p["path"])
 
-    for fpath in all_files:
-        module_name = _get_module_name(fpath, depth)
-        file_to_module[fpath] = module_name
+    if depth is None:
+        file_to_module = choose_modules(sorted(all_files))
+    else:
+        file_to_module = {fpath: _get_module_name(fpath, depth) for fpath in all_files}
+    for fpath, module_name in file_to_module.items():
         module_files[module_name].add(fpath)
 
     # Count cross-module and internal edges
@@ -575,6 +633,12 @@ def build_module_graph(
     return {
         "modules": modules,
         "connections": connections,
+        # How the files were grouped, so a reader can tell a module's depth isn't fixed.
+        "grouping": (
+            {"depth": depth}
+            if depth is not None
+            else {"strategy": "split_largest", "max_share": MODULE_MAX_SHARE, "max_modules": MODULE_MAX_COUNT}
+        ),
         "internal_edges": dict(internal_edges),
         "graph_json": {
             "nodes": mod_nodes,

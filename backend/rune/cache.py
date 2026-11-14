@@ -53,7 +53,8 @@ ANALYSIS_VERSION = "3"
 #   2: T29, aliases from every tsconfig/jsconfig add frontend import edges
 #   3: T30, the symbol graph's repo-wide fallback takes only bare calls in the caller's language;
 #      callees in source order (external_calls had drifted with parser reuse)
-PIPELINE_VERSION = 3
+#   4: T32, the module graph is grouped as deep as each repo needs, not by top-level folder
+PIPELINE_VERSION = 4
 
 # Writes to one repo's record are serialized by a lock picked from this pool
 # (striped by repo_id, so the pool stays fixed-size however many repos pass
