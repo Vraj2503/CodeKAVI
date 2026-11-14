@@ -1599,8 +1599,9 @@ def _explain_prompt_architecture(result: dict, repo_id: str, facts: dict[str, di
     if manifest.edges:
         lines.append("\nLinks:")
         for edge in manifest.edges[:30]:
+            via = f" (via {', '.join(edge.via)})" if edge.via else ""  # T17: what crosses the link
             lines.append(
-                f"- {labels.get(edge.source, edge.source)} -> {labels.get(edge.target, edge.target)}: {edge.label}"
+                f"- {labels.get(edge.source, edge.source)} -> {labels.get(edge.target, edge.target)}: {edge.label}{via}"
             )
     lines.append(
         "\nExplain the architectural pattern, what each component is responsible for, and how they communicate."

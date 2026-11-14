@@ -223,6 +223,12 @@ def build_architecture_manifest(
         node.summary = _capability_summary(node, importance, facts or {})
 
     edges: dict[tuple[str, str], ArchitectureEdge] = {}
+    # T17: what each file import carries, to say what crosses a link between components.
+    crossing: dict[tuple[str, str], list[str]] = {}
+    for edge in dep_data.get("edges") or []:
+        if edge.get("specifiers"):
+            crossing.setdefault((edge.get("source"), edge.get("target")), []).extend(edge["specifiers"])
+    via_counts: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     for source_path, targets in adjacency.items():
         source = path_to_node.get(source_path)
         if not source:
@@ -245,6 +251,9 @@ def build_architecture_manifest(
                 )
             else:
                 edges[key].evidence_count += 1
+            via_counts[key].update(crossing.get((source_path, target_path), []))
+    for key, counts in via_counts.items():
+        edges[key].via = [name for name, _count in counts.most_common(6)]
 
     # SDK imports make explicit provider nodes. They are not guessed from names.
     for path, source in path_to_node.items():

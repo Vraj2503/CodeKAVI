@@ -106,6 +106,8 @@ class ArchitectureEdge(BaseModel):
     confidence: float = Field(ge=0, le=1)
     evidence_count: int = Field(ge=1)
     inferred: bool = False
+    # T17: names imported across this link (T14/T15 specifiers), most frequent first.
+    via: list[str] = Field(default_factory=list)
     model_config = ConfigDict(populate_by_name=True)
 
 

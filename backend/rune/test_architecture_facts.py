@@ -81,3 +81,20 @@ def test_the_llm_prompt_shows_what_each_sample_file_is_for():
     prompt = _build_architecture_domain_prompt("shop-app", "acme", "", manifest.nodes, facts=FACTS)
 
     assert "routes/checkout.py (Takes payment for a cart.)" in prompt
+
+
+def test_a_link_between_components_says_what_crosses_it():
+    deps = {
+        "adjacency": {"routes/checkout.py": ["services/payments.py"], "services/payments.py": []},
+        "edges": [
+            {"source": "routes/checkout.py", "target": "services/payments.py", "specifiers": ["charge", "refund"]}
+        ],
+        "file_imports": {},
+    }
+    profiles = [
+        {"path": "routes/checkout.py", "role": "router", "importance_score": 90},
+        {"path": "services/payments.py", "role": "core_module", "importance_score": 80},
+    ]
+    manifest = build_architecture_manifest("r", deps, profiles)
+
+    assert [edge.via for edge in manifest.edges] == [["charge", "refund"]]
