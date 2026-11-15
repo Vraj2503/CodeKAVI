@@ -261,6 +261,9 @@ def _assign_layers(file_profiles: list[dict], dep_data: dict) -> dict[str, str]:
     for path in sorted(dynamic_paths):
         importers = sorted(reverse_adjacency.get(path, []))
         candidates = [static_layer[i] for i in importers if i in static_layer]
+        # A file's own tests don't decide what it is: nn_extractor.py, imported mostly
+        # by its test files, was drawn in the Tests layer. Tests only vote alone.
+        candidates = [layer for layer in candidates if layer != "tests"] or candidates
         if candidates:
             counts = Counter(candidates)
             top = max(counts.values())

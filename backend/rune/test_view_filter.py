@@ -162,9 +162,9 @@ def test_the_learn_tour_opens_on_an_entry_point_not_on_contributing_md():
     assert first == MAIN
     assert walked == [MAIN, CORE]
 
-    first_before, walked_before = _first_and_all(assemble_tour(graph, "learn", include_tests=True, include_docs=True))
-    assert first_before == DOC  # what it did before T31
-    assert set(walked_before) == {MAIN, CORE, TEST, DOC}
+    first_shown, walked_shown = _first_and_all(assemble_tour(graph, "learn", include_tests=True, include_docs=True))
+    assert first_shown == MAIN  # with tests and docs walked too, the tour still starts where execution does
+    assert set(walked_shown) == {MAIN, CORE, TEST, DOC}
 
 
 def test_the_recall_tour_skips_them_too():

@@ -139,28 +139,47 @@ def generate_deterministic_tour(
 
 def _important_ids(files: list[dict], top_n: int = 15) -> set[str]:
     """Cap a tour to the files worth walking through: the top-N by importance,
-    plus any file flagged as notable (hub/entry_point/orphan/in_cycle/god_file)
-    regardless of rank."""
+    plus any file flagged as notable (hub/entry_point/in_cycle/god_file)
+    regardless of rank.
+
+    "orphan" alone doesn't earn a step: nothing imports a Dockerfile, a
+    .gitignore, a requirements.txt or a stylesheet, so on CodeKAVI it put 57
+    such files in the learn tour, which opened on .gitignore. An orphan in the
+    top-N still gets its step and its question.
+    """
     by_importance = sorted(files, key=lambda f: -(f.get("importance") or 0))
     keep = {f["id"] for f in by_importance[:top_n]}
-    keep |= {f["id"] for f in files if f.get("flags")}
+    keep |= {f["id"] for f in files if set(f.get("flags") or []) - {"orphan"}}
     return keep
 
 
-def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
-    """Learn-mode step order (spec §8): layer-tier bottom-up — config/types
-    before core logic before routes — with dependency order as the tie-break
-    within a tier.
+#: The order a learn tour walks the layers in: from where a request arrives down to
+#: what the code rests on, then what couldn't be placed. Tests and docs appear only
+#: when asked for (T31).
+_LEARN_LAYER_ORDER = ("routes", "services", "database", "models", "utils", "config", "other", "tests", "documentation")
 
-    Unlike ``generate_deterministic_tour``, every file in ``graph["files"]``
-    gets a step even if it has zero edges: orphaned files are exactly what
-    the flag-question mechanism needs to surface, so they can't be silently
-    dropped the way an adjacency-only node set would drop them.
+
+def _is_entry_point(file: dict) -> bool:
+    return "entry_point" in (file.get("flags") or []) or file.get("role") == "entry_point"
+
+
+def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
+    """Learn-mode step order: top-down. Entry points first, then the layers in
+    reading order (routes, services, data, models, utils, config, uncategorized),
+    dependency order within a layer (importers before what they import).
+
+    The spec (§8) described this as layer-tier "bottom-up", but the code sorted
+    importers first, and the layer tiers can't carry an order: on real repos the
+    layers import each other in cycles, and `_topological_tiers` then stops with
+    arbitrary values (CodeKAVI: uncategorized 35, utils 36, routes/services 37),
+    so the tour opened on an uncategorized file. A fixed reading order doesn't
+    depend on them.
+
+    Every important or notable file gets a step, edges or not (``_important_ids``).
 
     Args:
-        graph: Output of ``assemble_graph()`` — needs ``files`` (each with
-               ``id``, ``layer_id``, ``importance``) and ``layers`` (each
-               with ``id``, ``tier``), plus file-level ``edges``.
+        graph: Output of ``assemble_graph()``: needs ``files`` (each with ``id``,
+               ``layer_id``, ``importance``, ``flags``) and file-level ``edges``.
 
     Returns:
         Ordered list of ``{order, node_ids, layer_id}`` steps, one per file.
@@ -170,7 +189,7 @@ def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
         return []
 
     files_by_id = {f["id"]: f for f in files}
-    tier_by_layer = {layer["id"]: layer.get("tier", 0) for layer in graph.get("layers", [])}
+    rank = {layer: i for i, layer in enumerate(_LEARN_LAYER_ORDER)}
 
     adjacency: dict[str, list[str]] = defaultdict(list)
     for edge in graph.get("edges", []):
@@ -185,9 +204,13 @@ def generate_learn_tour(graph: dict) -> list[dict[str, Any]]:
     remaining.sort(key=lambda n: (-(files_by_id[n].get("importance") or 0), n))
 
     full_order = order + remaining
-    # Stable sort: preserves the dependency/importance order above within
-    # each tier, so "bottom-up by layer" and "dependency order" both hold.
-    full_order.sort(key=lambda n: tier_by_layer.get(files_by_id[n].get("layer_id"), 0))
+    # Stable sort: the dependency/importance order above holds within each layer.
+    full_order.sort(
+        key=lambda n: (
+            not _is_entry_point(files_by_id[n]),
+            rank.get(files_by_id[n].get("layer_id") or "", len(rank)),
+        )
+    )
 
     return [
         {
