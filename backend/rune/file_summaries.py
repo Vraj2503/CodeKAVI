@@ -109,9 +109,12 @@ async def summarize_files(repo_id: str, record: dict, cache: Any, user_id: str, 
     if not settings.file_summaries:
         return
     source = facts_repo_id(record, repo_id)
-    profiles = record.get("file_profiles") or []
-    roles = {p.get("path"): p.get("role_label") or p.get("role") or "" for p in profiles}
     try:
+        # The analyze routes pass the record as they built it, with FileProfile
+        # objects, not the dicts a saved record holds: reading them as dicts
+        # failed before the first call, and the job ended without a status.
+        profiles = [p if isinstance(p, dict) else p.model_dump() for p in record.get("file_profiles") or []]
+        roles = {p.get("path"): p.get("role_label") or p.get("role") or "" for p in profiles}
         # Facts for a margin of candidates, since some are skipped below.
         ranked = sorted((p for p in profiles if p.get("path")), key=lambda p: -(p.get("importance_score") or 0))
         candidates = [p["path"] for p in ranked[: settings.file_summary_max_files * 2]]

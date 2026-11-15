@@ -164,3 +164,36 @@ async def test_a_reused_analysis_summarizes_into_its_origins_facts(monkeypatch):
     await summarize_files("r", record, cache, "user-a", provider=FakeProvider())
 
     assert cache.facts.get("origin123456", ["app/m1.py"])["app/m1.py"]["summary"] == "Does the m1.py work."
+
+
+@pytest.mark.asyncio
+async def test_the_record_the_routes_pass_holds_model_objects_and_still_works(monkeypatch):
+    """The routes pass the record as built, FileProfile objects and all; the job read them
+    as dicts and failed before its first call, leaving no status (live check, 2026-11-15)."""
+    from rune.pipeline_models import FileProfile
+
+    cache, record = _setup(monkeypatch, n_files=3)
+    record["file_profiles"] = [
+        FileProfile(
+            path=p["path"],
+            name=p["path"].rsplit("/", 1)[-1],
+            language="Python",
+            size=10,
+            role=p["role"],
+            role_label=p["role_label"],
+            role_confidence=0.9,
+            depends_on=[],
+            used_by=[],
+            in_degree=0,
+            out_degree=0,
+            importance_score=p["importance_score"],
+            tags=[],
+        )
+        for p in record["file_profiles"]
+    ]
+    provider = FakeProvider()
+
+    await summarize_files("r", record, cache, "user-a", provider=provider)
+
+    assert cache.get("r")["summaries_status"]["status"] == "complete"
+    assert len(provider.batches) == 1

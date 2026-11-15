@@ -625,3 +625,70 @@ def test_an_older_pipeline_rerun_writes_new_summaries_and_keeps_its_index(
 
     assert response.status_code == 200, response.text
     assert (summary_jobs, pipeline) == ([NEW], [])
+
+
+# ── Reuse needs the origin's facts (live check, 2026-11-15) ──
+#
+# A commit analyzed while the fact table didn't exist kept its facts in memory only;
+# after a restart every reuse of it showed no facts. And no analysis had sentences:
+# the summary job failed before its first call.
+
+CODE_PROFILES = [{"path": "app/core.py", "language": "Python", "role": "core_module", "importance_score": 90}]
+
+
+def test_a_reused_commit_whose_facts_are_gone_is_rerun_and_keeps_its_index(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(
+        ORIGIN,
+        _analysis("user-a", file_profiles=CODE_PROFILES, _origin_repo_id=ORIGIN, index_status=make_status("complete")),
+    )
+    cache.register_signature(SIGNATURE, ORIGIN)
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert "traversing" in [event["stage"] for event in _events(response)]  # the pipeline ran again
+    assert pipeline == []  # nothing embedded: the index is kept
+    assert summary_jobs == [NEW]
+    assert cache.get(NEW)["vector_repo_id"] == ORIGIN
+
+
+def test_a_reused_commit_without_sentences_gets_them_once_for_its_origin(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(
+        ORIGIN,
+        _analysis("user-a", file_profiles=CODE_PROFILES, _origin_repo_id=ORIGIN, index_status=make_status("complete")),
+    )
+    cache.register_signature(SIGNATURE, ORIGIN)
+    cache.facts.put(ORIGIN, {"app/core.py": {"purpose": "Core.", "purpose_source": "doc", "symbols": []}})
+
+    response = client_for(app, "user-b").post("/api/analyze", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["deduplicated"] is True  # reused whole
+    assert summary_jobs == [ORIGIN]  # into the origin's facts, where the next reuse finds them
+
+
+def test_a_reused_commit_with_facts_and_sentences_makes_no_calls(
+    app, cache, clone, pipeline, cloudflare_index, monkeypatch, summary_jobs
+):
+    _configure_indexing(monkeypatch, True)
+    cache.set(
+        ORIGIN,
+        _analysis("user-a", file_profiles=CODE_PROFILES, _origin_repo_id=ORIGIN, index_status=make_status("complete")),
+    )
+    cache.register_signature(SIGNATURE, ORIGIN)
+    cache.facts.put(
+        ORIGIN,
+        {"app/core.py": {"purpose": "Core.", "purpose_source": "doc", "symbols": [], "summary": "Runs the core."}},
+    )
+
+    response = client_for(app, "user-b").post("/api/analyze/stream", json={"github_url": URL})
+
+    assert response.status_code == 200, response.text
+    assert [event["stage"] for event in _events(response)] == ["cloning", "complete"]
+    assert summary_jobs == []

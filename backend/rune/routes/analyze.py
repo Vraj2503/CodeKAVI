@@ -16,6 +16,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -26,8 +27,9 @@ from rune.auth import verify_supabase_token
 from rune.cache import PIPELINE_VERSION, AnalysisCache
 from rune.classifier import classify_files, summarize_roles
 from rune.cloner import cleanup_repo, clone_repo, parse_repo_url
+from rune.config import shown_in_views
 from rune.embedding import configured_index_embedding, indexing_embedding_is_configured
-from rune.fact_store import shape_file_facts
+from rune.fact_store import facts_repo_id, shape_file_facts
 from rune.file_selector import SmartFileSelector
 from rune.file_summaries import summarize_files
 from rune.fingerprint import ChangeClassification
@@ -354,6 +356,9 @@ class EarlierAnalysis:
     record: dict
     signature: str
     index_status: dict  # of the vectors it points at: complete
+    # Its per-file facts (T16) can still be read, and its main files have sentences (T34).
+    facts_present: bool = True
+    has_summaries: bool = True
 
     @property
     def vector_repo_id(self) -> str:
@@ -364,6 +369,16 @@ class EarlierAnalysis:
     def pipeline_version(self) -> int:
         """Which pipeline produced its facts; records from before T28 carry none."""
         return self.record.get("pipeline_version") or 0
+
+    @property
+    def reusable_whole(self) -> bool:
+        """Same pipeline and its facts still readable: answer from it as it is (T5)."""
+        return self.pipeline_version == PIPELINE_VERSION and self.facts_present
+
+    @property
+    def facts_repo_id(self) -> str:
+        """The analysis whose facts (and sentences) it uses."""
+        return facts_repo_id(self.record, self.repo_id)
 
 
 async def _earlier_analysis_to_reuse(cache: AnalysisCache, clone_info: dict, *, force: bool) -> EarlierAnalysis | None:
@@ -398,7 +413,47 @@ async def _earlier_analysis_to_reuse(cache: AnalysisCache, clone_info: dict, *, 
             f"a fresh one would use {index_recipe(built_with[0])}."
         )
         return None
-    return EarlierAnalysis(repo_id=indexed_repo_id, record=earlier, signature=signature, index_status=status)
+    facts_present, has_summaries = True, True
+    if (earlier.get("pipeline_version") or 0) == PIPELINE_VERSION:
+        facts_present, has_summaries = await _probe_facts(cache, earlier, indexed_repo_id)
+    return EarlierAnalysis(
+        repo_id=indexed_repo_id,
+        record=earlier,
+        signature=signature,
+        index_status=status,
+        facts_present=facts_present,
+        has_summaries=has_summaries,
+    )
+
+
+#: Files read to tell whether an earlier analysis's facts survive: its most important code files.
+_FACT_PROBE_FILES = 5
+_FACT_LANGUAGES = frozenset({"Python", "JavaScript", "TypeScript"})
+
+
+async def _probe_facts(cache: AnalysisCache, record: dict, repo_id: str) -> tuple[bool, bool]:
+    """(facts readable, sentences written) for an earlier analysis, from its top code files.
+
+    Facts live in memory, Redis and Supabase. One saved while the table didn't exist,
+    or whose upload failed, is gone after a restart; reusing it whole would leave the
+    views without facts for as long as the commit doesn't change.
+    """
+    code = sorted(
+        (
+            p
+            for p in record.get("file_profiles") or []
+            if isinstance(p, dict)
+            and p.get("language") in _FACT_LANGUAGES
+            and p.get("path")
+            and shown_in_views(p["path"], p.get("role"))
+        ),
+        key=lambda p: -(p.get("importance_score") or 0),
+    )
+    paths = [p["path"] for p in code[:_FACT_PROBE_FILES]]
+    if not paths:
+        return True, True  # nothing here would carry facts
+    found = await _run_sync(cache.facts.get, facts_repo_id(record, repo_id), paths)
+    return bool(found), any(facts.get("summary") for facts in found.values())
 
 
 async def _run_concurrently(*jobs: Callable[[], Awaitable[None]]) -> None:
@@ -426,10 +481,23 @@ def _index_fields(earlier: EarlierAnalysis | None, indexing_enabled: bool) -> di
 
 
 def _log_index_kept(earlier: EarlierAnalysis) -> None:
+    if earlier.pipeline_version != PIPELINE_VERSION:
+        why = f"came from pipeline v{earlier.pipeline_version}, this is v{PIPELINE_VERSION}"
+    else:
+        why = "has no per-file facts left (saved before their table existed, or the upload failed)"
     logger.info(
-        f"Analyzing {earlier.signature} again: {earlier.repo_id} came from pipeline "
-        f"v{earlier.pipeline_version}, this is v{PIPELINE_VERSION}. Keeping its index ({earlier.vector_repo_id})."
+        f"Analyzing {earlier.signature} again: {earlier.repo_id} {why}. Keeping its index ({earlier.vector_repo_id})."
     )
+
+
+def _write_missing_summaries(
+    earlier: EarlierAnalysis, background_tasks: BackgroundTasks, registry: Any, cache: AnalysisCache, user_id: str
+) -> None:
+    """A reused commit whose origin never got its sentences (T34) gets them now, once:
+    they go into the origin's facts, where the next reuse finds them."""
+    if settings.file_summaries and not earlier.has_summaries:
+        logger.info(f"Writing the file summaries {earlier.facts_repo_id} is missing.")
+        background_tasks.add_task(registry.wrap(summarize_files), earlier.facts_repo_id, earlier.record, cache, user_id)
 
 
 async def _reuse_unchanged_commit(
@@ -546,7 +614,8 @@ async def analyze(
 
     signature = clone_info.get("repo_signature") if isinstance(clone_info, dict) else None
     earlier = await _earlier_analysis_to_reuse(cache, clone_info, force=body.force)
-    if earlier is not None and earlier.pipeline_version == PIPELINE_VERSION:
+    if earlier is not None and earlier.reusable_whole:
+        _write_missing_summaries(earlier, background_tasks, request.app.state.task_registry, cache, user_id)
         return await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, earlier)
     if earlier is not None:
         _log_index_kept(earlier)
@@ -834,9 +903,10 @@ async def analyze_stream(
             # analysis: no pipeline, no new vector set. T28: if an older
             # pipeline made that analysis, run this one but keep its index.
             earlier = await _earlier_analysis_to_reuse(cache, clone_info, force=body.force)
-            if earlier is not None and earlier.pipeline_version != PIPELINE_VERSION:
+            if earlier is not None and not earlier.reusable_whole:
                 _log_index_kept(earlier)
             elif earlier is not None:
+                _write_missing_summaries(earlier, background_tasks, request.app.state.task_registry, cache, user_id)
                 reused = await _reuse_unchanged_commit(cache, clone_info, user_id, github_url, earlier)
                 final_seq = _next_seq(seq_box)
                 yield _sse_event(
