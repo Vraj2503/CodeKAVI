@@ -23,6 +23,7 @@ import logging
 from typing import Any
 
 from rune.config import shown_in_views
+from rune.exceptions import RateLimitError
 from rune.fact_store import facts_repo_id
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 from rune.utils import run_sync
@@ -31,7 +32,19 @@ logger = logging.getLogger(__name__)
 
 SUMMARY_BATCH = 25
 MAX_SUMMARY_CHARS = 160
-MAX_SYMBOLS_IN_PROMPT = 8
+#: Per-file prompt budget. With 8 symbols and full signatures and docs, CodeKAVI's first
+#: batch of 25 files was ~6.8k input tokens; the sentence needs the gist, not every
+#: parameter.
+MAX_SYMBOLS_IN_PROMPT = 5
+MAX_SIGNATURE_CHARS = 60
+MAX_DOC_CHARS = 90
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 #: Roles a sentence adds little to: config and build files, re-export barrels.
 _SKIPPED_ROLES = frozenset({"config", "build", "barrel"})
 
@@ -70,8 +83,9 @@ def build_prompt(batch: list[tuple[str, dict, str]]) -> str:
             file_facts.get("symbols") or [], key=lambda s: (-(s.get("complexity") or 0), s.get("line") or 0)
         )
         for symbol in symbols[:MAX_SYMBOLS_IN_PROMPT]:
-            text = f"- {symbol.get('kind', 'function')} {symbol.get('name', '')}{symbol.get('signature') or ''}"
-            lines.append(text + (f": {symbol['doc']}" if symbol.get("doc") else ""))
+            signature = _clip(symbol.get("signature") or "", MAX_SIGNATURE_CHARS)
+            text = f"- {symbol.get('kind', 'function')} {symbol.get('name', '')}{signature}"
+            lines.append(text + (f": {_clip(symbol['doc'], MAX_DOC_CHARS)}" if symbol.get("doc") else ""))
         blocks.append("\n".join(lines))
     return (
         "Files:\n\n" + "\n\n".join(blocks) + '\n\nReturn JSON {"<file path>": "<one sentence>"} for every file above.'
@@ -126,15 +140,18 @@ async def summarize_files(repo_id: str, record: dict, cache: Any, user_id: str, 
         if provider is None:
             from rune.llm.providers import get_provider
 
-            provider = get_provider("file_summaries")
+            # Groq's base limits for gpt-oss-120b are 8K tokens a minute: one batch
+            # takes the whole minute, and chat waits behind it. FILE_SUMMARY_PROVIDER
+            # can send this job to Gemini, which has its own quota.
+            provider = get_provider(settings.file_summary_provider)
         tracker = get_token_tracker()
         summaries: dict[str, str] = {}
         calls = failed = 0
-        stopped_by_quota = False
+        stopped: str | None = None
         for start in range(0, len(paths), SUMMARY_BATCH):
             batch = paths[start : start + SUMMARY_BATCH]
             if not tracker.check_quota(user_id):
-                stopped_by_quota = True
+                stopped = "quota_exceeded"
                 break
             try:
                 text, _usage = await provider.generate_with_usage(
@@ -146,15 +163,25 @@ async def summarize_files(repo_id: str, record: dict, cache: Any, user_id: str, 
                     user_id=user_id,
                 )
                 calls += 1
-                summaries.update(parse_summaries(text, batch))
+            except RateLimitError as e:
+                # The provider has already waited and retried; the next batch would only
+                # queue behind the same limit, and every failure counts toward the circuit
+                # breaker chat shares. Keep what's written; the most important files go first.
+                logger.warning(f"File summaries for {repo_id}: rate limited, stopping after {calls} batches: {e}")
+                stopped = "rate_limited"
+                break
             except Exception as e:
                 failed += 1
                 logger.warning(f"File summaries for {repo_id}: a batch of {len(batch)} failed: {e}")
+                continue
+            written = parse_summaries(text, batch)
+            if written:
+                # Saved as each batch lands, so views fill in and a restart keeps them.
+                await run_sync(cache.facts.put_summaries, source, written)
+                summaries.update(written)
 
-        if summaries:
-            await run_sync(cache.facts.put_summaries, source, summaries)
-        if stopped_by_quota:
-            status = "quota_exceeded"
+        if stopped:
+            status = stopped
         elif not summaries:
             status = "failed"
         elif failed:

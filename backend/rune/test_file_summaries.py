@@ -5,6 +5,7 @@ import json
 import pytest
 
 from rune.cache import AnalysisCache
+from rune.exceptions import RateLimitError
 from rune.fact_store import file_description
 from rune.file_summaries import MAX_SUMMARY_CHARS, build_prompt, parse_summaries, pick_files, summarize_files
 from rune.settings import settings
@@ -75,15 +76,18 @@ def test_only_sentences_for_files_in_the_batch_are_kept():
 
 
 class FakeProvider:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, rate_limit_on: int | None = None):
         self.batches: list[list[str]] = []
         self.fail = fail
+        self.rate_limit_on = rate_limit_on  # which call (1-based) hits the limit
 
     async def generate_with_usage(self, system_prompt, user_prompt, **kwargs):
         paths = [line[3:] for line in user_prompt.splitlines() if line.startswith("## ")]
         self.batches.append(paths)
         if self.fail:
             raise RuntimeError("provider down")
+        if self.rate_limit_on == len(self.batches):
+            raise RateLimitError("Groq rate limit exceeded: 429 Too Many Requests")
         return json.dumps({p: f"Does the {p.rsplit('/', 1)[-1]} work." for p in paths}), {"total_tokens": 100}
 
 
@@ -197,3 +201,58 @@ async def test_the_record_the_routes_pass_holds_model_objects_and_still_works(mo
 
     assert cache.get("r")["summaries_status"]["status"] == "complete"
     assert len(provider.batches) == 1
+
+
+# ── Live check, 2026-11-15: Groq answered the first batch, then 429 with a 42 s wait ──
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_stops_the_job_and_keeps_what_was_written(monkeypatch):
+    cache, record = _setup(monkeypatch, n_files=60)
+    provider = FakeProvider(rate_limit_on=2)
+
+    await summarize_files("r", record, cache, "user-a", provider=provider)
+
+    assert len(provider.batches) == 2  # no third batch queued behind the same limit
+    status = cache.get("r")["summaries_status"]
+    assert (status["status"], status["summarized"], status["calls"]) == ("rate_limited", 25, 1)
+    kept = cache.facts.get("r", ["app/m0.py", "app/m30.py"])
+    assert kept["app/m0.py"]["summary"] == "Does the m0.py work."  # the first batch, saved as it landed
+    assert "summary" not in kept["app/m30.py"]
+
+
+def test_each_file_shows_the_gist_of_its_symbols_not_all_of_them():
+    symbols = [
+        {
+            "name": f"f{i}",
+            "kind": "function",
+            "line": i,
+            "complexity": 10 - i,
+            "signature": "(" + ", ".join(f"argument_{n}: int" for n in range(8)) + ")",
+            "doc": "Does a great many things, " * 10,
+        }
+        for i in range(8)
+    ]
+    prompt = build_prompt([("app/big.py", {"purpose": "Big.", "symbols": symbols}, "Core")])
+    symbol_lines = [line for line in prompt.splitlines() if line.startswith("- function ")]
+
+    assert len(symbol_lines) == 5
+    assert all("…" in line and len(line) < 200 for line in symbol_lines)
+
+
+@pytest.mark.asyncio
+async def test_the_provider_comes_from_the_setting(monkeypatch):
+    cache, record = _setup(monkeypatch, n_files=3)
+    monkeypatch.setattr(settings, "file_summary_provider", "gemini")
+    asked: list[str] = []
+    fake = FakeProvider()
+
+    def get_provider(name):
+        asked.append(name)
+        return fake
+
+    monkeypatch.setattr("rune.llm.providers.get_provider", get_provider)
+
+    await summarize_files("r", record, cache, "user-a")
+
+    assert asked == ["gemini"] and len(fake.batches) == 1

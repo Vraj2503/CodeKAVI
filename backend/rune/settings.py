@@ -137,6 +137,8 @@ class Settings(BaseSettings):
     # background (at most FILE_SUMMARY_MAX_FILES / 25 LLM calls; none on reuse).
     file_summaries: bool = Field(default=True, validation_alias="FILE_SUMMARIES")
     file_summary_max_files: int = Field(default=150, validation_alias="FILE_SUMMARY_MAX_FILES")
+    # "groq" (the default) or "gemini": Gemini keeps this background job off Groq's per-minute budget.
+    file_summary_provider: str = Field(default="groq", validation_alias="FILE_SUMMARY_PROVIDER")
     # T5: analyzing a commit that was already analyzed and fully indexed with
     # today's embedding model reuses that analysis and its vectors instead of
     # re-embedding the repo. Set false to always re-analyze, e.g. while
