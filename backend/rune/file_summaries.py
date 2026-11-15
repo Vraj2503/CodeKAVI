@@ -111,6 +111,21 @@ def parse_summaries(text: str, batch_paths: list[str]) -> dict[str, str]:
     return kept
 
 
+def _summary_provider(settings: Any) -> Any:
+    """Gemini by default, on its own model (FILE_SUMMARY_MODEL); Groq if FILE_SUMMARY_PROVIDER says so.
+
+    On Groq (gpt-oss-120b, 8K tokens a minute) one batch took the whole minute's budget
+    and chat waited behind the job; Gemini has its own quota.
+    """
+    if settings.file_summary_provider == "gemini":
+        from rune.llm.providers import GeminiProvider
+
+        return GeminiProvider(model_name=settings.file_summary_model)
+    from rune.llm.providers import get_provider
+
+    return get_provider(settings.file_summary_provider)
+
+
 def _status(status: str, **counts: int) -> dict[str, Any]:
     return {"status": status, **counts}
 
@@ -138,12 +153,7 @@ async def summarize_files(repo_id: str, record: dict, cache: Any, user_id: str, 
             return
 
         if provider is None:
-            from rune.llm.providers import get_provider
-
-            # Groq's base limits for gpt-oss-120b are 8K tokens a minute: one batch
-            # takes the whole minute, and chat waits behind it. FILE_SUMMARY_PROVIDER
-            # can send this job to Gemini, which has its own quota.
-            provider = get_provider(settings.file_summary_provider)
+            provider = _summary_provider(settings)
         tracker = get_token_tracker()
         summaries: dict[str, str] = {}
         calls = failed = 0

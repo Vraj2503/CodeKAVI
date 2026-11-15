@@ -241,9 +241,28 @@ def test_each_file_shows_the_gist_of_its_symbols_not_all_of_them():
 
 
 @pytest.mark.asyncio
-async def test_the_provider_comes_from_the_setting(monkeypatch):
+async def test_summaries_run_on_gemini_with_their_own_model_by_default(monkeypatch):
     cache, record = _setup(monkeypatch, n_files=3)
     monkeypatch.setattr(settings, "file_summary_provider", "gemini")
+    monkeypatch.setattr(settings, "file_summary_model", "gemini-3.5-flash-lite")
+    built: list[str | None] = []
+    fake = FakeProvider()
+
+    def gemini(model_name=None):
+        built.append(model_name)
+        return fake
+
+    monkeypatch.setattr("rune.llm.providers.GeminiProvider", gemini)
+
+    await summarize_files("r", record, cache, "user-a")
+
+    assert built == ["gemini-3.5-flash-lite"] and len(fake.batches) == 1
+
+
+@pytest.mark.asyncio
+async def test_groq_when_the_setting_says_so(monkeypatch):
+    cache, record = _setup(monkeypatch, n_files=3)
+    monkeypatch.setattr(settings, "file_summary_provider", "groq")
     asked: list[str] = []
     fake = FakeProvider()
 
@@ -255,4 +274,13 @@ async def test_the_provider_comes_from_the_setting(monkeypatch):
 
     await summarize_files("r", record, cache, "user-a")
 
-    assert asked == ["gemini"] and len(fake.batches) == 1
+    assert asked == ["groq"] and len(fake.batches) == 1
+
+
+def test_the_defaults_are_gemini_on_a_model_google_still_serves():
+    from rune.settings import Settings
+
+    defaults = Settings.model_fields
+    assert defaults["file_summary_provider"].default == "gemini"
+    assert defaults["file_summary_model"].default == "gemini-3.5-flash-lite"
+    assert defaults["gemini_model"].default != "gemini-2.0-flash"  # retired: 404

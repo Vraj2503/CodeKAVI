@@ -43,7 +43,9 @@ class Settings(BaseSettings):
 
     # Model Names
     groq_model: str = Field(default="openai/gpt-oss-120b", validation_alias="GROQ_MODEL")
-    gemini_model: str = Field(default="gemini-2.0-flash", validation_alias="GEMINI_MODEL")
+    # gemini-2.0-flash is retired: Google answers 404 "no longer available" (checked
+    # 2026-11-15), so every Gemini call, chat's fallback from Groq included, failed.
+    gemini_model: str = Field(default="gemini-3.5-flash-lite", validation_alias="GEMINI_MODEL")
     embedding_model: str = Field(default="gemini-embedding-2", validation_alias="EMBEDDING_MODEL")
     # RAG embedding provider. ``cloudflare`` is intentionally the default so
     # deploying without new environment variables behaves exactly as before.
@@ -137,8 +139,12 @@ class Settings(BaseSettings):
     # background (at most FILE_SUMMARY_MAX_FILES / 25 LLM calls; none on reuse).
     file_summaries: bool = Field(default=True, validation_alias="FILE_SUMMARIES")
     file_summary_max_files: int = Field(default=150, validation_alias="FILE_SUMMARY_MAX_FILES")
-    # "groq" (the default) or "gemini": Gemini keeps this background job off Groq's per-minute budget.
-    file_summary_provider: str = Field(default="groq", validation_alias="FILE_SUMMARY_PROVIDER")
+    # "gemini" (the default, decided by the user 2026-11-15) or "groq". On Groq the job
+    # took the whole 8K-tokens-a-minute budget for ~5 minutes per analysis, chat waiting
+    # behind it; Gemini has its own quota and a lite model needs no reasoning tokens.
+    file_summary_provider: str = Field(default="gemini", validation_alias="FILE_SUMMARY_PROVIDER")
+    # Pinned, so a model change is deliberate. 3 files: 5.9 s, 737 tokens, 3 of 3 sentences kept.
+    file_summary_model: str = Field(default="gemini-3.5-flash-lite", validation_alias="FILE_SUMMARY_MODEL")
     # T5: analyzing a commit that was already analyzed and fully indexed with
     # today's embedding model reuses that analysis and its vectors instead of
     # re-embedding the repo. Set false to always re-analyze, e.g. while
