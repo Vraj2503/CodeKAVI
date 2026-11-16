@@ -1166,14 +1166,16 @@ async def visualize_mindmap(
 
 #: T38: at most this many children per node (a repo's areas, an area's modules and
 #: files, a module's files), in place of the old cut at the first 50 profiles.
-#: RadialMindmap fills its 22 cards breadth-first: uncapped, CodeKAVI's frontend
-#: took every card after the areas and nothing of the backend showed.
-_MINDMAP_CHILDREN = 8
+#: 20 is RadialMindmap's page: it shows a folder's children whole up to 20 and pages
+#: bigger ones 16 at a time, so more would only be paged while the facts read and
+#: the response grow. On CodeKAVI: 186 of 215 files, 90 KB. (8 suited the 22-card
+#: template the component replaced: 77 files, 44 KB. Decided by the user 2026-11-16.)
+_MINDMAP_CHILDREN = 20
 _MINDMAP_SYMBOLS_PER_FILE = 5
 
 
 def _mindmap_groups(profiles: list[dict]) -> tuple[dict[str, dict[str, list[dict]]], Counter[str]]:
-    """area -> module -> its most important files (at most 8), and how many files each module holds.
+    """area -> module -> its most important files (at most 20), and how many files each module holds.
 
     `profiles` come most important first. Modules are T32's grouping
     (`choose_modules`): top-level folders, split one level deeper only where one
@@ -1202,9 +1204,10 @@ def _mindmap_file(profile: dict) -> dict:
 def _label_siblings(nodes: list[dict], folder: str) -> list[dict]:
     """Short labels that still tell siblings apart: the last path segment, or as many as it takes.
 
-    RadialMindmap's cards hold 9 to 26 characters, so `components/report/viz/radar`
-    showed as "components/…" beside five other "components/…" cards. The full path
-    stays in `path`.
+    RadialMindmap breaks a label into two lines of 13 characters and clips the
+    rest, so `components/report/viz/radar` would read "components/" over
+    "report/viz/r…", beside five more starting "components/". The full path stays
+    in `path`, which the hover shows.
     """
     prefix = f"{folder}/" if folder and folder != "(root)" else ""
     parts = [node["path"].removeprefix(prefix).split("/") for node in nodes]
@@ -1293,7 +1296,7 @@ def _build_static_mindmap(classification: list, facts: dict[str, dict] | None = 
     """The repository as a tree, from the analysis and its per-file facts (T38; zero LLM cost).
 
     repo → top-level areas (backend, frontend, …) → modules (T32's grouping) →
-    files, at most 8 children a node, each file with its sentence or purpose
+    files, at most 20 children a node, each file with its sentence or purpose
     line and up to 5 key symbols. This replaces role buckets ("Core Module" →
     file names) cut at the first 50 profiles.
 

@@ -38,16 +38,6 @@ def _labels(nodes):
     return [n["label"] for n in nodes]
 
 
-def _breadth_first(root):
-    """Labels in the order RadialMindmap fills its 22 cards."""
-    order, queue = [], [root]
-    while queue:
-        node = queue.pop(0)
-        order.append(node["label"])
-        queue.extend(node.get("children") or [])
-    return order
-
-
 def test_the_first_level_is_the_repos_areas_then_their_modules():
     root = _build_static_mindmap(REPO, name="CodeKAVI")
 
@@ -96,25 +86,25 @@ def test_each_file_is_told_by_its_sentence_or_purpose_and_its_key_symbols():
 
 
 def test_caps_per_branch_replace_the_cut_at_the_first_50_files():
-    profiles = [_profile(f"pkg{m}/file{f:02}.py", 1000 - (m * 12 + f)) for m in range(6) for f in range(12)]
+    profiles = [_profile(f"pkg{m}/file{f:02}.py", 1000 - (m * 25 + f)) for m in range(6) for f in range(25)]
     root = _build_static_mindmap(profiles)
 
-    assert _labels(root["children"]) == [f"pkg{m}" for m in range(6)]  # the old cut kept 4 of these 6 whole
-    assert all(len(area["children"]) == 8 and area["files"] == 12 for area in root["children"])
+    assert _labels(root["children"]) == [f"pkg{m}" for m in range(6)]  # the old cut reached 2 of these 6
+    assert all(len(area["children"]) == 20 and area["files"] == 25 for area in root["children"])
     assert root["children"][5]["children"][0]["path"] == "pkg5/file00.py"  # each folder's most important
 
 
-def test_no_node_has_more_than_8_children_so_every_area_reaches_the_cards():
-    web = [_profile(f"web/m{i:02}/f{j}.py", 200 - 3 * i - j) for i in range(12) for j in range(3)]
+def test_no_node_has_more_than_20_children():
+    """RadialMindmap pages a folder past 20 children; sending more only grows the response."""
+    web = [_profile(f"web/m{i:02}/f{j}.py", 200 - 3 * i - j) for i in range(24) for j in range(3)]
     api = [_profile(f"api/x{k}.py", 50 - k) for k in range(4)]
     root = _build_static_mindmap(web + api)
 
     assert _labels(root["children"]) == ["web", "api"]
-    assert _labels(root["children"][0]["children"]) == [f"m{i:02}" for i in range(8)]  # the 8 most important of 12
-    assert {"x0.py", "x3.py"} <= set(_breadth_first(root)[:22])  # the second area's files reach the cards
+    assert _labels(root["children"][0]["children"]) == [f"m{i:02}" for i in range(20)]  # the 20 most important of 24
 
-    many = _build_static_mindmap([_profile(f"pkg{m:02}/a.py", 100 - m) for m in range(12)])
-    assert _labels(many["children"]) == [f"pkg{m:02}" for m in range(8)]
+    many = _build_static_mindmap([_profile(f"pkg{m:02}/a.py", 100 - m) for m in range(25)])
+    assert _labels(many["children"]) == [f"pkg{m:02}" for m in range(20)]
 
 
 def test_files_the_analysis_measured_nothing_in_stay_off_the_map():
