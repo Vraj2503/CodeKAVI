@@ -21,6 +21,7 @@ import json
 import logging
 import math
 import os
+from collections import Counter
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -35,7 +36,7 @@ from rune.cache import AnalysisCache
 from rune.config import detect_layer as _detect_layer
 from rune.config import is_test_path, shown_in_views
 from rune.fact_store import facts_repo_id, file_description, top_symbols
-from rune.graph import ROLE_TO_LAYER, export_graph_json
+from rune.graph import ROLE_TO_LAYER, choose_modules, export_graph_json
 from rune.limiter import per_minute
 from rune.llm.prompts import UNTRUSTED_CODE_DISCLAIMER
 from rune.routes._errors import internal_error
@@ -1053,13 +1054,14 @@ async def visualize_mindmap(
     user_id: str = Depends(verify_supabase_token),
 ):
     """
-    Build mind map. Static by default (zero LLM cost).
+    Build mind map. Static by default (zero LLM cost): areas → modules → files
+    with their sentence or purpose and key symbols, from the facts (T38).
 
     With `use_llm: true`:
     - Returns the cached semantic result immediately if one exists (meta.cached=true).
     - Otherwise issues one bounded LLM categorization call (≤20 file paths, ≤2000 tokens).
     - Validates the result against the repository's known file paths.
-    - Falls back to the deterministic role/module tree on any failure.
+    - Falls back to the static tree on any failure.
 
     Meta flags on the response:
       meta.is_llm_enriched  — true only when real LLM output is being served
@@ -1142,18 +1144,18 @@ async def visualize_mindmap(
                     await run_sync(cache.update, repo_id, {"mindmap_llm": {"root": root, "meta": meta}})
             else:
                 fallback_reason = "invalid_llm_response"
-                root = _build_static_mindmap(classification)
+                root = await _static_mindmap(cache, result, repo_id, classification)
                 meta = {"is_llm_enriched": False, "cached": False, "fallback_reason": fallback_reason}
 
         except Exception as e:
             logger.error(f"LLM mind map generation failed: {e}")
             fallback_reason = "llm_failed"
-            root = _build_static_mindmap(classification)
+            root = await _static_mindmap(cache, result, repo_id, classification)
             meta = {"is_llm_enriched": False, "cached": False, "fallback_reason": fallback_reason}
 
     # ── Static path (default, zero LLM cost) ─────────────────────────────────
     else:
-        root = _build_static_mindmap(classification)
+        root = await _static_mindmap(cache, result, repo_id, classification)
         meta = {"is_llm_enriched": False, "cached": False}
 
     return {
@@ -1162,49 +1164,150 @@ async def visualize_mindmap(
     }
 
 
-def _build_static_mindmap(classification: list) -> dict:
-    """Build a mind map from static file classification data (zero LLM cost).
+#: T38: at most this many children per node (a repo's areas, an area's modules and
+#: files, a module's files), in place of the old cut at the first 50 profiles.
+#: RadialMindmap fills its 22 cards breadth-first: uncapped, CodeKAVI's frontend
+#: took every card after the areas and nothing of the backend showed.
+_MINDMAP_CHILDREN = 8
+_MINDMAP_SYMBOLS_PER_FILE = 5
 
-    Node IDs use the full relative file path (not the bare basename) so that
-    `index.ts` under two different roles produces two distinct keys and the
-    D3 data-join in RadialMindmap never conflates them.
+
+def _mindmap_groups(profiles: list[dict]) -> tuple[dict[str, dict[str, list[dict]]], Counter[str]]:
+    """area -> module -> its most important files (at most 8), and how many files each module holds.
+
+    `profiles` come most important first. Modules are T32's grouping
+    (`choose_modules`): top-level folders, split one level deeper only where one
+    holds more than a fifth of the files. Files at the repo root form "(root)".
     """
-    # Group files by role
-    role_groups: dict[str, list] = {}
-    for fp in classification[:50]:
-        role = fp.get("role_label") or fp.get("role") or "Other"
-        if role not in role_groups:
-            role_groups[role] = []
-        role_groups[role].append(fp)
+    module_of = choose_modules([fp["path"] for fp in profiles])
+    counts: Counter[str] = Counter(module_of.values())
+    groups: dict[str, dict[str, list[dict]]] = {}
+    for fp in profiles:
+        module = module_of[fp["path"]]
+        files = groups.setdefault(module.split("/", 1)[0], {}).setdefault(module, [])
+        if len(files) < _MINDMAP_CHILDREN:
+            files.append(fp)
+    return groups, counts
 
-    children = []
-    for role, fps in sorted(role_groups.items()):
-        role_children = [
-            {
-                # Stable, unique ID — full path, not bare basename.
-                "id": fp.get("path") or fp.get("name") or os.path.basename(fp.get("path", "")),
-                "name": os.path.basename(fp.get("path") or fp.get("name") or ""),
-                "label": os.path.basename(fp.get("path") or fp.get("name") or ""),
-                # Expose the full path so the frontend tooltip can show it.
-                "path": fp.get("path") or "",
-            }
-            for fp in fps[:10]
-        ]
-        children.append(
-            {
-                "name": role,
-                "id": role,
-                "label": role,
-                "children": role_children,
-            }
-        )
 
-    return {
-        "name": "Codebase",
-        "id": "root",
-        "label": "Codebase",
-        "children": children,
-    }
+def _mindmap_file(profile: dict) -> dict:
+    path = profile["path"]
+    name = path.rsplit("/", 1)[-1]
+    node: dict[str, Any] = {"id": path, "name": name, "label": name, "path": path}
+    if role := profile.get("role_label") or profile.get("role"):
+        node["role"] = role
+    return node
+
+
+def _label_siblings(nodes: list[dict], folder: str) -> list[dict]:
+    """Short labels that still tell siblings apart: the last path segment, or as many as it takes.
+
+    RadialMindmap's cards hold 9 to 26 characters, so `components/report/viz/radar`
+    showed as "components/…" beside five other "components/…" cards. The full path
+    stays in `path`.
+    """
+    prefix = f"{folder}/" if folder and folder != "(root)" else ""
+    parts = [node["path"].removeprefix(prefix).split("/") for node in nodes]
+    depth = [1] * len(nodes)
+    while True:
+        labels = ["/".join(p[-d:]) for p, d in zip(parts, depth, strict=True)]
+        seen = Counter(labels)
+        clashing = [i for i, label in enumerate(labels) if seen[label] > 1 and depth[i] < len(parts[i])]
+        if not clashing:
+            break
+        for i in clashing:
+            depth[i] += 1
+    for node, label in zip(nodes, labels, strict=True):
+        node["name"] = node["label"] = label
+    return nodes
+
+
+def _mindmap_skeleton(classification: list, name: str) -> dict:
+    """repo → top-level areas → modules (T32's grouping) → files, most important first; no facts yet.
+
+    An area's own files sit beside its modules. A level holding a single group is
+    folded into its parent: a repo with one top-level folder starts at its contents.
+    """
+    shown = sorted((fp for fp in classification if fp.get("path")), key=lambda fp: -(fp.get("importance_score") or 0))
+    # Importance 0: the analysis measured nothing in the file and nothing imports it
+    # (Dockerfile, requirements.txt, .gitignore). On CodeKAVI those took most of the
+    # backend's own slots, and a map has nothing to say about them.
+    shown = [fp for fp in shown if (fp.get("importance_score") or 0) > 0] or shown
+    groups, counts = _mindmap_groups(shown)
+
+    def best(files: list[dict]) -> float:
+        return max(fp.get("importance_score") or 0 for fp in files)
+
+    areas: list[tuple[float, str, dict]] = []
+    for area, modules in groups.items():
+        children: list[tuple[float, int, str, dict]] = []
+        for module, files in modules.items():
+            if module == area:  # files directly in the area's folder, or at the repo root
+                children += [(fp.get("importance_score") or 0, 1, fp["path"], _mindmap_file(fp)) for fp in files]
+                continue
+            node = {
+                "id": f"module:{module}",
+                "path": module,
+                "files": counts[module],
+                "children": _label_siblings([_mindmap_file(fp) for fp in files], module),
+            }
+            children.append((best(files), 0, module, node))
+        children.sort(key=lambda c: (-c[0], c[1], c[2]))
+        area_node = {
+            "id": f"area:{area}",
+            "name": area,
+            "label": area,
+            "path": "" if area == "(root)" else area,
+            "files": sum(counts[m] for m in modules),
+            "children": _label_siblings([c[3] for c in children[:_MINDMAP_CHILDREN]], area),
+        }
+        areas.append((best([fp for files in modules.values() for fp in files]), area, area_node))
+    areas.sort(key=lambda a: (-a[0], a[1]))
+
+    top = [node for _best, _area, node in areas[:_MINDMAP_CHILDREN]]
+    while len(top) == 1 and "children" in top[0]:
+        top = top[0]["children"]  # one group alone adds a level and says nothing
+    return {"id": "root", "name": name, "label": name, "children": top}
+
+
+def _mindmap_file_nodes(node: dict) -> list[dict]:
+    children = node.get("children")
+    if children is None:
+        return [node]
+    return [leaf for child in children for leaf in _mindmap_file_nodes(child)]
+
+
+def _add_file_facts(root: dict, facts: dict[str, dict]) -> dict:
+    """Each file's sentence or purpose line and up to 5 key symbols (T38); nothing for a file without facts."""
+    for node in _mindmap_file_nodes(root):
+        file_facts = facts.get(node["path"])
+        text, source = file_description(file_facts)
+        if text:
+            node["description"], node["description_source"] = text, source
+        if symbols := top_symbols(file_facts, _MINDMAP_SYMBOLS_PER_FILE):
+            node["symbols"] = [{"name": s.get("name"), "kind": s.get("kind"), "line": s.get("line")} for s in symbols]
+    return root
+
+
+def _build_static_mindmap(classification: list, facts: dict[str, dict] | None = None, name: str = "Codebase") -> dict:
+    """The repository as a tree, from the analysis and its per-file facts (T38; zero LLM cost).
+
+    repo → top-level areas (backend, frontend, …) → modules (T32's grouping) →
+    files, at most 8 children a node, each file with its sentence or purpose
+    line and up to 5 key symbols. This replaces role buckets ("Core Module" →
+    file names) cut at the first 50 profiles.
+
+    Node ids are full paths, areas and modules prefixed, so they are unique
+    across the tree: `index.ts` in two folders stays two nodes.
+    """
+    return _add_file_facts(_mindmap_skeleton(classification, name), facts or {})
+
+
+async def _static_mindmap(cache: AnalysisCache, result: dict, repo_id: str, classification: list) -> dict:
+    """T38's tree, with the facts of exactly the files it shows read in one batch."""
+    root = _mindmap_skeleton(classification, result.get("repo_name") or "Codebase")
+    paths = [node["path"] for node in _mindmap_file_nodes(root)]
+    return _add_file_facts(root, await run_sync(cache.facts.get, facts_repo_id(result, repo_id), paths))
 
 
 # ─────────────────────────────────────────

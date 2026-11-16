@@ -20,11 +20,15 @@ import {
 } from "react";
 import { Moon, Sun } from "lucide-react";
 
-interface MindmapNode {
+export interface MindmapNode {
   id?: string;
   label?: string;
   name?: string;
   path?: string;
+  /** A file's sentence or purpose line, from the analysis's facts (T38). */
+  description?: string;
+  /** How many files an area or module holds (T38). */
+  files?: number;
   children?: MindmapNode[];
 }
 
@@ -132,6 +136,18 @@ function labelTintColor(cardId: string, theme: MindMapTheme): string {
 
 function nodeLabel(node: MindmapNode): string {
   return node.label || node.name || node.id || "Untitled";
+}
+
+/**
+ * Hover text for a card: where the node lives, then what it is. The cards hold
+ * a short label only, so this is where a file's sentence shows.
+ */
+export function nodeTitle(node: MindmapNode): string {
+  const where = node.path || nodeLabel(node);
+  const what =
+    node.description ??
+    (node.files ? `${node.files} file${node.files === 1 ? "" : "s"}` : "");
+  return what ? `${where}\n${what}` : where;
 }
 
 /** Breadth-first order keeps the root and its categories nearest the centre. */
@@ -329,7 +345,7 @@ export const RadialMindmap = forwardRef<HTMLDivElement, RadialMindmapProps>(
 
         const fullLabel = nodeLabel(node);
         label.textContent = shorten(fullLabel, CARD_LABEL_LIMITS[cardId]);
-        label.title = node.path || fullLabel;
+        label.title = nodeTitle(node);
         const card = document.getElementById(cardId);
         if (card) fitLabel(label, card);
       });

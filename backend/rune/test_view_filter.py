@@ -123,9 +123,9 @@ def _leaf_paths(node) -> set[str]:
 
 @pytest.mark.asyncio
 async def test_the_mind_map_leaves_out_tests_and_docs_unless_asked(loaded):
-    default = await visualize_mindmap(MagicMock(), "r", MindmapRequest(), cache=MagicMock(), user_id="u")
+    default = await visualize_mindmap(MagicMock(), "r", MindmapRequest(), cache=_memory_cache(), user_id="u")
     everything = await visualize_mindmap(
-        MagicMock(), "r", MindmapRequest(include_tests=True, include_docs=True), cache=MagicMock(), user_id="u"
+        MagicMock(), "r", MindmapRequest(include_tests=True, include_docs=True), cache=_memory_cache(), user_id="u"
     )
 
     assert _leaf_paths(default["data"]["root"]) == {MAIN, CORE}
