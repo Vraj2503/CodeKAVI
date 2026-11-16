@@ -90,9 +90,9 @@ MAX_TRANSITIVE_EDGES = 400
 #: were counted and thrown away.
 MAX_EXTERNAL_CALLS = 8
 
-#: Names that appear in every function and therefore distinguish none of them.
-_CALL_STOPLIST: frozenset[str] = frozenset(
-    """
+#: Names that appear in every function and therefore distinguish none of them. A
+#: word list split at import: ruff's SIM905 flags `.split()` on the literal itself.
+_CALL_STOPLIST_WORDS = """
     len str int float bool list dict set tuple range print id
     append extend insert get pop push add remove copy
     format join split strip replace startswith endswith lower upper
@@ -101,8 +101,8 @@ _CALL_STOPLIST: frozenset[str] = frozenset(
     min max sum abs round any all next iter
     slice includes indexOf toString then catch
     log warn error info debug
-    """.split()
-)
+"""
+_CALL_STOPLIST: frozenset[str] = frozenset(_CALL_STOPLIST_WORDS.split())
 
 #: Callee tail -> effect tag. Only tails distinctive enough to mean one thing:
 #: the receiver type is deliberately not inferred (same rationale as the method

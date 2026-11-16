@@ -123,7 +123,7 @@ async def test_a_second_click_returns_the_kept_answer_and_costs_nothing(env):
 
 @pytest.mark.asyncio
 async def test_refresh_asks_again_and_keeps_the_new_answer(env):
-    cache, provider, _ = env
+    cache, _, _ = env
     await _explain(cache, "concentric_radar")
     fresh = await _explain(cache, "concentric_radar", refresh=True)
 
