@@ -514,9 +514,6 @@ def _apply_architecture_domain_llm(
         workflows = str(comp.get("key_workflows") or "").strip()
         safeguards = str(comp.get("project_safeguards") or "").strip()
 
-        evidence_paths = [e.path for e in node.evidence]
-        impl_sentence = format_evidence_sentence(evidence_paths)
-
         parts = []
         if role_in_project:
             txt = role_in_project if role_in_project.endswith((".", "!", "?")) else f"{role_in_project}."
@@ -530,7 +527,10 @@ def _apply_architecture_domain_llm(
         elif safeguards:
             txt = safeguards if safeguards.endswith((".", "!", "?")) else f"{safeguards}."
             parts.append(f"Project safeguards: {txt}")
-        parts.append(impl_sentence)
+        if not parts:
+            continue  # nothing written for this node: its description from facts stays
+        if impl_sentence := format_evidence_sentence([e.path for e in node.evidence]):
+            parts.append(impl_sentence)
 
         node.summary = "\n\n".join(parts)
 

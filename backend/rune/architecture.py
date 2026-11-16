@@ -18,14 +18,7 @@ from .architecture_models import (
     ArchitectureRepository,
     ArchitectureRequest,
 )
-from .architecture_rules import (
-    determine_node_kind,
-    determine_node_role,
-    format_evidence_sentence,
-    generate_node_responsibility,
-    get_technology_responsibility,
-    match_technologies,
-)
+from .architecture_rules import determine_node_kind, determine_node_role, match_technologies
 from .config import shown_in_views
 from .fact_store import file_description
 
@@ -126,36 +119,48 @@ def external_services(file_imports: dict[str, Any]) -> dict[str, list[str]]:
     return found
 
 
+#: Member files whose description a component shows; the inspector lists every file below it.
+_DESCRIBED_FILES = 3
+_DESCRIBED_IMPORTERS = 2
+
+
+def _ranked(paths: set[str], importance: dict[str, float]) -> list[str]:
+    return sorted(paths, key=lambda p: (-importance.get(p, 0.0), p))
+
+
+def _sentence(text: str) -> str:
+    text = " ".join(text.split())
+    return text if text.endswith((".", "!", "?", "\u2026")) else f"{text}."
+
+
+def _file_points(paths: list[str], facts: dict[str, dict], limit: int) -> list[str]:
+    """`name: what it does.` for each of the first files whose facts describe it."""
+    points = []
+    for path in paths[:limit]:
+        text = file_description(facts.get(path))[0]
+        if text:
+            points.append(f"{path.rsplit('/', 1)[-1]}: {_sentence(text)}")
+    return points
+
+
 def _capability_summary(node: ArchitectureNode, importance: dict[str, float], facts: dict[str, dict]) -> str:
-    """What a capability holds, from its member files and their facts (T39).
+    """What a capability holds, one point per line: what its main files do, then how many it spans.
 
-    In the teammates' structured form ("Role in project: ...", read as separate
-    points by the inspector), filled from the code: how many files, the main ones,
-    and what each says it does. With no facts for any member (an analysis saved
-    before the fact store), their fixed paragraph for the label is the fallback.
+    Facts only (T39): a file's AI sentence (T34), else its purpose line (T33). With no
+    facts for any member, the count line stands alone. A fixed paragraph per label used
+    to fill in, and it described CodeKAVI's own features for every repository (removed
+    2026-11-16).
     """
-    paths = sorted({e.path for e in node.evidence}, key=lambda p: (-importance.get(p, 0.0), p))
-    described = [(path, text) for path in paths[:3] if (text := file_description(facts.get(path))[0])]
-    if not described:
-        return generate_node_responsibility(node.label, node.kind, node.group_id, paths)
+    paths = _ranked({e.path for e in node.evidence}, importance)
     count = f"{len(paths)} source file{'s' if len(paths) != 1 else ''}"
-    what = " ".join(f"{path.rsplit('/', 1)[-1]}: {text.rstrip('.')}." for path, text in described)
-    return " ".join(
-        [
-            f"Role in project: {node.label} spans {count}, led by {paths[0]}.",
-            f"What it does in the project: {what}",
-            format_evidence_sentence(paths),
-        ]
-    )
+    return "\n".join([*_file_points(paths, facts, _DESCRIBED_FILES), f"Spans {count}, led by {paths[0]}."])
 
 
-def _technology_summary(tech: Any, paths: list[str]) -> str:
-    """The provider's description, then the files that import it, so the node says where it is used (T39)."""
-    imported = ", ".join(paths[:3]) + (", ..." if len(paths) > 3 else "")
-    return (
-        f"{get_technology_responsibility(tech.vendor, tech.product, tech.purpose)} "
-        f"Used in this repository by {imported}."
-    )
+def _technology_summary(paths: set[str], importance: dict[str, float], facts: dict[str, dict]) -> str:
+    """Which files import the provider, then what the main ones do: facts, one point per line (T39)."""
+    ranked = _ranked(paths, importance)
+    imported = ", ".join(ranked[:3]) + (", ..." if len(ranked) > 3 else "")
+    return "\n".join([f"Used in this repository by {imported}.", *_file_points(ranked, facts, _DESCRIBED_IMPORTERS)])
 
 
 def build_architecture_manifest(
@@ -295,7 +300,7 @@ def build_architecture_manifest(
 
     for node in nodes.values():
         if node.technologies:
-            node.summary = _technology_summary(node.technologies[0], sorted({e.path for e in node.evidence}))
+            node.summary = _technology_summary({e.path for e in node.evidence}, importance, facts or {})
 
     eligible = [node for node in nodes.values() if _included(node, request)]
     eligible_ids = {node.id for node in eligible}

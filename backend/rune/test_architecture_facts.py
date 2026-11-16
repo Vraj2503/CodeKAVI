@@ -1,10 +1,13 @@
 """T39: the architecture diagram states facts about the analyzed repo, not about CodeKAVI."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from rune.architecture import build_architecture_manifest
-from rune.architecture_rules import match_technologies
-from rune.routes.visualize import _build_architecture_domain_prompt
+from rune.architecture_models import ArchitectureEvidence, ArchitectureNode
+from rune.architecture_rules import format_evidence_sentence, match_technologies
+from rune.routes.visualize import _apply_architecture_domain_llm, _build_architecture_domain_prompt
 
 
 def _products(*hints: str) -> set[str]:
@@ -54,24 +57,54 @@ def test_a_capability_is_described_by_its_member_files():
     deps, profiles = _shop()
     entry = _node(build_architecture_manifest("r", deps, profiles, facts=FACTS), "API & Request Entry")
 
-    assert entry.summary.startswith(
-        "Role in project: API & Request Entry spans 2 source files, led by routes/checkout.py."
-    )
-    assert "checkout.py: Takes payment for a cart." in entry.summary
-    assert "cart.py: Routes: POST /cart, DELETE /cart/{item}." in entry.summary
-    assert "repository analysis" not in entry.summary.lower()  # the fixed paragraph described CodeKAVI
+    # One point per line, which the inspector shows as one bullet each.
+    assert entry.summary.splitlines() == [
+        "checkout.py: Takes payment for a cart.",
+        "cart.py: Routes: POST /cart, DELETE /cart/{item}.",
+        "Spans 2 source files, led by routes/checkout.py.",
+    ]
 
 
-def test_without_facts_the_fixed_paragraph_is_still_the_fallback():
+def test_without_facts_it_states_only_the_files():
+    """No fixed paragraph fills in (removed 2026-11-16): it described CodeKAVI for every repo."""
     deps, profiles = _shop()
     entry = _node(build_architecture_manifest("r", deps, profiles), "API & Request Entry")
-    assert "Role in project:" in entry.summary and "spans 2 source files" not in entry.summary
+    assert entry.summary == "Spans 2 source files, led by routes/checkout.py."
 
 
-def test_a_provider_node_says_which_files_use_it():
+def test_a_provider_node_says_which_files_use_it_and_what_they_do():
     deps, profiles = _shop()
     redis = _node(build_architecture_manifest("r", deps, profiles, facts=FACTS), "Redis — Cache & Rate Limits")
-    assert redis.summary.endswith("Used in this repository by routes/checkout.py.")
+    assert redis.summary.splitlines() == [
+        "Used in this repository by routes/checkout.py.",
+        "checkout.py: Takes payment for a cart.",
+    ]
+
+
+def test_the_ai_description_closes_on_the_files_and_nothing_else():
+    assert format_evidence_sentence([]) == ""
+    assert format_evidence_sentence(["routes/checkout.py"]) == "Implemented in `checkout.py`."
+    assert format_evidence_sentence([CHECKOUT, CART, "routes/orders.py"]) == (
+        "Implemented in 3 source files, including `checkout.py` and `cart.py`."
+    )
+
+    def node():
+        return ArchitectureNode(
+            id="cap-1",
+            label="API & Request Entry",
+            kind="gateway",
+            group_id="entry",
+            summary="Spans 1 source file, led by routes/checkout.py.",
+            confidence=0.9,
+            evidence=[ArchitectureEvidence(path=CHECKOUT, reason="router")],
+        )
+
+    answered, unanswered = node(), node()
+    _apply_architecture_domain_llm(SimpleNamespace(nodes=[answered]), {"cap-1": {"role_in_project": "Takes orders"}})
+    _apply_architecture_domain_llm(SimpleNamespace(nodes=[unanswered]), {"cap-1": {"role_in_project": " "}})
+
+    assert answered.summary.split("\n\n") == ["Role in project: Takes orders.", "Implemented in `checkout.py`."]
+    assert unanswered.summary == "Spans 1 source file, led by routes/checkout.py."  # an empty answer changes nothing
 
 
 def test_the_llm_prompt_shows_what_each_sample_file_is_for():
