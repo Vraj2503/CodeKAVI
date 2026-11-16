@@ -24,8 +24,15 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      # The frontend folder, so frontend/.dockerignore keeps node_modules, .next
+      # and .env out of the image (from the repo root it didn't apply).
+      context: ./frontend
+      dockerfile: Dockerfile
+      # Next.js writes NEXT_PUBLIC_* into the bundle during `next build`, so they
+      # go in as build args; the runtime `environment:` below comes too late.
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
     container_name: rune-frontend
     ports:
       - "3000:3000"

@@ -34,7 +34,7 @@ graph TD
 The easiest way to run the entire stack locally is using Docker Compose:
 
 ### 1. Configure Environment Variables
-Create a `.env` file at the root directory of the repository (or copy values to `backend/.env` and `frontend/.env`):
+Create a `.env` file at the root directory of the repository. Compose reads it for both containers, and the two frontend keys are written into the frontend image when it is built. (`backend/.env` and `frontend/.env` are only read when you run each side without Docker.)
 
 ```env
 # Backend Keys
